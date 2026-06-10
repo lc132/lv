@@ -94,7 +94,7 @@ def safe_float(value, ndigits=3):
 
 **3.外围市场**：美股三大指数均跌>2%→弱市仓位≤30%；恒生跌>3%→弱市仅超跌反弹；人民币波动>0.5%→暂停策略D。美股/港股假期→跳过此检查
 
-**4.持仓行情同步**：遍历推荐历史中 `type="holding"` 记录，搜索当日收盘价→更新current/pnl_pct/update_date。提取`available_cash`字段（含`available_cash_note`标注逆回购），用于步骤8仓位修正。搜不到→log_alert WARNING保留旧数据。`safe_write_json` 写回
+**4.持仓行情同步**：遍历推荐历史中 `type="holding"` 记录，搜索当日收盘价→更新current/pnl_pct/update_date。搜不到→log_alert WARNING保留旧数据。`safe_write_json` 写回
 
 **5.推荐历史持久化**：`safe_read_json` 读取，提取 recommendation(7日内排除)+holding(已持仓排除)。生成后用 `safe_append_json` 追加。清理7天前recommendation+90天前holding/do_T（weekly_review/strategy_check保留）
 
@@ -111,8 +111,6 @@ def safe_float(value, ndigits=3):
 | 弱市 | 上证<MA20×0.98或涨跌比<1:2或成交<20日均×0.8 | 30-40% | 0-10% | 25-30% |
 
 边界：上证在MA20×0.98~MA20但不满足震荡→弱市。**三项指标矛盾时（均线/涨跌比/成交量跨不同档级）→保守取弱一档（安全优先）**
-
-**仓位修正（逆回购）**：持仓数据中 `available_cash` 若 `available_cash_note` 包含"逆回购"→实际可用资金按 50% 折算。例如可用 ¥13,404 含逆回购→可用 ¥6,702，仓位=市值/(市值+6,702)。逆回购资金视同冻结，不计入可用仓位。
 
 ## 一、硬性排除（31项）
 
