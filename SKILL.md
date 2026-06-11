@@ -37,7 +37,7 @@ def log_alert(level, module, message):
         f.write(f"[{timestamp}] [{level}] {module}: {message}\n")
 ```
 
-触发场景：推荐历史读写失败(ERROR)、持仓行情搜索失败(WARNING)、清理失败(WARNING)、Excel创建失败(ERROR)、版本不一致(INFO)、北京时间获取失败(ERROR)、筛选概况与Excel行数不一致(ERROR)
+触发场景：推荐历史读写失败(ERROR)、持仓行情搜索失败(WARNING)、持仓跟踪同步失败(WARNING)、清理失败(WARNING)、Excel创建失败(ERROR)、版本不一致(INFO)、北京时间获取失败(ERROR)、筛选概况与Excel行数不一致(ERROR)、GitHub同步失败/无令牌(WARNING)
 
 ## 文件容错
 
@@ -94,9 +94,11 @@ def safe_float(value, ndigits=3):
 
 **3.外围市场**：美股三大指数均跌>2%→弱市仓位≤30%；恒生跌>3%→弱市仅超跌反弹；人民币波动>0.5%→暂停策略D。美股/港股假期→跳过此检查
 
-**4.持仓行情同步**：遍历推荐历史中 `type="holding"` 记录，搜索当日收盘价→更新current/pnl_pct/update_date。搜不到→log_alert WARNING保留旧数据。`safe_write_json` 写回推荐历史。
+**4.持仓行情同步**：遍历推荐历史中 `type="holding"` 记录，搜索当日收盘价→更新current/pnl_pct/update_date，同时计算 market_value=round(current×shares,2) 和 pnl_amount=round((current-cost)×shares,2)。搜不到→log_alert WARNING保留旧数据。`safe_write_json` 写回推荐历史。
 
-**4A.持仓跟踪.xlsx同步**：步骤4完成后，将更新后的 holding 收盘价同步写入 `/workspace/持仓跟踪.xlsx` 的「持仓明细」sheet。
+**4A.做T评估**：对持仓进行做T可行性评估，详见「九、做T评估」。输出 `type="do_T_eval"` 追加到推荐历史，回溯检查昨日 do_T_eval。
+
+**4B.持仓跟踪.xlsx同步**：步骤4完成后，将更新后的 holding 收盘价同步写入 `/workspace/持仓跟踪.xlsx` 的「持仓明细」sheet。
 - 仅更新「当前价」列（列7）和「市值」列（列8）、「盈亏额」列（列9）、「盈亏率」列（列10）
 - 按 code 匹配行，不新增/删除行，不修改成本/持仓量等字段
 - 若 xlsx 不存在或结构异常→log_alert WARNING，跳过；若某 code 在 xlsx 中找不到→log_alert WARNING
@@ -121,10 +123,22 @@ def sync_holding_prices_to_xlsx(holdings, path="/workspace/持仓跟踪.xlsx"):
             code = str(h["code"])
             if code in code_row:
                 row = code_row[code]
-                ws.cell(row=row, column=7).value = h["current"]          # 当前价
-                ws.cell(row=row, column=8).value = h["market_value"]     # 市值
-                ws.cell(row=row, column=9).value = round(h["pnl_amount"], 2)  # 盈亏额
-                ws.cell(row=row, column=10).value = round(h["pnl_pct"], 4)     # 盈亏率
+                current = h["current"]
+                # 市值和盈亏额：优先取holding中的值，缺失则从xlsx读取成本/持仓量计算
+                mv = h.get("market_value")
+                pnl_amt = h.get("pnl_amount")
+                if mv is None or pnl_amt is None:
+                    cost = ws.cell(row=row, column=3).value   # 成本
+                    shares = ws.cell(row=row, column=4).value  # 持仓量
+                    if cost and shares and current:
+                        mv = round(current * shares, 2)
+                        pnl_amt = round((current - cost) * shares, 2)
+                ws.cell(row=row, column=7).value = current              # 当前价
+                if mv is not None:
+                    ws.cell(row=row, column=8).value = mv               # 市值
+                if pnl_amt is not None:
+                    ws.cell(row=row, column=9).value = round(pnl_amt, 2)  # 盈亏额
+                ws.cell(row=row, column=10).value = round(h.get("pnl_pct", 0), 4)  # 盈亏率
                 updated += 1
             else:
                 log_alert("WARNING", "持仓跟踪同步", f"{code} 在xlsx中找不到")
