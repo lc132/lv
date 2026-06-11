@@ -303,18 +303,18 @@ if wb:
 
 ## 十三.A、GitHub同步（可选，失败不阻塞）
 
-筛选完成后将 `短线标的_YYYYMMDD.xlsx` 同步到 GitHub 仓库 `lc132/lv`。
+筛选完成后将以下文件同步到 GitHub 仓库 `lc132/lv`：
+- `短线标的_YYYYMMDD.xlsx` — 筛选结果
+- `推荐历史.json` — 推荐/持仓/退出/做T评估/strategy_check 全量记录
 
 **前提**：环境需有 `git` 命令且能访问 `https://github.com/lc132/lv.git`。
 
 **执行逻辑**（失败仅 log_alert WARNING，不影响主流程）：
 ```python
-import subprocess, os, shutil
+import subprocess, os, shutil, json
 
 xlsx_path = f"/workspace/短线标的_{prediction_date}.xlsx"
-if not os.path.exists(xlsx_path):
-    log_alert("WARNING", "GitHub同步", "xlsx文件不存在，跳过")
-    return
+history_path = "/workspace/推荐历史.json"
 
 repo_dir = "/tmp/lv_sync"
 try:
@@ -324,29 +324,75 @@ try:
         capture_output=True, text=True, timeout=30, check=True
     )
     # 复制xlsx
-    shutil.copy(xlsx_path, os.path.join(repo_dir, f"短线标的_{prediction_date}.xlsx"))
+    if os.path.exists(xlsx_path):
+        shutil.copy(xlsx_path, os.path.join(repo_dir, f"短线标的_{prediction_date}.xlsx"))
+    # 复制推荐历史
+    if os.path.exists(history_path):
+        shutil.copy(history_path, os.path.join(repo_dir, "推荐历史.json"))
     # 提交并推送
     subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True)
     subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True)
     subprocess.run(["git", "-C", repo_dir, "add", "."], check=True)
-    subprocess.run(["git", "-C", repo_dir, "commit", "-m", f"筛选结果 {prediction_date}"], check=True)
+    subprocess.run(["git", "-C", repo_dir, "commit", "-m", f"每日筛选 {prediction_date} (标的+推荐历史)"], check=True)
     result = subprocess.run(
         ["git", "-C", repo_dir, "push", "origin", "main"],
         capture_output=True, text=True, timeout=30
     )
     if result.returncode == 0:
-        log_alert("INFO", "GitHub同步", f"✅ {prediction_date} 已推送")
+        log_alert("INFO", "GitHub同步", f"✅ {prediction_date} 已推送（xlsx+推荐历史）")
     else:
         log_alert("WARNING", "GitHub同步", f"推送失败（可能需认证）: {result.stderr[:100]}")
 except Exception as e:
     log_alert("WARNING", "GitHub同步", f"失败: {str(e)[:100]}")
 finally:
-    # 清理临时目录
     if os.path.exists(repo_dir):
         subprocess.run(["rm", "-rf", repo_dir])
 ```
 
 > ⚠️ 此步骤为**可选**。推送失败不会回滚已生成的 Excel 文件或其他输出。若长期无推送记录，说明 sandbox 环境缺少 git 或网络不通，属于预期行为。
+
+## 十三.B、主对话推荐历史同步（从GitHub拉取）
+
+主对话启动或用户请求最新推荐历史时，从 GitHub 拉取最新数据。
+
+**执行逻辑**：
+```python
+import urllib.request, json, os
+
+def sync_history_from_github():
+    """从GitHub拉取推荐历史，覆盖本地"""
+    url = "https://raw.githubusercontent.com/lc132/lv/main/推荐历史.json"
+    local_path = "/workspace/推荐历史.json"
+    try:
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            remote_data = json.loads(resp.read())
+        if not isinstance(remote_data, list):
+            raise ValueError("格式错误，非数组")
+        # 比较记录数
+        local_count = 0
+        if os.path.exists(local_path):
+            with open(local_path) as f:
+                local_data = json.load(f)
+            local_count = len(local_data) if isinstance(local_data, list) else 0
+        remote_count = len(remote_data)
+        if remote_count > local_count:
+            with open(local_path, 'w') as f:
+                json.dump(remote_data, f, ensure_ascii=False, indent=2)
+            print(f"✅ 同步完成: 本地{local_count}条 → GitHub{remote_count}条（新增{remote_count - local_count}条）")
+        elif remote_count == local_count:
+            print(f"✅ 已是最新: {local_count}条")
+        else:
+            print(f"⚠️ GitHub{remote_count}条 < 本地{local_count}条，保留本地数据")
+    except Exception as e:
+        print(f"⚠️ GitHub同步失败: {e}，沿用本地数据")
+```
+
+**触发时机**：
+- 用户说"同步推荐历史"时执行
+- 用户上传持仓截图前执行（确保持仓数据最新）
+- 可集成到步骤6文件初始化中，版本一致时自动同步
+
+> ⚠️ 仅当 GitHub 记录数**严格大于**本地时覆盖本地。如果本地更多（含未推送的主对话修改），保留本地不动。
 
 ## 十四、完整执行步骤（29步，含3A/4A子步骤）
 
