@@ -66,8 +66,8 @@ beijing_weekday = beijing_now.weekday()  # 0=周一,6=周日
 
 # 交叉验证：网络授时≠系统时间超过2小时 → 告警
 if time_source == 'network':
-    from datetime import timezone
-    system_now = datetime.now()
+    from datetime import timezone as tz
+    system_now = datetime.now(tz.utc)
     diff_minutes = abs((beijing_now - system_now).total_seconds() / 60)
     if diff_minutes > 120:
         log_alert("WARNING", "时间校验", f"网络授时与系统时钟偏差{diff_minutes:.0f}分钟，系统时钟可能不准，已采用网络授时")
@@ -79,7 +79,9 @@ if time_source == 'network':
 
 ## 可配置参数
 
-从 `/workspace/策略调整记录.json` 数组末条 `params` 字段读取，共17项参数，默认值：`search_budget=25, northbound_threshold=100, consecutive_weeks=2, win_rate_drop_threshold=10, limit_down_threshold=100, max_adjust_params=3, confidence_position_enabled=true, max_holding_days=5, circuit_breaker_threshold_pct=3.0, strategy_concentration_pct=60, do_t_success_reset_count=3, conversion_rate_window_days=10, conversion_rate_threshold=0.3, conversion_rate_restore=0.6, conversion_rate_consecutive_days=3, data_tier_l2_skip_on_unavailable=true, strategy_a_weak_market="closed"`。
+从 `/workspace/策略调整记录.json` 数组末条 `params` 字段读取，共18项参数，默认值：`search_budget=25, northbound_threshold=100, consecutive_weeks=2, win_rate_drop_threshold=10, limit_down_threshold=100, max_adjust_params=3, confidence_position_enabled=true, max_holding_days=5, circuit_breaker_threshold_pct=3.0, strategy_concentration_pct=60, do_t_success_reset_count=3, conversion_rate_window_days=10, conversion_rate_threshold=0.3, conversion_rate_restore=0.6, conversion_rate_consecutive_days=3, data_tier_l2_skip_on_unavailable=true, data_tier_l3_downgrade_to_signal=true, strategy_a_weak_market="closed"`。
+
+参数用途说明：`search_budget`步骤10搜索次数 | `northbound_threshold`步骤12北向过滤(万元) | `consecutive_weeks`步骤9周线趋势 | `win_rate_drop_threshold`步骤8胜率回撤触发 | `limit_down_threshold`步骤2跌停阈值 | `max_adjust_params`步骤十回滚参数修改上限 | `confidence_position_enabled`置信度仓位联动 | `max_holding_days`步骤4C持仓超期告警 | `circuit_breaker_threshold_pct`熔断阈值 | `strategy_concentration_pct`步骤17同策略上限 | `do_t_success_reset_count`做T成功重置计数 | `conversion_rate_*`兑现率闭环参数 | `data_tier_l2_skip_on_unavailable`数据不可达跳过 | `data_tier_l3_downgrade_to_signal`L3降级开关 | `strategy_a_weak_market`弱市策略A开关
 
 ## 系统告警
 
@@ -91,7 +93,7 @@ def log_alert(level, module, message):
         f.write(f"[{timestamp}] [{level}] {module}: {message}\n")
 ```
 
-触发场景：推荐历史读写失败(ERROR)、JSON格式异常(WARNING)、Excel读写失败(WARNING)、持仓行情搜索失败(WARNING)、持仓跟踪同步失败(WARNING)、持仓危机(WARNING)、清理失败(WARNING)、版本不一致(INFO)、北京时间获取失败(ERROR)、时间校验偏差(WARNING)、筛选概况与Excel行数不一致(ERROR)、GitHub同步失败/无令牌(WARNING)、数据不可达跳过(INFO)
+触发场景：推荐历史读写失败(ERROR)、JSON格式异常(WARNING)、Excel读写失败(WARNING)、持仓行情搜索失败(WARNING)、持仓跟踪同步失败(WARNING)、持仓跟踪同步成功(INFO)、持仓危机(WARNING)、清理失败(WARNING)、版本不一致(INFO)、北京时间获取失败(ERROR)、时间校验偏差(WARNING)、筛选概况与Excel行数不一致(ERROR)、GitHub同步失败/无令牌(WARNING)、数据不可达跳过(INFO)
 
 ## 文件容错
 
@@ -133,6 +135,7 @@ def safe_read_excel(path):
         return None
 
 def safe_float(value, ndigits=3):
+    """安全浮点格式化，供步骤4/4B/步骤10等外部调用"""
     if value is None: return None
     if isinstance(value, (int, float)): return round(float(value), ndigits)
     return value
@@ -446,11 +449,11 @@ cell.alignment = Alignment(horizontal='left')
 
 # 五行策略说明
 strategies = [
-    ("A 动量延续", "涨幅3-7%，量比1.5-3.0，MA5>MA10>MA20 — 仓位强35-40%/震荡12-17%/弱关闭"),
-    ("B 超跌反弹", "连跌≥3日，量<5日均×0.6，RSI(14)<35，KDJ(K<20且J拐头)，站上MA5+放量确认，股价≥MA60 — 仓位12-15%"),
-    ("C 事件驱动", "重大合同/预增>50%/部委级政策，事件时效5级衰减 — 仓位5-12%"),
-    ("D 资金埋伏", "北向3日连续净买+主力流入>3000万+涨幅<2% — 仓位3-8%"),
-    ("E 回调企稳突破", "20日内创新高+回调MA20±3%+连3日缩量+站回MA5放量 — 仓位8-15%"),
+    ("A 动量延续", "涨幅3-7%，量比1.5-3.0，量>5日均×1.5且>昨日×1.2，MA5>MA10>MA20 — 仓位强35-40%/震荡12-17%/弱关闭"),
+    ("B 超跌反弹", "连跌≥3日，量<5日均×0.6，RSI(14)<35，KDJ(K<20且J拐头)，站上MA5+放量确认，股价≥MA60 — 仓位强10-12%/震荡12-15%/弱12-15%"),
+    ("C 事件驱动", "重大合同/预增>50%/部委级政策，事件时效5级衰减 — 仓位强10-12%/震荡10-12%/弱5-8%"),
+    ("D 资金埋伏", "北向3日连续净买+主力流入>3000万+涨幅<2% — 仓位强5-8%/震荡5-8%/弱3-5%（连续5日→上限翻倍至16%）"),
+    ("E 回调企稳突破", "20日内创新高+回调MA20±3%+连3日缩量+站回MA5放量 — 仓位强10-12%/震荡12-15%/弱8-12%"),
 ]
 for i, (name, desc) in enumerate(strategies):
     footer_start += 1
@@ -477,6 +480,7 @@ if wb:
     if "标的池" in wb.sheetnames:
         excel_n = wb["标的池"].max_row - 1
         if excel_n != final_recommend_count:
+            errors.append(f"概况{final_recommend_count}≠Excel{excel_n}")
             log_alert("ERROR", "数量校验", f"概况{final_recommend_count}≠Excel{excel_n}")
     for sn in wb.sheetnames:
         for row in wb[sn].iter_rows():
@@ -485,8 +489,13 @@ if wb:
                     c.value = round(c.value, 3)
                 if c.value and c.font.name != 'Arial':
                     c.font = Font(name='Arial', size=c.font.size or 10, bold=c.font.bold)
-    if errors: wb.save(path)
-    else: print(f"✅ 验证通过（{final_recommend_count}只）")
+    # 格式化修复无条件保存，错误仅记录日志
+    wb.save(path)
+    if errors:
+        for e in errors:
+            log_alert("ERROR", "最终验证", e)
+    else:
+        print(f"✅ 验证通过（{final_recommend_count}只）")
     wb.close()
 ```
 
@@ -522,7 +531,7 @@ repo_url = f"https://{token}@github.com/lc132/lv.git"
 repo_dir = "/tmp/lv_sync"
 try:
     subprocess.run(
-        ["git", "clone", "--depth", "1", repo_url, repo_dir],
+        ["git", "clone", "--depth", "1", "--branch", "main", repo_url, repo_dir],
         capture_output=True, text=True, timeout=30, check=True
     )
     shutil.copy(xlsx_path, os.path.join(repo_dir, f"短线标的_{prediction_date}.xlsx"))
