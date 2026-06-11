@@ -301,9 +301,56 @@ if wb:
     wb.close()
 ```
 
-## 十四、完整执行步骤（28步，含3A/4A子步骤）
+## 十三.A、GitHub同步（可选，失败不阻塞）
 
-0.获取北京时间(data_date+prediction_date) → 1.节假日检查 → 2.极端行情 → 3.外围市场 → 3A.开盘前外围(期货跌>1%→降档) → 4.持仓行情同步 → 4A.做T评估 → 5.推荐历史持久化 → 6.文件初始化 → 7.财报季检测 → 8.大盘判断 → 9.板块轮动 → 10.搜集行情 → 11.硬排除31项(记录原始+排除后数量) → 12.信号过滤14项(记录数量) → 13.五策略筛选 → 14.评分门控 → 15.冲突处理 → 16.综合评分 → 17.行业限制(记录数量) → 18.新闻筛查(记录数量) → 19.推荐不足降级 → 20.输出Excel(含筛选概况) → 21.最终验证(含数量校验) → 22.写推荐历史+清理90天前 → 23.回溯检查昨日做T → 24.告警日志摘要 → 25.输出📊筛选概况到对话
+筛选完成后将 `短线标的_YYYYMMDD.xlsx` 同步到 GitHub 仓库 `lc132/lv`。
+
+**前提**：环境需有 `git` 命令且能访问 `https://github.com/lc132/lv.git`。
+
+**执行逻辑**（失败仅 log_alert WARNING，不影响主流程）：
+```python
+import subprocess, os, shutil
+
+xlsx_path = f"/workspace/短线标的_{prediction_date}.xlsx"
+if not os.path.exists(xlsx_path):
+    log_alert("WARNING", "GitHub同步", "xlsx文件不存在，跳过")
+    return
+
+repo_dir = "/tmp/lv_sync"
+try:
+    # 克隆仓库
+    subprocess.run(
+        ["git", "clone", "--depth", "1", "https://github.com/lc132/lv.git", repo_dir],
+        capture_output=True, text=True, timeout=30, check=True
+    )
+    # 复制xlsx
+    shutil.copy(xlsx_path, os.path.join(repo_dir, f"短线标的_{prediction_date}.xlsx"))
+    # 提交并推送
+    subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True)
+    subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True)
+    subprocess.run(["git", "-C", repo_dir, "add", "."], check=True)
+    subprocess.run(["git", "-C", repo_dir, "commit", "-m", f"筛选结果 {prediction_date}"], check=True)
+    result = subprocess.run(
+        ["git", "-C", repo_dir, "push", "origin", "main"],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode == 0:
+        log_alert("INFO", "GitHub同步", f"✅ {prediction_date} 已推送")
+    else:
+        log_alert("WARNING", "GitHub同步", f"推送失败（可能需认证）: {result.stderr[:100]}")
+except Exception as e:
+    log_alert("WARNING", "GitHub同步", f"失败: {str(e)[:100]}")
+finally:
+    # 清理临时目录
+    if os.path.exists(repo_dir):
+        subprocess.run(["rm", "-rf", repo_dir])
+```
+
+> ⚠️ 此步骤为**可选**。推送失败不会回滚已生成的 Excel 文件或其他输出。若长期无推送记录，说明 sandbox 环境缺少 git 或网络不通，属于预期行为。
+
+## 十四、完整执行步骤（29步，含3A/4A子步骤）
+
+0.获取北京时间(data_date+prediction_date) → 1.节假日检查 → 2.极端行情 → 3.外围市场 → 3A.开盘前外围(期货跌>1%→降档) → 4.持仓行情同步 → 4A.做T评估 → 5.推荐历史持久化 → 6.文件初始化 → 7.财报季检测 → 8.大盘判断 → 9.板块轮动 → 10.搜集行情 → 11.硬排除31项(记录原始+排除后数量) → 12.信号过滤14项(记录数量) → 13.五策略筛选 → 14.评分门控 → 15.冲突处理 → 16.综合评分 → 17.行业限制(记录数量) → 18.新闻筛查(记录数量) → 19.推荐不足降级 → 20.输出Excel(含筛选概况) → 21.最终验证(含数量校验) → 22.写推荐历史+清理90天前 → 23.回溯检查昨日做T → 24.告警日志摘要 → 25.输出📊筛选概况到对话 → 26.GitHub同步（可选）
 
 ## 十五、持久化文件说明（规则：除短线标的文件外，仅读写推荐历史.json和系统告警.log，其他都由主对话管理）
 
