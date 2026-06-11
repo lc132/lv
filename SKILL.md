@@ -220,6 +220,64 @@ def safe_float(value, ndigits=3):
 
 表头：Arial 11pt Bold白底蓝(1F4E79)，数据行：Arial 10pt灰边框(B0B0B0)行高22。涨跌红(9C0006)涨绿(006100)跌。策略色：A绿(E2EFDA) B蓝(D6E4F0) C紫(E4DFEC) D黄(FFF2CC)。置信★★★绿加粗/★★黄/★红。链接：蓝下划线(0563C1)，60→sh,00/30→sz,8→bj。创业板标的+⚠️。
 
+**标的池工作表尾部**（数据行下方空一行后追加）：
+1. 一行合并单元格居中：`📊 共筛选出 N 只标的`（灰色底 F1F5F9，Arial 12pt Bold）
+2. 一行合并单元格居中：`策略说明：`（同上格式，左对齐）
+3. 五行分别列出策略说明，每行格式如下（Arial 10pt，左对齐）：
+   - `A 动量延续：涨幅3-7%，量比1.5-3.0，MA5>MA10>MA20，量>5日均×1.5且>昨日×1.2 — 仓位强30-40%/震荡20-30%/弱0-10%`
+   - `B 超跌反弹：连跌≥3日，量<5日均×0.6，RSI(14)<35，KDJ(K<20且J拐头)，站上MA5+放量确认 — 仓位20-25%`
+   - `C 事件驱动：重大合同/预增>50%/部委级政策，事件时效5级衰减 — 仓位10-15%(财报+5%)`
+   - `D 资金埋伏：北向3日连续净买+主力流入>3000万+涨幅<2% — 仓位0-5%`
+   - `E 回调企稳突破：20日内创新高+回调MA20±3%+连3日缩量+站回MA5放量 — 仓位强10-15%/震荡10%/弱5%`
+5. 一行合并单元格居中：`⚠️ 仅供参考，不构成投资建议`（灰色字 6B7280，Arial 9pt）
+
+实现代码示例：
+```python
+from openpyxl.styles import Alignment
+ws = wb["标的池"]
+last_data_row = ws.max_row  # 最后一行数据
+footer_start = last_data_row + 2  # 空一行
+
+# 统计各策略数量
+from collections import Counter
+strategy_counts = Counter()  # 从标的池列2(策略)统计
+
+ws.merge_cells(start_row=footer_start, start_column=1, end_row=footer_start, end_column=14)
+cell = ws.cell(row=footer_start, column=1, value=f"📊 共筛选出 {final_recommend_count} 只标的（A:{strategy_counts.get('A',0)} B:{strategy_counts.get('B',0)} C:{strategy_counts.get('C',0)} D:{strategy_counts.get('D',0)} E:{strategy_counts.get('E',0)}）")
+cell.font = Font(name='Arial', size=12, bold=True)
+cell.fill = PatternFill(start_color='F1F5F9', end_color='F1F5F9', fill_type='solid')
+cell.alignment = Alignment(horizontal='center', vertical='center')
+
+# 策略说明标题
+footer_start += 1
+ws.merge_cells(start_row=footer_start, start_column=1, end_row=footer_start, end_column=14)
+cell = ws.cell(row=footer_start, column=1, value="策略说明：")
+cell.font = Font(name='Arial', size=11, bold=True)
+cell.alignment = Alignment(horizontal='left')
+
+# 五行策略说明
+strategies = [
+    ("A 动量延续", "涨幅3-7%，量比1.5-3.0，MA5>MA10>MA20，量>5日均×1.5且>昨日×1.2 — 仓位强30-40%/震荡20-30%/弱0-10%"),
+    ("B 超跌反弹", "连跌≥3日，量<5日均×0.6，RSI(14)<35，KDJ(K<20且J拐头)，站上MA5+放量确认 — 仓位20-25%"),
+    ("C 事件驱动", "重大合同/预增>50%/部委级政策，事件时效5级衰减 — 仓位10-15%(财报+5%)"),
+    ("D 资金埋伏", "北向3日连续净买+主力流入>3000万+涨幅<2% — 仓位0-5%"),
+    ("E 回调企稳突破", "20日内创新高+回调MA20±3%+连3日缩量+站回MA5放量 — 仓位强10-15%/震荡10%/弱5%"),
+]
+for i, (name, desc) in enumerate(strategies):
+    footer_start += 1
+    ws.merge_cells(start_row=footer_start, start_column=1, end_row=footer_start, end_column=14)
+    cell = ws.cell(row=footer_start, column=1, value=f"{name}：{desc}")
+    cell.font = Font(name='Arial', size=10)
+    cell.alignment = Alignment(horizontal='left', vertical='center')
+
+# 风险提示
+footer_start += 2
+ws.merge_cells(start_row=footer_start, start_column=1, end_row=footer_start, end_column=14)
+cell = ws.cell(row=footer_start, column=1, value="⚠️ 仅供参考，不构成投资建议")
+cell.font = Font(name='Arial', size=9, color='6B7280')
+cell.alignment = Alignment(horizontal='center')
+```
+
 ## 十三、最终验证
 
 ```python
