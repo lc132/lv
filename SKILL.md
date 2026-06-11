@@ -355,13 +355,23 @@ finally:
 
 主对话启动或用户请求最新推荐历史时，从 GitHub 拉取最新数据。
 
-**执行逻辑**：
+**执行逻辑**（主对话使用 WebFetch，自动化使用 urllib.request）：
+
+**方法一：主对话直接使用 WebFetch**
+```
+WebFetch: https://raw.githubusercontent.com/lc132/lv/main/%E6%8E%A8%E8%8D%90%E5%8E%86%E5%8F%B2.json
+→ 解析JSON → 与本地 /workspace/推荐历史.json 比较记录数
+→ 若 GitHub 记录数 > 本地 → 覆盖本地
+→ 若 GitHub 记录数 ≤ 本地 → 保留本地不动
+```
+
+**方法二：自动化/脚本使用以下代码**
 ```python
-import urllib.request, json, os
+import urllib.request, urllib.parse, json, os
 
 def sync_history_from_github():
     """从GitHub拉取推荐历史，覆盖本地"""
-    url = "https://raw.githubusercontent.com/lc132/lv/main/推荐历史.json"
+    url = 'https://raw.githubusercontent.com/lc132/lv/main/' + urllib.parse.quote('推荐历史.json')
     local_path = "/workspace/推荐历史.json"
     try:
         with urllib.request.urlopen(url, timeout=15) as resp:
