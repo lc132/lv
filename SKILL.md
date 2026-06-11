@@ -37,7 +37,7 @@ def log_alert(level, module, message):
         f.write(f"[{timestamp}] [{level}] {module}: {message}\n")
 ```
 
-触发场景：推荐历史读写失败(ERROR)、持仓行情搜索失败(WARNING)、持仓跟踪同步失败(WARNING)、清理失败(WARNING)、Excel创建失败(ERROR)、版本不一致(INFO)、北京时间获取失败(ERROR)、筛选概况与Excel行数不一致(ERROR)、GitHub同步失败/无令牌(WARNING)
+触发场景：推荐历史读写失败(ERROR)、JSON格式异常(WARNING)、Excel读写失败(WARNING)、持仓行情搜索失败(WARNING)、持仓跟踪同步失败(WARNING)、清理失败(WARNING)、版本不一致(INFO)、北京时间获取失败(ERROR)、筛选概况与Excel行数不一致(ERROR)、GitHub同步失败/无令牌(WARNING)
 
 ## 文件容错
 
@@ -94,6 +94,8 @@ def safe_float(value, ndigits=3):
 
 **3.外围市场**：美股三大指数均跌>2%→弱市仓位≤30%；恒生跌>3%→弱市仅超跌反弹；人民币波动>0.5%→暂停策略D。美股/港股假期→跳过此检查
 
+**3A.开盘前外围**：盘前搜索美股期货（标普/纳指/道指期货）实时行情。任一期货较前日收盘跌>1%→外围偏空，仓位降一档（强→震荡→弱）。若期货数据不可得→跳过此检查，维持步骤3外围判断。
+
 **4.持仓行情同步**：遍历推荐历史中 `type="holding"` 记录，搜索当日收盘价→更新current/pnl_pct/update_date，同时计算 market_value=round(current×shares,2) 和 pnl_amount=round((current-cost)×shares,2)。搜不到→log_alert WARNING保留旧数据。`safe_write_json` 写回推荐历史。
 
 **4A.做T评估**：对持仓进行做T可行性评估，详见「九、做T评估」。输出 `type="do_T_eval"` 追加到推荐历史，回溯检查昨日 do_T_eval。
@@ -120,10 +122,19 @@ def sync_holding_prices_to_xlsx(holdings, path="/workspace/持仓跟踪.xlsx"):
         
         updated = 0
         for h in holdings:
-            code = str(h["code"])
-            if code in code_row:
+            current = None
+            try:
+                code = str(h.get("code"))
+                current = h.get("current")  # 防御性读取，缺失返回None
+                if not code or code not in code_row:
+                    if code:
+                        log_alert("WARNING", "持仓跟踪同步", f"{code} 在xlsx中找不到")
+                    continue
+                if current is None:
+                    log_alert("WARNING", "持仓跟踪同步", f"{code} 缺少current字段，跳过")
+                    continue
+
                 row = code_row[code]
-                current = h["current"]
                 # 市值和盈亏额：优先取holding中的值，缺失则从xlsx读取成本/持仓量计算
                 mv = h.get("market_value")
                 pnl_amt = h.get("pnl_amount")
@@ -140,8 +151,9 @@ def sync_holding_prices_to_xlsx(holdings, path="/workspace/持仓跟踪.xlsx"):
                     ws.cell(row=row, column=9).value = round(pnl_amt, 2)  # 盈亏额
                 ws.cell(row=row, column=10).value = round(h.get("pnl_pct", 0), 4)  # 盈亏率
                 updated += 1
-            else:
-                log_alert("WARNING", "持仓跟踪同步", f"{code} 在xlsx中找不到")
+            except Exception as e:
+                log_alert("WARNING", "持仓跟踪同步", f"单条记录异常(code={h.get('code', 'unknown')}): {str(e)[:80]}")
+                continue
         if updated > 0:
             wb.save(path)
             log_alert("INFO", "持仓跟踪同步", f"已更新{updated}只持仓价格")
@@ -216,6 +228,8 @@ def sync_holding_prices_to_xlsx(holdings, path="/workspace/持仓跟踪.xlsx"):
 ## 六、板块轮动
 
 资金流入TOP3→动量优先 | 连续3日流入→资金+事件 | 板块龙头涨停→找MA20支撑标的 | 流出TOP5→回避
+
+**搜集行情（步骤10）**：基于 data_date 搜索全A股市场行情数据（涨跌幅/成交量/换手率/量比/主力资金/龙虎榜等），构建原始标的池。搜索预算默认 25 次，覆盖主要宽基指数和行业 ETF 的领涨个股。搜索前确认 search_budget 是否充足，不足则标注跳过项。
 
 ## 七、评分公式
 
@@ -413,7 +427,12 @@ finally:
 
 0.获取北京时间(data_date+prediction_date) → 1.节假日检查 → 2.极端行情 → 3.外围市场 → 3A.开盘前外围(期货跌>1%→降档) → 4.持仓行情同步 → 4A.做T评估 → 4B.持仓跟踪同步 → 5.推荐历史持久化 → 6.文件初始化 → 7.财报季检测 → 8.大盘判断 → 9.板块轮动 → 10.搜集行情 → 11.硬排除31项(记录原始+排除后数量) → 12.信号过滤14项(记录数量) → 13.五策略筛选 → 14.评分门控 → 15.冲突处理 → 16.综合评分 → 17.行业限制(记录数量) → 18.新闻筛查(记录数量) → 19.推荐不足降级 → 20.输出Excel(含筛选概况) → 21.最终验证(含数量校验) → 22.写推荐历史+清理90天前 → 23.回溯检查昨日做T → 24.告警日志摘要 → 25.输出📊筛选概况到对话 → 26.GitHub同步(xlsx)
 
-## 十五、持久化文件说明（规则：除短线标的文件外，仅读写推荐历史.json和系统告警.log，其他都由主对话管理）
+步骤说明：
+- **步骤10 搜集行情**：搜索全A股行情数据构建原始标的池（详见六末尾）。
+- **步骤24 告警日志摘要**：读取 `/workspace/系统告警.log` 当天记录，在对话中输出告警汇总（若当天无告警则输出「今日无异常」）。
+- 其余步骤的详细执行逻辑见正文各对应章节。
+
+## 十五、持久化文件说明（除短线标的文件外，本技能可读写推荐历史.json/持仓跟踪.xlsx/系统告警.log；策略调整记录.json只读；绩效统计/筛选条件等由主对话管理）
 
 | 文件 | 操作 |
 |------|------|
