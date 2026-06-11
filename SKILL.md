@@ -301,71 +301,50 @@ if wb:
     wb.close()
 ```
 
-## 十三.A、数据原则（只拉取，不上传）
+## 十三.A、GitHub同步 — 仅上传筛选结果Excel
 
-⚠️ **严格限制**：所有定时任务和自动化流程**仅从 GitHub 拉取规则和推荐历史，不推送任何数据到 GitHub**。主对话拉取后如需更新文件，仅写入本地 `/workspace/`。
+筛选完成后将 `短线标的_YYYYMMDD.xlsx` 同步到 GitHub 仓库 `lc132/lv`。
 
-GitHub 用于：
-- SKILL.md 规则分发（Task 1-4 通过 WebFetch 读取）
-- analyze_do_t.py 脚本参考
-- 推荐历史.json 备份分发（仅手动维护）
+⚠️ **不上传推荐历史.json**（含持仓隐私）。仅上传筛选结果 Excel。
 
-## 十三.B、主对话推荐历史同步（从GitHub拉取）
-
-主对话启动或用户请求最新推荐历史时，从 GitHub 拉取最新数据。
-
-**执行逻辑**（主对话使用 WebFetch，自动化使用 urllib.request）：
-
-**方法一：主对话直接使用 WebFetch**
-```
-WebFetch: https://raw.githubusercontent.com/lc132/lv/main/%E6%8E%A8%E8%8D%90%E5%8E%86%E5%8F%B2.json
-→ 解析JSON → 与本地 /workspace/推荐历史.json 比较记录数
-→ 若 GitHub 记录数 > 本地 → 覆盖本地
-→ 若 GitHub 记录数 ≤ 本地 → 保留本地不动
-```
-
-**方法二：自动化/脚本使用以下代码**
+**执行逻辑**（失败仅 log_alert WARNING，不影响主流程）：
 ```python
-import urllib.request, urllib.parse, json, os
+import subprocess, os, shutil
 
-def sync_history_from_github():
-    """从GitHub拉取推荐历史，覆盖本地"""
-    url = 'https://raw.githubusercontent.com/lc132/lv/main/' + urllib.parse.quote('推荐历史.json')
-    local_path = "/workspace/推荐历史.json"
-    try:
-        with urllib.request.urlopen(url, timeout=15) as resp:
-            remote_data = json.loads(resp.read())
-        if not isinstance(remote_data, list):
-            raise ValueError("格式错误，非数组")
-        # 比较记录数
-        local_count = 0
-        if os.path.exists(local_path):
-            with open(local_path) as f:
-                local_data = json.load(f)
-            local_count = len(local_data) if isinstance(local_data, list) else 0
-        remote_count = len(remote_data)
-        if remote_count > local_count:
-            with open(local_path, 'w') as f:
-                json.dump(remote_data, f, ensure_ascii=False, indent=2)
-            print(f"✅ 同步完成: 本地{local_count}条 → GitHub{remote_count}条（新增{remote_count - local_count}条）")
-        elif remote_count == local_count:
-            print(f"✅ 已是最新: {local_count}条")
-        else:
-            print(f"⚠️ GitHub{remote_count}条 < 本地{local_count}条，保留本地数据")
-    except Exception as e:
-        print(f"⚠️ GitHub同步失败: {e}，沿用本地数据")
+xlsx_path = f"/workspace/短线标的_{prediction_date}.xlsx"
+if not os.path.exists(xlsx_path):
+    log_alert("WARNING", "GitHub同步", "xlsx文件不存在，跳过")
+    return
+
+repo_dir = "/tmp/lv_sync"
+try:
+    subprocess.run(
+        ["git", "clone", "--depth", "1", "https://github.com/lc132/lv.git", repo_dir],
+        capture_output=True, text=True, timeout=30, check=True
+    )
+    shutil.copy(xlsx_path, os.path.join(repo_dir, f"短线标的_{prediction_date}.xlsx"))
+    subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True)
+    subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True)
+    subprocess.run(["git", "-C", repo_dir, "add", "."], check=True)
+    subprocess.run(["git", "-C", repo_dir, "commit", "-m", f"筛选结果 {prediction_date}"], check=True)
+    result = subprocess.run(
+        ["git", "-C", repo_dir, "push", "origin", "main"],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode == 0:
+        log_alert("INFO", "GitHub同步", f"✅ {prediction_date} 已推送")
+    else:
+        log_alert("WARNING", "GitHub同步", f"推送失败: {result.stderr[:100]}")
+except Exception as e:
+    log_alert("WARNING", "GitHub同步", f"失败: {str(e)[:100]}")
+finally:
+    if os.path.exists(repo_dir):
+        subprocess.run(["rm", "-rf", repo_dir])
 ```
-
-**触发时机**：
-- 用户说"同步推荐历史"时执行
-- 用户上传持仓截图前执行（确保持仓数据最新）
-- 步骤6文件初始化时，若推荐历史中 strategy_check 版本与 SKILL.md 版本一致，自动从GitHub拉取最新推荐历史
-
-> ⚠️ 仅当 GitHub 记录数**严格大于**本地时覆盖本地。如果本地更多（含未推送的主对话修改），保留本地不动。
 
 ## 十四、完整执行步骤（29步，含3A/4A子步骤）
 
-0.获取北京时间(data_date+prediction_date) → 1.节假日检查 → 2.极端行情 → 3.外围市场 → 3A.开盘前外围(期货跌>1%→降档) → 4.持仓行情同步 → 4A.做T评估 → 5.推荐历史持久化 → 6.文件初始化(含GitHub拉取推荐历史) → 7.财报季检测 → 8.大盘判断 → 9.板块轮动 → 10.搜集行情 → 11.硬排除31项(记录原始+排除后数量) → 12.信号过滤14项(记录数量) → 13.五策略筛选 → 14.评分门控 → 15.冲突处理 → 16.综合评分 → 17.行业限制(记录数量) → 18.新闻筛查(记录数量) → 19.推荐不足降级 → 20.输出Excel(含筛选概况) → 21.最终验证(含数量校验) → 22.写推荐历史+清理90天前 → 23.回溯检查昨日做T → 24.告警日志摘要 → 25.输出📊筛选概况到对话
+0.获取北京时间(data_date+prediction_date) → 1.节假日检查 → 2.极端行情 → 3.外围市场 → 3A.开盘前外围(期货跌>1%→降档) → 4.持仓行情同步 → 4A.做T评估 → 5.推荐历史持久化 → 6.文件初始化 → 7.财报季检测 → 8.大盘判断 → 9.板块轮动 → 10.搜集行情 → 11.硬排除31项(记录原始+排除后数量) → 12.信号过滤14项(记录数量) → 13.五策略筛选 → 14.评分门控 → 15.冲突处理 → 16.综合评分 → 17.行业限制(记录数量) → 18.新闻筛查(记录数量) → 19.推荐不足降级 → 20.输出Excel(含筛选概况) → 21.最终验证(含数量校验) → 22.写推荐历史+清理90天前 → 23.回溯检查昨日做T → 24.告警日志摘要 → 25.输出📊筛选概况到对话 → 26.GitHub同步(xlsx)
 
 ## 十五、持久化文件说明（规则：除短线标的文件外，仅读写推荐历史.json和系统告警.log，其他都由主对话管理）
 
