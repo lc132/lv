@@ -94,7 +94,46 @@ def safe_float(value, ndigits=3):
 
 **3.外围市场**：美股三大指数均跌>2%→弱市仓位≤30%；恒生跌>3%→弱市仅超跌反弹；人民币波动>0.5%→暂停策略D。美股/港股假期→跳过此检查
 
-**4.持仓行情同步**：遍历推荐历史中 `type="holding"` 记录，搜索当日收盘价→更新current/pnl_pct/update_date。搜不到→log_alert WARNING保留旧数据。`safe_write_json` 写回
+**4.持仓行情同步**：遍历推荐历史中 `type="holding"` 记录，搜索当日收盘价→更新current/pnl_pct/update_date。搜不到→log_alert WARNING保留旧数据。`safe_write_json` 写回推荐历史。
+
+**4A.持仓跟踪.xlsx同步**：步骤4完成后，将更新后的 holding 收盘价同步写入 `/workspace/持仓跟踪.xlsx` 的「持仓明细」sheet。
+- 仅更新「当前价」列（列7）和「市值」列（列8）、「盈亏额」列（列9）、「盈亏率」列（列10）
+- 按 code 匹配行，不新增/删除行，不修改成本/持仓量等字段
+- 若 xlsx 不存在或结构异常→log_alert WARNING，跳过；若某 code 在 xlsx 中找不到→log_alert WARNING
+- 同步后 save
+
+```python
+from openpyxl import load_workbook
+def sync_holding_prices_to_xlsx(holdings, path="/workspace/持仓跟踪.xlsx"):
+    """将步骤4更新后的持仓价格写入持仓跟踪.xlsx"""
+    try:
+        wb = load_workbook(path)
+        ws = wb["持仓明细"]
+        # code → row mapping (skip header row)
+        code_row = {}
+        for row in range(2, ws.max_row + 1):
+            code = ws.cell(row=row, column=1).value
+            if code and isinstance(code, str) and len(code) == 6:
+                code_row[str(code)] = row
+        
+        updated = 0
+        for h in holdings:
+            code = str(h["code"])
+            if code in code_row:
+                row = code_row[code]
+                ws.cell(row=row, column=7).value = h["current"]          # 当前价
+                ws.cell(row=row, column=8).value = h["market_value"]     # 市值
+                ws.cell(row=row, column=9).value = round(h["pnl_amount"], 2)  # 盈亏额
+                ws.cell(row=row, column=10).value = round(h["pnl_pct"], 4)     # 盈亏率
+                updated += 1
+            else:
+                log_alert("WARNING", "持仓跟踪同步", f"{code} 在xlsx中找不到")
+        if updated > 0:
+            wb.save(path)
+            log_alert("INFO", "持仓跟踪同步", f"已更新{updated}只持仓价格")
+    except Exception as e:
+        log_alert("WARNING", "持仓跟踪同步", f"失败: {str(e)[:100]}")
+```
 
 **5.推荐历史持久化**：`safe_read_json` 读取，提取 recommendation(7日内排除)+holding(已持仓排除)。生成后用 `safe_append_json` 追加。清理7天前recommendation+90天前holding/do_T（weekly_review/strategy_check保留）
 
@@ -344,18 +383,19 @@ finally:
 
 ## 十四、完整执行步骤（29步，含3A/4A子步骤）
 
-0.获取北京时间(data_date+prediction_date) → 1.节假日检查 → 2.极端行情 → 3.外围市场 → 3A.开盘前外围(期货跌>1%→降档) → 4.持仓行情同步 → 4A.做T评估 → 5.推荐历史持久化 → 6.文件初始化 → 7.财报季检测 → 8.大盘判断 → 9.板块轮动 → 10.搜集行情 → 11.硬排除31项(记录原始+排除后数量) → 12.信号过滤14项(记录数量) → 13.五策略筛选 → 14.评分门控 → 15.冲突处理 → 16.综合评分 → 17.行业限制(记录数量) → 18.新闻筛查(记录数量) → 19.推荐不足降级 → 20.输出Excel(含筛选概况) → 21.最终验证(含数量校验) → 22.写推荐历史+清理90天前 → 23.回溯检查昨日做T → 24.告警日志摘要 → 25.输出📊筛选概况到对话 → 26.GitHub同步(xlsx)
+0.获取北京时间(data_date+prediction_date) → 1.节假日检查 → 2.极端行情 → 3.外围市场 → 3A.开盘前外围(期货跌>1%→降档) → 4.持仓行情同步 → 4A.做T评估 → 4B.持仓跟踪同步 → 5.推荐历史持久化 → 6.文件初始化 → 7.财报季检测 → 8.大盘判断 → 9.板块轮动 → 10.搜集行情 → 11.硬排除31项(记录原始+排除后数量) → 12.信号过滤14项(记录数量) → 13.五策略筛选 → 14.评分门控 → 15.冲突处理 → 16.综合评分 → 17.行业限制(记录数量) → 18.新闻筛查(记录数量) → 19.推荐不足降级 → 20.输出Excel(含筛选概况) → 21.最终验证(含数量校验) → 22.写推荐历史+清理90天前 → 23.回溯检查昨日做T → 24.告警日志摘要 → 25.输出📊筛选概况到对话 → 26.GitHub同步(xlsx)
 
 ## 十五、持久化文件说明（规则：除短线标的文件外，仅读写推荐历史.json和系统告警.log，其他都由主对话管理）
 
 | 文件 | 操作 |
 |------|------|
 | **短线标的_YYYYMMDD.xlsx** | 输出预测结果到该文件（唯一输出文件） |
-| 推荐历史.json | safe_append_json追加推荐记录 + 清理7天推荐 + 清理90天holding+do_T |
+| 推荐历史.json | safe_append_json追加推荐记录 + 清理7天推荐 + 清理90天holding+do_T；步骤4更新holding收盘价 |
+| 持仓跟踪.xlsx | 步骤4B同步持仓收盘价（仅更新当前价/市值/盈亏，不修改成本/持仓量） |
 | 策略调整记录.json | 只读version+params，不写入 |
 | 系统告警.log | 所有异常写入告警日志 |
 
-> ⚠️ 持仓跟踪.xlsx / 绩效统计.xlsx / 周度复盘*.xlsx / 筛选条件*.xlsx 均由主对话管理，本技能不操作这些文件。
+> ⚠️ 绩效统计.xlsx / 周度复盘*.xlsx / 筛选条件*.xlsx 均由主对话管理，本技能不操作这些文件。
 
 ## ⚠️ 关键纪律
 
