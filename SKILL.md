@@ -355,10 +355,24 @@ if not os.path.exists(xlsx_path):
     log_alert("WARNING", "GitHub同步", "xlsx文件不存在，跳过")
     return
 
+# 读取认证令牌
+token = None
+token_path = "/workspace/.github_token"
+if os.path.exists(token_path):
+    try:
+        with open(token_path, 'r') as f:
+            token = f.read().strip()
+    except Exception:
+        pass
+if not token:
+    log_alert("WARNING", "GitHub同步", "无认证令牌，跳过推送")
+    return
+
+repo_url = f"https://{token}@github.com/lc132/lv.git"
 repo_dir = "/tmp/lv_sync"
 try:
     subprocess.run(
-        ["git", "clone", "--depth", "1", "https://github.com/lc132/lv.git", repo_dir],
+        ["git", "clone", "--depth", "1", repo_url, repo_dir],
         capture_output=True, text=True, timeout=30, check=True
     )
     shutil.copy(xlsx_path, os.path.join(repo_dir, f"短线标的_{prediction_date}.xlsx"))
