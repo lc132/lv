@@ -1,8 +1,8 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.4.20)。基于前一日收盘数据，通过 33步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分→行业集中度→新闻筛查→GitHub同步→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.4.21)。基于前一日收盘数据，通过 33步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分→行业集中度→新闻筛查→GitHub同步→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.4.20
+# A股盘前短线标的筛选 v6.4.21
 
 基于前一日完整收盘数据筛选当日有望上涨的A股短线标的。**不追高是硬纪律。**
 
@@ -85,12 +85,14 @@ prediction_date = prediction_date.strftime('%Y-%m-%d')
 ## 系统告警
 
 ```python
-def log_alert(level, module, message):
+def log_alert(level, module, message, timestamp=None):
+    """写入告警日志。timestamp 默认使用系统时钟，若步骤0已获取 beijing_now，调用方可传入 beijing_now 替代。"""
     from datetime import datetime
-    # 注意：此处使用系统本地时钟。若步骤0 beijing_now 已获取成功，调用方可传入替代 datetime.now()
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if timestamp is None:
+        timestamp = datetime.now()
+    ts = timestamp.strftime('%Y-%m-%d %H:%M:%S') if hasattr(timestamp, 'strftime') else str(timestamp)
     with open('/workspace/系统告警.log', 'a', encoding='utf-8') as f:
-        f.write(f"[{timestamp}] [{level}] {module}: {message}\n")
+        f.write(f"[{ts}] [{level}] {module}: {message}\n")
 ```
 
 触发场景：推荐历史读写失败(ERROR)、JSON格式异常(WARNING)、Excel读写失败(WARNING)、持仓行情搜索失败(WARNING)、持仓跟踪同步失败(WARNING)、持仓跟踪同步成功(INFO)、持仓危机(WARNING)、清理成功(INFO)、清理失败(WARNING)、版本一致(INFO)、版本不一致(INFO)、北京时间API不可达(INFO)、北京时间获取失败(ERROR)、筛选概况与Excel行数不一致(ERROR)、GitHub同步成功(INFO)、GitHub同步失败/无令牌(WARNING)、数据不可达跳过(INFO)、飞书推送成功(INFO)、飞书推送失败(WARNING)、行情数据采集失败(WARNING)、行情数据校验异常(WARNING)
@@ -112,7 +114,7 @@ def safe_read_json(path, default=None):
                 log_alert("WARNING", "safe_read_json", f"{path} 格式异常")
                 return default if default is not None else []
             return data
-    except (json.JSONDecodeError, FileNotFoundError, PermissionError) as e:
+    except (json.JSONDecodeError, PermissionError) as e:
         log_alert("ERROR", "safe_read_json", f"{path}: {str(e)}")
         return default if default is not None else []
 
@@ -181,7 +183,8 @@ def sync_holding_prices_to_xlsx(holdings, path="/workspace/持仓跟踪.xlsx"):
         for h in holdings:
             current = None
             try:
-                code = str(h.get("code"))
+                raw_code = h.get("code")
+                code = str(raw_code) if raw_code is not None else ""
                 current = h.get("current")  # 防御性读取，缺失返回None
                 if not code or code not in code_row:
                     if code:
@@ -275,7 +278,7 @@ def check_holding_crisis(holdings):
 清理逻辑：
 ```python
 # 清理7天前recommendation + 90天前holding/do_T
-# 保留类型：weekly_review、strategy_check、do_T_eval（不受清理影响）
+# 保留类型：weekly_review、strategy_check、do_T_eval、do_T（不受清理影响）
 # data_date 由步骤0定义（beijing_date的值），如 "2026-06-12"
 try:
     from datetime import datetime, timedelta
@@ -308,7 +311,7 @@ except Exception as e:
 
 **注意**：weekly_review/strategy_check 类型保留不清理。
 
-**6.文件初始化**：策略调整记录.json取末条version+params，损坏→默认v6.4.19。交叉验证推荐历史中strategy_check版本，不一致以策略调整记录为准→log_alert INFO。**首次运行或版本变更→safe_append_json追加type="strategy_check"记录**（含version/params/checks），验证各项条件计数与预期一致
+**6.文件初始化**：策略调整记录.json取末条version+params，损坏→默认v6.4.20。交叉验证推荐历史中strategy_check版本，不一致以策略调整记录为准→log_alert INFO。**首次运行或版本变更→safe_append_json追加type="strategy_check"记录**（含version/params/checks），验证各项条件计数与预期一致
 
 版本一致性检查代码：
 ```python
@@ -316,10 +319,10 @@ except Exception as e:
 adj_records = safe_read_json('/workspace/策略调整记录.json')
 if adj_records and len(adj_records) > 0:
     latest = adj_records[-1]
-    file_version = latest.get('version', 'v6.4.19')
+    file_version = latest.get('version', 'v6.4.20')
     params = latest.get('params', {})
 else:
-    file_version = 'v6.4.19'
+    file_version = 'v6.4.20'
     params = {}
 
 # 读取推荐历史找最后一个strategy_check
@@ -356,6 +359,7 @@ if last_check is None or current_version != file_version:
             )
 
             def _wc(ws, r, c, v, font=_cell_font):
+                # 注意：此函数与步骤26(十三.A)中的 _wc 定义一致，修改时需同步更新两处
                 for mr in list(ws.merged_cells.ranges):
                     if mr.min_row <= r <= mr.max_row and mr.min_col <= c <= mr.max_col:
                         if not (r == mr.min_row and c == mr.min_col):
@@ -614,7 +618,7 @@ else:
 
 ## 七、评分公式
 
-总分=必选(门控，不通过→直接排除)+加分×2+参考×1+新闻加分-新闻扣分-L3扣分。
+**计分规则**：先通过三项必选门控条件（不通过→直接排除），再计算数值分：总分=加分×2+参考×1+新闻加分-新闻扣分-L3扣分。
 
 **必选（三项门控条件，任一项不满足→直接排除，不进入评分）**：
 1. 策略条件全部满足（A/B/C/D/E 至少一个策略的全部条件通过）
@@ -994,7 +998,7 @@ except Exception as e:
 每周六，将 GitHub 上本周所有 `短线标的_YYYYMMDD.xlsx` 文件拉取到本地，汇总生成周度复盘报表，计算本周推荐胜率、平均涨跌、策略分布，推送到飞书群。
 
 ```python
-import subprocess, os, json
+import subprocess, os, json, shutil
 from datetime import datetime, timedelta
 
 # 从 GitHub 拉取本周所有短线标的文件
@@ -1002,7 +1006,7 @@ github_repo = "https://github.com/lc132/lv.git"
 temp_dir = "/tmp/lv_weekly_review"
 try:
     if os.path.exists(temp_dir):
-        subprocess.run(["rm", "-rf", temp_dir], check=True)
+        shutil.rmtree(temp_dir, ignore_errors=True)
     subprocess.run(
         ["git", "clone", "--depth", "1", "--branch", "main", github_repo, temp_dir],
         check=True, timeout=60
@@ -1024,7 +1028,7 @@ except Exception as e:
     log_alert("WARNING", "每周复盘", f"拉取失败: {str(e)[:100]}")
 finally:
     if os.path.exists(temp_dir):
-        subprocess.run(["rm", "-rf", temp_dir])
+        shutil.rmtree(temp_dir, ignore_errors=True)
 ```
 
 **流程**：每日筛选后自动上传到 GitHub `lc132/lv` → 周六自动拉取汇总 → 生成复盘报表推送飞书。
