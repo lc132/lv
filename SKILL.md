@@ -563,25 +563,20 @@ def fetch_all_a_stocks():
     # === 方案二：新浪财经批量API（沙箱环境适用，分批拉取全A股） ===
     log_alert("INFO", "行情采集", "东方财富clist不可达，降级为新浪批量API")
     try:
-        # 生成全A股代码范围
+        # 生成全A股代码范围（排除北交所8xxx，规则2直接排除无需拉取）
         code_ranges = []
-        # 上海主板: 600000-605999
+        # 上海主板: 600000-605999（约2000只实际标的）
         for i in range(600000, 606000):
             code_ranges.append(f"sh{i}")
-        # 上海科创板: 688000-689999
+        # 上海科创板: 688000-689999（约600只实际标的）
         for i in range(688000, 690000):
             code_ranges.append(f"sh{i}")
-        # 深圳主板: 000001-004999
+        # 深圳主板: 000001-004999（约2000只实际标的）
         for i in range(1, 5000):
             code_ranges.append(f"sz{i:06d}")
-        # 深圳创业板: 300000-301999
+        # 深圳创业板: 300000-301999（约1400只实际标的）
         for i in range(300000, 302000):
             code_ranges.append(f"sz{i}")
-        # 北京: 8开头 (830000-879999, 920000-929999)
-        for i in range(830000, 880000):
-            code_ranges.append(f"bj{i}")
-        for i in range(920000, 930000):
-            code_ranges.append(f"bj{i}")
 
         stocks = []
         batch_size = 80  # 新浪API每批建议≤100
