@@ -1,8 +1,8 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.5.0)。基于前一日收盘数据，通过 34步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→全市场API拉取(东方财富clist)→板块/行业补全→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分→行业集中度→新闻筛查→GitHub同步→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.5.1)。基于前一日收盘数据，通过 34步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→全市场API拉取(东方财富clist)→板块/行业补全→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分（含评分相同时二次评估打破平局）→行业集中度→新闻筛查→GitHub同步→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.5.0
+# A股盘前短线标的筛选 v6.5.1
 
 基于前一日完整收盘数据筛选当日有望上涨的A股短线标的。**不追高是硬纪律。**
 
@@ -819,6 +819,72 @@ for s in raw_pool:
 
 **置信度-仓位联动**（受 `confidence_position_enabled` 开关控制）：`confidence_position_enabled=true` 时→同一策略内 ★★★→取仓位上限 | ★★→取仓位中值 | ★→取仓位下限。`confidence_position_enabled=false` 时→统一取仓位中值。仓位上限/下限按策略定义取整。
 
+**评分相同时的二次评估（打破平局）**：当多个标的综合评分相同时，按以下优先级依次比较，确定最终排序：
+
+| 优先级 | 维度 | 规则 | 依据 |
+|--------|------|------|------|
+| 1 | 策略优先级 | A(动量) > B(超跌) > C(事件) > D(资金) > E(回调) | 策略本身的预期收益率降序 |
+| 2 | 量比 | 高者优先 | 量比越高表示当日资金关注度越高，短期爆发力越强 |
+| 3 | 换手率 | 中等优先（5%-15%最佳），过低(<2%)排末，过高(>25%非次新)降级 | 过低无人气，过高有出货嫌疑，适中换手率表示健康交投 |
+| 4 | 涨跌幅 | 按策略区分：A/E类涨幅低者优先（空间更大），B类跌幅深者优先（超跌更充分），C/D类涨幅适中优先 | 不同策略对涨跌幅的偏好不同 |
+| 5 | 板块热度 | 当日资金流入TOP3板块的标的优先 | 板块共振提升上涨概率 |
+
+```python
+# 评分相同时的二次排序逻辑
+def tie_break_sort(recos):
+    """对评分相同的标的按二次评估规则排序"""
+    def sort_key(rec):
+        score = rec.get('score', 0)
+        strategy = rec.get('strategy', 'Z')
+        strategy_order = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4}
+        strat_rank = strategy_order.get(strategy, 99)
+        
+        vol_ratio = rec.get('volume_ratio') or 0
+        # 量比归一化到0~1（>3.0视为1）
+        vol_score = min(vol_ratio / 3.0, 1.0) if vol_ratio else 0
+        
+        turnover = rec.get('turnover') or 0
+        # 换手率评分：5-15%最优→1分，2-5%→0.6，<2%→0.2，15-25%→0.5，>25%→0.1
+        if turnover < 2:
+            t_score = 0.2
+        elif turnover <= 5:
+            t_score = 0.6
+        elif turnover <= 15:
+            t_score = 1.0
+        elif turnover <= 25:
+            t_score = 0.5
+        else:
+            t_score = 0.1
+        
+        change_pct = rec.get('change_pct') or 0
+        # 涨跌幅评分：按策略偏好调整
+        if strategy in ('A', 'E'):
+            # 动量/突破类：涨幅越小越好（3%最优，>7%扣分）
+            c_score = max(0, 1.0 - abs(change_pct - 3) / 7.0)
+        elif strategy == 'B':
+            # 超跌类：跌幅越深越好（-5%最优，但不超过-10%）
+            c_score = max(0, 1.0 - abs(change_pct + 5) / 5.0)
+        else:
+            # C/D类：涨幅适中
+            c_score = max(0, 1.0 - abs(change_pct - 2) / 8.0)
+        
+        sector_heat = rec.get('sector_rank', 99)  # 板块热度排名（越小越热，默认99）
+        s_score = max(0, 1.0 - sector_heat / 20.0)
+        
+        # 综合二次评分：量比25% + 换手率25% + 涨跌幅25% + 板块热度15% + 策略10%
+        tie_score = (vol_score * 0.25 + t_score * 0.25 + c_score * 0.25 
+                     + s_score * 0.15 + (1.0 - strat_rank / 10.0) * 0.10)
+        
+        # 主排序：score 降序，tie_score 降序，strat_rank 升序
+        return (-score, strat_rank, -tie_score)
+    
+    recos.sort(key=sort_key)
+    return recos
+
+# 在最终输出前调用
+recos = tie_break_sort(recos)
+```
+
 ## 八、新闻筛查
 
 排除：减持/暴雷/立案/诉讼/下调评级 | 观察：异常波动/解禁/高管减持 | 加分：预增/合同/调研/上调评级
@@ -862,7 +928,7 @@ headers = ["序号","策略","标的","代码","板块","行业","当日涨跌",
 for col_idx, h in enumerate(headers, 1):
     ws.cell(row=1, column=col_idx, value=h)
 
-# 写入数据行（recos 为最终推荐列表，已按评分降序）
+# 写入数据行（recos 为最终推荐列表，先经 tie_break_sort 二次排序打破平局，再按最终排序输出）
 for i, rec in enumerate(recos, 1):
     ws.cell(row=i+1, column=1, value=i)                          # 序号
     ws.cell(row=i+1, column=2, value=rec.get("strategy",""))     # 策略
