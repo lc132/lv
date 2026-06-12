@@ -1,8 +1,8 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.4.21)。基于前一日收盘数据，通过 33步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分→行业集中度→新闻筛查→GitHub同步→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.4.22)。基于前一日收盘数据，通过 33步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分→行业集中度→新闻筛查→GitHub同步→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.4.21
+# A股盘前短线标的筛选 v6.4.22
 
 基于前一日完整收盘数据筛选当日有望上涨的A股短线标的。**不追高是硬纪律。**
 
@@ -379,7 +379,7 @@ if last_check is None or current_version != file_version:
             vr = ws1.max_row + 1
             _wc(ws1, vr, 1, file_version)
             _wc(ws1, vr, 2, beijing_date)
-            _wc(ws1, vr, 3, params.get('_last_change_reason', '版本同步'))
+            _wc(ws1, vr, 3, '版本同步')
 
             # 更新关键纪律版本号
             if '关键纪律' in wb.sheetnames:
@@ -502,7 +502,7 @@ candidate = {
 
 ```python
 # 采集单个标的的行情数据（开盘价/收盘价/换手率/振幅/涨跌幅）
-import urllib.request, json, re
+import urllib.request, json
 
 def fetch_stock_quote(code, data_date):
     """通过定向URL获取精确行情，返回 dict 或 None。data_date 用于校验行情日期（YYYY-MM-DD）"""
@@ -628,7 +628,7 @@ else:
 **加分项**：板块TOP5+1、信号加分项(首阴候选+1)、K线形态确认+1。
 **参考项加分**：ROE>15%(+2分) + ROE 5-15%(+1分) + ROE<0%(-1分) + 经营现金流为正(+1分)。
 **L3扣分**：L3级信号触发→减2分（主力净流出/融券增/行业利空）。
-置信：≥12★★★ | 8-11★★ | <8★。分值为整数，如遇小数→向上取整判定置信度（如7.2→★★，10.8→★★★）。策略冲突按优先级归类，动量+超跌同时→以动量为准。
+置信：≥9★★★ | 6-8★★ | <6★。分值为整数，如遇小数→向上取整判定置信度（如5.2→★★，8.8→★★★）。策略冲突按优先级归类，动量+超跌同时→以动量为准。
 
 **置信度-仓位联动**（受 `confidence_position_enabled` 开关控制）：`confidence_position_enabled=true` 时→同一策略内 ★★★→取仓位上限 | ★★→取仓位中值 | ★→取仓位下限。`confidence_position_enabled=false` 时→统一取仓位中值。仓位上限/下限按策略定义取整。
 
@@ -1002,7 +1002,16 @@ import subprocess, os, json, shutil
 from datetime import datetime, timedelta
 
 # 从 GitHub 拉取本周所有短线标的文件
-github_repo = "https://github.com/lc132/lv.git"
+# 读取认证令牌（若仓库改为私有，缺少令牌则回退到公开URL）
+token = None
+token_path = "/workspace/.github_token"
+if os.path.exists(token_path):
+    try:
+        with open(token_path, 'r') as f:
+            token = f.read().strip()
+    except Exception:
+        pass
+github_repo = f"https://{token}@github.com/lc132/lv.git" if token else "https://github.com/lc132/lv.git"
 temp_dir = "/tmp/lv_weekly_review"
 try:
     if os.path.exists(temp_dir):
