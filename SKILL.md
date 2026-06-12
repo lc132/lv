@@ -599,66 +599,57 @@ finally:
         subprocess.run(["rm", "-rf", repo_dir])
 ```
 
-## 十三.B、飞书推送 — 筛选结果发送到飞书群
+## 十三.B、飞书推送 — 筛选结果通过群机器人 Webhook 推送
 
-筛选完成后，将筛选概况和 Excel 文件通过飞书消息发送到指定群聊。
+筛选完成后，通过飞书群机器人 Webhook 发送筛选概况卡片到指定群聊。
 
-**前置条件**：
-1. 飞书应用已配置（`lark-cli config init` 已完成）
-2. 应用需在飞书开发者后台开通以下 scope：`im:message`、`im:message.send_as_user`、`im:resource`
-3. 目标群聊已获取 `chat_id`（通过 `lark-cli im +chat-list --as user` 查询）
-4. 运行环境 strict-mode 为 `user`（当前默认）
+**前置条件**：飞书群已添加自定义机器人，获得 Webhook URL（`https://open.feishu.cn/open-apis/bot/v2/hook/xxx`）。
 
 **执行逻辑**（失败仅 log_alert WARNING，不影响主流程）：
 
 ```python
-import subprocess, os
+import urllib.request, json
 
-# 飞书目标群聊ID
-FEISHU_CHAT_ID = "oc_40d6812aa90b6b9bb47347a1e5d03e35"  # 旅程's Feishu Assistant
+# 飞书群机器人 Webhook URL
+FEISHU_WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/792265f9-12d5-4e78-a163-08cad5699fa1"
 
-xlsx_path = f"/workspace/短线标的_{prediction_date}.xlsx"
-if not os.path.exists(xlsx_path):
-    log_alert("WARNING", "飞书推送", "xlsx文件不存在，跳过")
-    return
+# 构建筛选概况卡片
+card = {
+    "msg_type": "interactive",
+    "card": {
+        "header": {
+            "title": {"tag": "plain_text", "content": f"📊 每日短线标的筛选 — {prediction_date}"},
+            "template": "blue"
+        },
+        "elements": [
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"**数据来源**: {data_date}"}},
+            {"tag": "hr"},
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"原始标的池: **{total_raw}**只 → 硬排除: **{excluded}**只 → 信号过滤: **{filtered}**只 → 策略匹配: **{matched}**只 → 行业限制: **{industry_limited}**只 → 新闻筛查: **{news_filtered}**只 → ★ 最终: **{final_recommend_count}**只"}},
+            {"tag": "hr"},
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"策略分布: A动量:{strategy_counts.get('A',0)} B超跌:{strategy_counts.get('B',0)} C事件:{strategy_counts.get('C',0)} D资金:{strategy_counts.get('D',0)} E回调:{strategy_counts.get('E',0)}"}},
+            {"tag": "note", "elements": [{"tag": "plain_text", "content": "⚠️ 仅供参考，不构成投资建议"}]}
+        ]
+    }
+}
 
-# 构建筛选概况消息
-summary_lines = [
-    f"📊 每日短线标的筛选 — {prediction_date}",
-    "",
-    f"数据来源: {data_date}",
-    f"原始标的池: {total_raw}只 → 硬排除: {excluded}只 → 信号过滤: {filtered}只 → 策略匹配: {matched}只 → 行业限制: {industry_limited}只 → 新闻筛查: {news_filtered}只 → ★ 最终: {final_recommend_count}只",
-    f"策略分布: A:{strategy_counts.get('A',0)} B:{strategy_counts.get('B',0)} C:{strategy_counts.get('C',0)} D:{strategy_counts.get('D',0)} E:{strategy_counts.get('E',0)}",
-    f"⚠️ 仅供参考，不构成投资建议",
-]
-markdown_content = "\n".join(summary_lines)
-
-# 发送文本消息（使用user身份+markdown格式）
-text_result = subprocess.run(
-    ["lark-cli", "im", "+messages-send", "--as", "user",
-     "--chat-id", FEISHU_CHAT_ID, "--markdown", markdown_content],
-    capture_output=True, text=True, timeout=15
-)
-
-if text_result.returncode == 0:
-    log_alert("INFO", "飞书推送", "✅ 筛选概况已发送")
-else:
-    log_alert("WARNING", "飞书推送", f"文本消息发送失败: {text_result.stderr[:100]}")
-
-# 上传并发送Excel文件
-file_result = subprocess.run(
-    ["lark-cli", "im", "+messages-send", "--as", "user",
-     "--chat-id", FEISHU_CHAT_ID, "--file", xlsx_path],
-    capture_output=True, text=True, timeout=15
-)
-
-if file_result.returncode == 0:
-    log_alert("INFO", "飞书推送", "✅ Excel文件已发送")
-else:
-    log_alert("WARNING", "飞书推送", f"文件发送失败: {file_result.stderr[:100]}")
+try:
+    req = urllib.request.Request(
+        FEISHU_WEBHOOK,
+        data=json.dumps(card, ensure_ascii=False).encode('utf-8'),
+        headers={'Content-Type': 'application/json'},
+        method='POST'
+    )
+    resp = urllib.request.urlopen(req, timeout=10)
+    result = json.loads(resp.read())
+    if result.get('code') == 0:
+        log_alert("INFO", "飞书推送", f"✅ 筛选概况已推送到飞书群")
+    else:
+        log_alert("WARNING", "飞书推送", f"推送失败: {result.get('msg','')}")
+except Exception as e:
+    log_alert("WARNING", "飞书推送", f"请求异常: {str(e)[:100]}")
 ```
 
-**首次配置检查**：运行前调用 `lark-cli im +chat-list --as user` 验证连通性，若失败→log_alert WARNING 跳过飞书推送。
+**Excel 文件获取**：筛选结果 xlsx 已同步到 GitHub `lc132/lv`，群成员可从 GitHub 下载。若需直接发送文件，需在飞书开发者后台开通 `im:message`/`im:resource` scope 后走 lark-cli API。
 
 ## 十四、完整执行步骤（32步，含3A/4A/4B/4C子步骤）
 
