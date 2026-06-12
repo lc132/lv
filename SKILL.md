@@ -1,8 +1,8 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.4.7)。基于前一日收盘数据，通过 32步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分→行业集中度→新闻筛查→GitHub同步→飞书推送），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.4.8)。基于前一日收盘数据，通过 32步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分→行业集中度→新闻筛查→GitHub同步→飞书推送），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.4.7
+# A股盘前短线标的筛选 v6.4.8
 
 基于前一日完整收盘数据筛选当日有望上涨的A股短线标的。**不追高是硬纪律。**
 
@@ -101,7 +101,7 @@ def log_alert(level, module, message):
         f.write(f"[{timestamp}] [{level}] {module}: {message}\n")
 ```
 
-触发场景：推荐历史读写失败(ERROR)、JSON格式异常(WARNING)、Excel读写失败(WARNING)、持仓行情搜索失败(WARNING)、持仓跟踪同步失败(WARNING)、持仓跟踪同步成功(INFO)、持仓危机(WARNING)、清理失败(WARNING)、版本不一致(INFO)、北京时间获取失败(ERROR)、时间校验偏差(WARNING)、筛选概况与Excel行数不一致(ERROR)、GitHub同步成功(INFO)、GitHub同步失败/无令牌(WARNING)、数据不可达跳过(INFO)
+触发场景：推荐历史读写失败(ERROR)、JSON格式异常(WARNING)、Excel读写失败(WARNING)、持仓行情搜索失败(WARNING)、持仓跟踪同步失败(WARNING)、持仓跟踪同步成功(INFO)、持仓危机(WARNING)、清理成功(INFO)、清理失败(WARNING)、版本一致(INFO)、版本不一致(INFO)、北京时间获取失败(ERROR)、北京时间API不可达(INFO)、时间校验偏差(WARNING)、筛选概况与Excel行数不一致(ERROR)、GitHub同步成功(INFO)、GitHub同步失败/无令牌(WARNING)、数据不可达跳过(INFO)、飞书推送成功(INFO)、飞书推送失败(WARNING)
 
 ## 文件容错
 
@@ -277,14 +277,32 @@ def check_holding_crisis(holdings):
 清理逻辑：
 ```python
 # 清理7天前recommendation + 90天前holding/do_T
+# 保留类型：weekly_review、strategy_check、do_T_eval（不受清理影响）
 try:
+    from datetime import timedelta
     history = safe_read_json('/workspace/推荐历史.json')
-    cutoff_7d = data_date  # 7天前
-    cutoff_90d = data_date  # 90天前（用字符串比较近似）
-    new_history = [r for r in history if r.get('type') in ('holding', 'do_T') or r.get('type') == 'recommendation' and r.get('date','') >= cutoff_7d]
+    cutoff_7d_dt = datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=7)
+    cutoff_90d_dt = datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=90)
+    cutoff_7d = cutoff_7d_dt.strftime('%Y-%m-%d')
+    cutoff_90d = cutoff_90d_dt.strftime('%Y-%m-%d')
+    new_history = []
+    for r in history:
+        t = r.get('type', '')
+        if t in ('weekly_review', 'strategy_check', 'do_T_eval'):
+            new_history.append(r)  # 永久保留
+        elif t in ('holding', 'do_T'):
+            d = r.get('update_date', '')
+            if d >= cutoff_90d:
+                new_history.append(r)  # 90天内保留
+        elif t == 'recommendation':
+            d = r.get('date', '')
+            if d >= cutoff_7d:
+                new_history.append(r)  # 7天内保留
     if len(new_history) < len(history):
         safe_write_json('/workspace/推荐历史.json', new_history)
         log_alert("INFO", "清理", f"已清理{len(history)-len(new_history)}条过期记录")
+    else:
+        log_alert("INFO", "清理", "无需清理")
 except Exception as e:
     log_alert("WARNING", "清理", f"清理失败: {str(e)[:80]}")
 ```
@@ -474,10 +492,10 @@ footer_start = last_data_row + 2  # 空一行
 
 # 统计各策略数量
 from collections import Counter
-strategy_counts = Counter()  # 遍历标的池数据行，row[1]为策略列
-# 示例填充逻辑（实际执行时遍历ws数据行）：
-# for row in ws.iter_rows(min_row=2, max_row=last_data_row, values_only=True):
-#     strategy_counts[row[1]] += 1
+strategy_counts = Counter()
+for row in ws.iter_rows(min_row=2, max_row=last_data_row, values_only=True):
+    if row[1]:
+        strategy_counts[row[1]] += 1
 
 ws.merge_cells(start_row=footer_start, start_column=1, end_row=footer_start, end_column=18)
 cell = ws.cell(row=footer_start, column=1, value=f"📊 共筛选出 {final_recommend_count} 只标的（A:{strategy_counts.get('A',0)} B:{strategy_counts.get('B',0)} C:{strategy_counts.get('C',0)} D:{strategy_counts.get('D',0)} E:{strategy_counts.get('E',0)}）")
@@ -579,6 +597,14 @@ try:
         ["git", "clone", "--depth", "1", "--branch", "main", repo_url, repo_dir],
         capture_output=True, text=True, timeout=30, check=True
     )
+    # 远程版本校验：防止githubusercontent CDN缓存导致定时任务拉取过时规则
+    remote_skill = os.path.join(repo_dir, "SKILL.md")
+    if os.path.exists(remote_skill):
+        with open(remote_skill, 'r') as f:
+            remote_content = f.read()
+        if "v6.4.8" not in remote_content[:200]:
+            log_alert("WARNING", "GitHub同步", "远程SKILL.md版本不匹配，跳过推送以免覆盖更新")
+            return
     shutil.copy(xlsx_path, os.path.join(repo_dir, f"短线标的_{prediction_date}.xlsx"))
     subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True)
     subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True)
@@ -608,10 +634,20 @@ finally:
 **执行逻辑**（失败仅 log_alert WARNING，不影响主流程）：
 
 ```python
-import urllib.request, json
+import urllib.request, json, os
 
-# 飞书群机器人 Webhook URL
-FEISHU_WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/792265f9-12d5-4e78-a163-08cad5699fa1"
+# 从外部文件读取飞书 Webhook URL（不入git，防止泄露）
+FEISHU_WEBHOOK = None
+webhook_path = "/workspace/.feishu_webhook"
+if os.path.exists(webhook_path):
+    try:
+        with open(webhook_path, 'r') as f:
+            FEISHU_WEBHOOK = f.read().strip()
+    except Exception:
+        pass
+if not FEISHU_WEBHOOK:
+    log_alert("WARNING", "飞书推送", "未配置Webhook URL，跳过")
+    return
 
 # 构建筛选概况卡片
 card = {
