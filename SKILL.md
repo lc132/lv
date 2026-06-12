@@ -1,8 +1,8 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.4.8)。基于前一日收盘数据，通过 32步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分→行业集中度→新闻筛查→GitHub同步→飞书推送），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.4.9)。基于前一日收盘数据，通过 33步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分→行业集中度→新闻筛查→GitHub同步→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.4.8
+# A股盘前短线标的筛选 v6.4.9
 
 基于前一日完整收盘数据筛选当日有望上涨的A股短线标的。**不追高是硬纪律。**
 
@@ -597,18 +597,12 @@ try:
         ["git", "clone", "--depth", "1", "--branch", "main", repo_url, repo_dir],
         capture_output=True, text=True, timeout=30, check=True
     )
-    # 远程版本校验：防止githubusercontent CDN缓存导致定时任务拉取过时规则
-    remote_skill = os.path.join(repo_dir, "SKILL.md")
-    if os.path.exists(remote_skill):
-        with open(remote_skill, 'r') as f:
-            remote_content = f.read()
-        if "v6.4.8" not in remote_content[:200]:
-            log_alert("WARNING", "GitHub同步", "远程SKILL.md版本不匹配，跳过推送以免覆盖更新")
-            return
+    # 仅推送 xlsx，不覆盖 SKILL.md
     shutil.copy(xlsx_path, os.path.join(repo_dir, f"短线标的_{prediction_date}.xlsx"))
     subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True)
     subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True)
-    subprocess.run(["git", "-C", repo_dir, "add", "."], check=True)
+    # 只add xlsx文件，不修改SKILL.md
+    subprocess.run(["git", "-C", repo_dir, "add", f"短线标的_{prediction_date}.xlsx"], check=True)
     subprocess.run(["git", "-C", repo_dir, "commit", "-m", f"筛选结果 {prediction_date}"], check=True)
     result = subprocess.run(
         ["git", "-C", repo_dir, "push", "origin", "main"],
@@ -687,9 +681,49 @@ except Exception as e:
 
 **Excel 文件获取**：筛选结果 xlsx 已同步到 GitHub `lc132/lv`，群成员可从 GitHub 下载。若需直接发送文件，需在飞书开发者后台开通 `im:message`/`im:resource` scope 后走 lark-cli API。
 
-## 十四、完整执行步骤（32步，含3A/4A/4B/4C子步骤）
+## 二十八、每周复盘数据拉取（仅周六执行）
 
-0.获取北京时间(data_date+prediction_date) → 1.节假日检查 → 2.极端行情 → 3.外围市场 → 3A.开盘前外围(期货跌>1%→降档) → 4.持仓行情同步 → 4A.做T评估 → 4B.持仓跟踪同步 → 4C.持仓危机检查 → 5.推荐历史持久化 → 6.文件初始化 → 7.财报季检测 → 8.大盘判断 → 9.板块轮动 → 10.搜集行情 → 11.硬排除31项(含L1/L2/L3分级) → 12.信号过滤14项(记录数量) → 13.五策略筛选 → 14.评分门控(含L3扣分) → 15.冲突处理 → 16.综合评分 → 17.行业限制(记录数量) → 18.新闻筛查(记录数量) → 19.推荐不足降级 → 20.输出Excel(含筛选概况) → 21.最终验证(含数量校验) → 22.写推荐历史+清理90天前 → 23.回溯检查昨日做T → 24.告警日志摘要 → 25.输出📊筛选概况到对话 → 26.GitHub同步(xlsx) → 27.飞书推送(概况+文件)
+每周六，将 GitHub 上本周所有 `短线标的_YYYYMMDD.xlsx` 文件拉取到本地，汇总生成周度复盘报表，计算本周推荐胜率、平均涨跌、策略分布，推送到飞书群。
+
+```python
+import subprocess, os, json
+from datetime import datetime, timedelta
+
+# 从 GitHub 拉取本周所有短线标的文件
+github_repo = "https://github.com/lc132/lv.git"
+temp_dir = "/tmp/lv_weekly_review"
+try:
+    if os.path.exists(temp_dir):
+        subprocess.run(["rm", "-rf", temp_dir], check=True)
+    subprocess.run(
+        ["git", "clone", "--depth", "1", "--branch", "main", github_repo, temp_dir],
+        check=True, timeout=60
+    )
+    # 列出所有短线标的文件
+    xlsx_files = []
+    for f in os.listdir(temp_dir):
+        if f.startswith("短线标的_") and f.endswith(".xlsx"):
+            xlsx_files.append((f, os.path.join(temp_dir, f)))
+    if not xlsx_files:
+        log_alert("INFO", "每周复盘", "本周无推荐文件，跳过")
+        return
+    # 排序按日期
+    xlsx_files.sort()
+    log_alert("INFO", "每周复盘", f"拉取到 {len(xlsx_files)} 个推荐文件")
+    # 汇总统计...
+    # ...（完整统计逻辑在复盘任务中执行）
+except Exception as e:
+    log_alert("WARNING", "每周复盘", f"拉取失败: {str(e)[:100]}")
+finally:
+    if os.path.exists(temp_dir):
+        subprocess.run(["rm", "-rf", temp_dir])
+```
+
+**流程**：每日筛选后自动上传到 GitHub `lc132/lv` → 周六自动拉取汇总 → 生成复盘报表推送飞书。
+
+## 十五、完整执行步骤（33步，含3A/4A/4B/4C子步骤）
+
+0.获取北京时间(data_date+prediction_date) → 1.节假日检查 → 2.极端行情 → 3.外围市场 → 3A.开盘前外围(期货跌>1%→降档) → 4.持仓行情同步 → 4A.做T评估 → 4B.持仓跟踪同步 → 4C.持仓危机检查 → 5.推荐历史持久化 → 6.文件初始化 → 7.财报季检测 → 8.大盘判断 → 9.板块轮动 → 10.搜集行情 → 11.硬排除31项(含L1/L2/L3分级) → 12.信号过滤14项(记录数量) → 13.五策略筛选 → 14.评分门控(含L3扣分) → 15.冲突处理 → 16.综合评分 → 17.行业限制(记录数量) → 18.新闻筛查(记录数量) → 19.推荐不足降级 → 20.输出Excel(含筛选概况) → 21.最终验证(含数量校验) → 22.写推荐历史+清理90天前 → 23.回溯检查昨日做T → 24.告警日志摘要 → 25.输出📊筛选概况到对话 → 26.GitHub同步(xlsx) → 27.飞书推送(概况+文件) → 28.每周复盘拉取（仅每周六执行）
 
 步骤说明：
 - **步骤10 搜集行情**：搜索全A股行情数据构建原始标的池（详见六末尾）。
