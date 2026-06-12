@@ -603,15 +603,19 @@ finally:
 
 筛选完成后，将筛选概况和 Excel 文件通过飞书消息发送到指定群聊。
 
-**前置条件**：飞书应用已配置（`lark-cli config init`），且已获取目标群聊的 `chat_id`。
+**前置条件**：
+1. 飞书应用已配置（`lark-cli config init` 已完成）
+2. 应用需在飞书开发者后台开通以下 scope：`im:message`、`im:message.send_as_user`、`im:resource`
+3. 目标群聊已获取 `chat_id`（通过 `lark-cli im +chat-list --as user` 查询）
+4. 运行环境 strict-mode 为 `user`（当前默认）
 
 **执行逻辑**（失败仅 log_alert WARNING，不影响主流程）：
 
 ```python
 import subprocess, os
 
-# 读取飞书目标群聊ID（硬编码或从配置文件读取）
-FEISHU_CHAT_ID = "oc_xxxxxxxx"  # 替换为实际群聊ID
+# 飞书目标群聊ID
+FEISHU_CHAT_ID = "oc_40d6812aa90b6b9bb47347a1e5d03e35"  # 旅程's Feishu Assistant
 
 xlsx_path = f"/workspace/短线标的_{prediction_date}.xlsx"
 if not os.path.exists(xlsx_path):
@@ -629,11 +633,10 @@ summary_lines = [
 ]
 markdown_content = "\n".join(summary_lines)
 
-# 发送文本消息
+# 发送文本消息（使用user身份+markdown格式）
 text_result = subprocess.run(
-    ["lark-cli", "im", "+messages-send", "--as", "bot",
-     "--chat-id", FEISHU_CHAT_ID, "--msg-type", "post",
-     "--content", markdown_content],
+    ["lark-cli", "im", "+messages-send", "--as", "user",
+     "--chat-id", FEISHU_CHAT_ID, "--markdown", markdown_content],
     capture_output=True, text=True, timeout=15
 )
 
@@ -644,9 +647,8 @@ else:
 
 # 上传并发送Excel文件
 file_result = subprocess.run(
-    ["lark-cli", "im", "+messages-send", "--as", "bot",
-     "--chat-id", FEISHU_CHAT_ID, "--msg-type", "file",
-     "--file-path", xlsx_path],
+    ["lark-cli", "im", "+messages-send", "--as", "user",
+     "--chat-id", FEISHU_CHAT_ID, "--file", xlsx_path],
     capture_output=True, text=True, timeout=15
 )
 
@@ -656,7 +658,7 @@ else:
     log_alert("WARNING", "飞书推送", f"文件发送失败: {file_result.stderr[:100]}")
 ```
 
-**首次配置检查**：运行前检查 `lark-cli auth status --as bot` 返回 ok，若未认证→log_alert WARNING 跳过飞书推送。
+**首次配置检查**：运行前调用 `lark-cli im +chat-list --as user` 验证连通性，若失败→log_alert WARNING 跳过飞书推送。
 
 ## 十四、完整执行步骤（32步，含3A/4A/4B/4C子步骤）
 
