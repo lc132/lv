@@ -1,23 +1,22 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.4.11)。基于前一日收盘数据，通过 33步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分→行业集中度→新闻筛查→GitHub同步→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.4.12)。基于前一日收盘数据，通过 33步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分→行业集中度→新闻筛查→GitHub同步→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.4.11
+# A股盘前短线标的筛选 v6.4.12
 
 基于前一日完整收盘数据筛选当日有望上涨的A股短线标的。**不追高是硬纪律。**
 
 ## 步骤零、北京时间获取（最高优先级，必须第一步执行）
 
-**核心原则**：不依赖本地系统时钟，通过网络授时 API 获取精确北京时间。
+**核心原则**：仅通过公共网络授时 API 获取精确北京时间。不依赖本地系统时钟、不降级到 zoneinfo/pytz。
 
 ```python
 from datetime import datetime, timedelta
 import urllib.request, urllib.error, json
 
 beijing_now = None
-time_source = None
 
-# 方案一：网络授时API（最精确，不依赖系统时钟）
+# 仅通过网络授时API获取北京时间（多源冗余，任一成功即可）
 TIME_APIS = [
     'http://worldtimeapi.org/api/timezone/Asia/Shanghai',
     'https://timeapi.io/api/time/current/zone?timeZone=Asia/Shanghai',
@@ -31,59 +30,29 @@ for api_url in TIME_APIS:
             beijing_now = datetime.fromisoformat(data['datetime'])
         else:
             beijing_now = datetime.fromisoformat(data['dateTime'])
-        time_source = 'network'
         break
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
-        # 网络层错误：API不可达/超时，尝试下一个源
         log_alert("INFO", "北京时间", f"{api_url} 网络不可达: {str(e)[:60]}")
         continue
     except (json.JSONDecodeError, KeyError, ValueError) as e:
-        # 解析层错误：响应格式异常或fromisoformat不兼容，尝试下一个源
         log_alert("INFO", "北京时间", f"{api_url} 解析失败: {str(e)[:60]}")
         continue
     except Exception:
         continue
 
-# 方案二：zoneinfo（Python 3.9+ 内置，无 pytz 依赖）
+# 所有API均失败 → 报错中止，不降级到系统时钟
 if beijing_now is None:
-    try:
-        from zoneinfo import ZoneInfo
-        beijing_now = datetime.now(ZoneInfo('Asia/Shanghai'))
-        time_source = 'zoneinfo'
-    except Exception:
-        pass
-
-# 方案三：pytz（旧版兼容）
-if beijing_now is None:
-    try:
-        import pytz
-        beijing_now = datetime.now(pytz.timezone('Asia/Shanghai'))
-        time_source = 'pytz'
-    except Exception:
-        pass
-
-# 方案四：系统时间（最后兜底）
-if beijing_now is None:
-    beijing_now = datetime.now()
-    time_source = 'system'
-    log_alert("ERROR", "北京时间", "所有时间源均失败，使用系统时间")
+    log_alert("ERROR", "北京时间", "所有授时API均不可达，本次筛选中止（禁止使用系统时钟）")
+    raise RuntimeError("北京时间获取失败：所有授时API均不可达")
 
 beijing_date = beijing_now.strftime('%Y-%m-%d')
 beijing_hour = beijing_now.hour
 beijing_weekday = beijing_now.weekday()  # 0=周一,6=周日
-
-# 交叉验证：网络授时≠系统时间超过2小时 → 告警
-if time_source == 'network':
-    from datetime import timezone as tz
-    system_now = datetime.now(tz.utc)
-    diff_minutes = abs((beijing_now - system_now).total_seconds() / 60)
-    if diff_minutes > 120:
-        log_alert("WARNING", "时间校验", f"网络授时与系统时钟偏差{diff_minutes:.0f}分钟，系统时钟可能不准，已采用网络授时")
 ```
 
 **交易日对应**：周六/日→跳过本次预测 | 周一→`data_date`=上周五,`prediction_date`=周一 | 周二→周一/周二 | 周三→周二/周三 | 周四→周三/周四 | 周五→周四/周五
 
-所有搜索 query 使用 `data_date`，输出文件名 `/workspace/短线标的_YYYYMMDD.xlsx` 使用 `prediction_date`。网络授时 API 均不可用时依次降级 zoneinfo→pytz→系统时间。
+所有搜索 query 使用 `data_date`，输出文件名 `/workspace/短线标的_YYYYMMDD.xlsx` 使用 `prediction_date`。API 全部不可达→直接中止，不降级。
 
 ## 可配置参数
 
@@ -101,7 +70,7 @@ def log_alert(level, module, message):
         f.write(f"[{timestamp}] [{level}] {module}: {message}\n")
 ```
 
-触发场景：推荐历史读写失败(ERROR)、JSON格式异常(WARNING)、Excel读写失败(WARNING)、持仓行情搜索失败(WARNING)、持仓跟踪同步失败(WARNING)、持仓跟踪同步成功(INFO)、持仓危机(WARNING)、清理成功(INFO)、清理失败(WARNING)、版本一致(INFO)、版本不一致(INFO)、北京时间获取失败(ERROR)、北京时间API不可达(INFO)、时间校验偏差(WARNING)、筛选概况与Excel行数不一致(ERROR)、GitHub同步成功(INFO)、GitHub同步失败/无令牌(WARNING)、数据不可达跳过(INFO)、飞书推送成功(INFO)、飞书推送失败(WARNING)
+触发场景：推荐历史读写失败(ERROR)、JSON格式异常(WARNING)、Excel读写失败(WARNING)、持仓行情搜索失败(WARNING)、持仓跟踪同步失败(WARNING)、持仓跟踪同步成功(INFO)、持仓危机(WARNING)、清理成功(INFO)、清理失败(WARNING)、版本一致(INFO)、版本不一致(INFO)、北京时间API不可达(INFO)、北京时间获取失败(ERROR)、筛选概况与Excel行数不一致(ERROR)、GitHub同步成功(INFO)、GitHub同步失败/无令牌(WARNING)、数据不可达跳过(INFO)、飞书推送成功(INFO)、飞书推送失败(WARNING)
 
 ## 文件容错
 
