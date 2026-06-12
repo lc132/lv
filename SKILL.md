@@ -1,8 +1,8 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.4.12)。基于前一日收盘数据，通过 33步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分→行业集中度→新闻筛查→GitHub同步→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.4.13)。基于前一日收盘数据，通过 33步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分→行业集中度→新闻筛查→GitHub同步→筛选条件同步→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.4.12
+# A股盘前短线标的筛选 v6.4.13
 
 基于前一日完整收盘数据筛选当日有望上涨的A股短线标的。**不追高是硬纪律。**
 
@@ -642,6 +642,245 @@ except Exception as e:
 finally:
     if os.path.exists(repo_dir):
         subprocess.run(["rm", "-rf", repo_dir])
+
+# --- 同步更新筛选条件表格到 GitHub ---
+# 每次推送筛选结果后，更新筛选条件总览表，让 GitHub 上的条件始终与最新参数一致
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    cond_path = "/workspace/筛选条件.xlsx"
+    wb = Workbook()
+
+    # ===== Sheet 1: 当前参数 =====
+    ws1 = wb.active
+    ws1.title = "当前参数"
+    header_font = Font(name='Arial', size=11, bold=True, color='FFFFFF')
+    header_fill = PatternFill(start_color='1F4E79', end_color='1F4E79', fill_type='solid')
+    cell_font = Font(name='Arial', size=10)
+    thin_border = Border(
+        left=Side(style='thin', color='B0B0B0'),
+        right=Side(style='thin', color='B0B0B0'),
+        top=Side(style='thin', color='B0B0B0'),
+        bottom=Side(style='thin', color='B0B0B0')
+    )
+
+    params = [
+        ("参数", "值", "说明"),
+        ("search_budget", search_budget, "WebSearch搜索预算次数"),
+        ("northbound_threshold", northbound_threshold, "策略D主力资金流入阈值(万元)"),
+        ("consecutive_weeks", consecutive_weeks, "周线趋势连续周数"),
+        ("win_rate_drop_threshold", win_rate_drop_threshold, "胜率回撤触发阈值(%)"),
+        ("limit_down_threshold", limit_down_threshold, "跌停数量阈值"),
+        ("max_adjust_params", max_adjust_params, "回滚参数修改上限(仅周六Task3)"),
+        ("confidence_position_enabled", confidence_position_enabled, "置信度-仓位联动开关"),
+        ("max_holding_days", max_holding_days, "最大持仓天数"),
+        ("circuit_breaker_threshold_pct", circuit_breaker_threshold_pct, "熔断阈值(%)"),
+        ("strategy_concentration_pct", strategy_concentration_pct, "同策略上限(%)"),
+        ("do_t_success_reset_count", do_t_success_reset_count, "做T成功重置计数"),
+        ("conversion_rate_window_days", conversion_rate_window_days, "兑现率统计窗口(天)"),
+        ("conversion_rate_threshold", conversion_rate_threshold, "兑现率降档阈值"),
+        ("conversion_rate_restore", conversion_rate_restore, "兑现率恢复阈值"),
+        ("conversion_rate_consecutive_days", conversion_rate_consecutive_days, "兑现率连续触发天数"),
+        ("data_tier_l2_skip_on_unavailable", data_tier_l2_skip_on_unavailable, "L2不可达跳过"),
+        ("data_tier_l3_downgrade_to_signal", data_tier_l3_downgrade_to_signal, "L3降级开关"),
+        ("strategy_a_weak_market", strategy_a_weak_market, "弱市策略A开关"),
+        ("更新时间", prediction_date, "本次筛选日期"),
+    ]
+    for r, (a, b, c) in enumerate(params, 1):
+        for c_idx, val in enumerate([a, b, c], 1):
+            cell = ws1.cell(row=r, column=c_idx, value=val)
+            if r == 1:
+                cell.font = header_font
+                cell.fill = header_fill
+            else:
+                cell.font = cell_font
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical='center')
+    ws1.column_dimensions['A'].width = 42
+    ws1.column_dimensions['B'].width = 16
+    ws1.column_dimensions['C'].width = 36
+
+    # ===== Sheet 2: 大盘环境 =====
+    ws2 = wb.create_sheet("大盘环境")
+    env_data = [
+        ("环境", "条件", "总仓位", "动量(A)", "超跌(B)", "事件(C)", "资金(D)", "回调(E)"),
+        ("强市", "上证>MA20且MA5>MA10>MA20且涨跌比>2:1且成交>20日均×1.2", "70-80%", "35-40%", "10-12%", "10-12%", "5-8%", "10-12%"),
+        ("震荡", "上证在MA20±2%或涨跌比≈1:1", "50-60%", "12-17%", "10-13%", "8-10%", "5-8%", "10-13%"),
+        ("弱市", "上证<MA20×0.98或涨跌比<1:2或成交<20日均×0.8", "30-40%", "0%(关闭)", "12-15%", "5-8%", "3-5%", "8-12%"),
+    ]
+    for r, row_data in enumerate(env_data, 1):
+        for c_idx, val in enumerate(row_data, 1):
+            cell = ws2.cell(row=r, column=c_idx, value=val)
+            if r == 1:
+                cell.font = header_font
+                cell.fill = header_fill
+            else:
+                cell.font = cell_font
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical='center', wrap_text=True)
+    for col in ['A','B','C','D','E','F','G','H']:
+        ws2.column_dimensions[col].width = 18 if col != 'B' else 50
+
+    # ===== Sheet 3: 硬排除(31项) =====
+    ws3 = wb.create_sheet("硬排除31项")
+    exclude_rules = [
+        ("编号", "规则", "分级"),
+        (1, "科创板(688xxx)", "L1"),
+        (2, "北交所(8开头)", "L1"),
+        (3, "股价<5元", "L1"),
+        (4, "股价>100元", "L1"),
+        (5, "ST/*ST", "L1"),
+        (6, "退市整理期", "L1"),
+        (7, "连续亏损2年+最新季度营收同比降>10%", "L1"),
+        (8, "上市<60日", "L1"),
+        (9, "停牌→复牌<3日", "L1"),
+        (10, "前日涨停但当日开板", "L1"),
+        (11, "涨停/连板", "L1"),
+        (12, "涨幅>7%", "L1"),
+        (13, "7日内已推荐+已持仓", "L1"),
+        (14, "7日内解禁>流通5%", "L1"),
+        (15, "3日内分红除权", "L1"),
+        (16, "可转债强赎/转股>10%", "L1"),
+        (17, "30日内研报从买入/增持下调≥2级", "L2"),
+        (18, "5日内大宗折价>5%且>5000万", "L2"),
+        (19, "融券连续3日增>50%", "L3"),
+        (20, "PE(TTM)>500且非困境反转", "L1"),
+        (21, "创业板(300xxx)仅强市+动量延续+仓位减半", "L1"),
+        (22, "跌停(<-9.5%)", "L1"),
+        (23, "质押>70%且距平仓线<20%", "L2"),
+        (24, "30日内业绩修正(预增→预亏)", "L2"),
+        (25, "30日内立案调查/行政处罚/监管函/问询函", "L2"),
+        (26, "当日主力净流出>1亿且占成交额>15%", "L3"),
+        (27, "龙虎榜机构席位净卖出>3000万", "L2"),
+        (28, "近20日跌幅>30%且无基本面改善", "L1"),
+        (29, "大股东减持计划公告<5日", "L2"),
+        (30, "商誉占净资产>50%且业绩承诺到期<6个月", "L2"),
+        (31, "行业级政策利空公告<5日", "L3"),
+    ]
+    for r, row_data in enumerate(exclude_rules, 1):
+        for c_idx, val in enumerate(row_data, 1):
+            cell = ws3.cell(row=r, column=c_idx, value=val)
+            if r == 1:
+                cell.font = header_font
+                cell.fill = header_fill
+            else:
+                cell.font = cell_font
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical='center')
+    ws3.column_dimensions['A'].width = 8
+    ws3.column_dimensions['B'].width = 52
+    ws3.column_dimensions['C'].width = 10
+
+    # ===== Sheet 4: 信号过滤(14项) =====
+    ws4 = wb.create_sheet("信号过滤14项")
+    signal_rules = [
+        ("编号", "信号", "处理"),
+        (1, "假动量：高开>3%且收<开×0.98", "排除"),
+        (2, "缩量涨停：涨幅>5%但量<5日均×0.5", "排除"),
+        (3, "尾盘急拉：最后30分涨>3%", "排除"),
+        (4, "尾盘跳水：最后30分跌>3%", "排除"),
+        (5, "换手率>30%(非次新/非公告日)", "标注异常"),
+        (6, "放量滞涨：涨幅<0.5%但量比>2.0", "排除"),
+        (7, "振幅>15%", "排除(利好豁免)"),
+        (8, "MACD顶背离", "降置信/排除"),
+        (9, "缩量上涨：涨幅>3%但量<5日均×0.7", "降置信(减3分)"),
+        (10, "涨停反复开板≥3次", "降置信"),
+        (11, "缩量反弹", "降置信(减4分)"),
+        (12, "缩量三连阴", "降置信(减3分)"),
+        (13, "竞价爆量>8.0且开盘涨>3%", "排除"),
+        (14, "连板后首阴", "标注+加分"),
+    ]
+    for r, row_data in enumerate(signal_rules, 1):
+        for c_idx, val in enumerate(row_data, 1):
+            cell = ws4.cell(row=r, column=c_idx, value=val)
+            if r == 1:
+                cell.font = header_font
+                cell.fill = header_fill
+            else:
+                cell.font = cell_font
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical='center')
+    ws4.column_dimensions['A'].width = 8
+    ws4.column_dimensions['B'].width = 48
+    ws4.column_dimensions['C'].width = 18
+
+    # ===== Sheet 5: 五大策略 =====
+    ws5 = wb.create_sheet("五大策略")
+    strategy_data = [
+        ("策略", "条件摘要", "强市仓位", "震荡仓位", "弱市仓位"),
+        ("A动量延续", "涨幅3-7%+量比1.5-3.0+MA5>MA10>MA20", "35-40%", "12-17%", "关闭"),
+        ("B超跌反弹", "连跌≥3日+RSI<35+KDJ拐头+站上MA5放量", "10-12%", "12-15%", "12-15%"),
+        ("C事件驱动", "重大合同/预增>50%/部委级政策", "10-12%", "10-12%", "5-8%"),
+        ("D资金埋伏", f"北向连续净买+主力流入>{northbound_threshold}万+涨幅<2%", "5-8%", "5-8%", "3-5%"),
+        ("E回调突破", "20日新高+回调MA20±3%+缩量3日+站回MA5放量", "10-12%", "12-15%", "8-12%"),
+    ]
+    for r, row_data in enumerate(strategy_data, 1):
+        for c_idx, val in enumerate(row_data, 1):
+            cell = ws5.cell(row=r, column=c_idx, value=val)
+            if r == 1:
+                cell.font = header_font
+                cell.fill = header_fill
+            else:
+                cell.font = cell_font
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical='center', wrap_text=True)
+    ws5.column_dimensions['A'].width = 14
+    ws5.column_dimensions['B'].width = 52
+    ws5.column_dimensions['C'].width = 12
+    ws5.column_dimensions['D'].width = 12
+    ws5.column_dimensions['E'].width = 12
+
+    # ===== Sheet 6: 数据可达性分级 =====
+    ws6 = wb.create_sheet("数据可达性分级")
+    tier_data = [
+        ("分级", "规则", "数据源", "不可达时处理"),
+        ("L1必执行", "1-16,20-22,28", "公开行情/公告", "正常排除"),
+        ("L2尽力执行", "17,18,23,24,25,27,29,30", "专业终端", "跳过不排除"),
+        ("L3降为信号", "19,26,31", "可部分获取", "标注⚠️不排除"),
+    ]
+    for r, row_data in enumerate(tier_data, 1):
+        for c_idx, val in enumerate(row_data, 1):
+            cell = ws6.cell(row=r, column=c_idx, value=val)
+            if r == 1:
+                cell.font = header_font
+                cell.fill = header_fill
+            else:
+                cell.font = cell_font
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical='center')
+    ws6.column_dimensions['A'].width = 14
+    ws6.column_dimensions['B'].width = 22
+    ws6.column_dimensions['C'].width = 20
+    ws6.column_dimensions['D'].width = 20
+
+    wb.save(cond_path)
+    log_alert("INFO", "筛选条件", f"筛选条件.xlsx 已更新 ({prediction_date})")
+
+    # 推送筛选条件.xlsx 到 GitHub
+    cond_repo = "/tmp/lv_cond_sync"
+    subprocess.run(["rm", "-rf", cond_repo])
+    subprocess.run(
+        ["git", "clone", "--depth", "1", "--branch", "main", repo_url, cond_repo],
+        capture_output=True, text=True, timeout=30, check=True
+    )
+    shutil.copy(cond_path, os.path.join(cond_repo, "筛选条件.xlsx"))
+    subprocess.run(["git", "-C", cond_repo, "config", "user.email", "ashare-bot@github.com"], check=True)
+    subprocess.run(["git", "-C", cond_repo, "config", "user.name", "ashare-screener"], check=True)
+    subprocess.run(["git", "-C", cond_repo, "add", "筛选条件.xlsx"], check=True)
+    subprocess.run(["git", "-C", cond_repo, "commit", "-m", f"筛选条件更新 {prediction_date}"], check=True)
+    cond_result = subprocess.run(
+        ["git", "-C", cond_repo, "push", "origin", "main"],
+        capture_output=True, text=True, timeout=30
+    )
+    if cond_result.returncode == 0:
+        log_alert("INFO", "GitHub同步", f"✅ 筛选条件 {prediction_date} 已推送")
+    else:
+        log_alert("WARNING", "GitHub同步", f"筛选条件推送失败: {cond_result.stderr[:100]}")
+    subprocess.run(["rm", "-rf", cond_repo])
+except Exception as e:
+    log_alert("WARNING", "筛选条件", f"同步失败: {str(e)[:100]}")
 ```
 
 ## 十三.B、飞书推送 — 筛选结果通过群机器人 Webhook 推送
@@ -755,7 +994,7 @@ finally:
 - **步骤24 告警日志摘要**：读取 `/workspace/系统告警.log` 当天记录，在对话中输出告警汇总（若当天无告警则输出「今日无异常」）。
 - 其余步骤的详细执行逻辑见正文各对应章节。
 
-## 十五、持久化文件说明（除短线标的文件外，本技能可读写推荐历史.json/持仓跟踪.xlsx/系统告警.log；策略调整记录.json只读；绩效统计/筛选条件等由主对话管理）
+## 十五、持久化文件说明（除短线标的文件外，本技能可读写推荐历史.json/持仓跟踪.xlsx/系统告警.log/筛选条件.xlsx；策略调整记录.json只读；绩效统计/周度复盘等由主对话管理）
 
 | 文件 | 操作 |
 |------|------|
@@ -764,8 +1003,9 @@ finally:
 | 持仓跟踪.xlsx | 步骤4B同步持仓收盘价（仅更新当前价/市值/盈亏，不修改成本/持仓量） |
 | 策略调整记录.json | 只读version+params，不写入 |
 | 系统告警.log | 所有异常写入告警日志 |
+| **筛选条件.xlsx** | 步骤26每次推送GitHub后自动生成，含6个Sheet：当前参数/大盘环境/硬排除31项/信号过滤14项/五大策略/数据可达性分级 |
 
-> ⚠️ 绩效统计.xlsx / 周度复盘*.xlsx / 筛选条件*.xlsx 均由主对话管理，本技能不操作这些文件。
+> ⚠️ 绩效统计.xlsx / 周度复盘*.xlsx 均由主对话管理，本技能不操作这些文件。
 
 ## ⚠️ 关键纪律
 
