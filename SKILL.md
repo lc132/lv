@@ -1,8 +1,8 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.4.18)。基于前一日收盘数据，通过 33步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分→行业集中度→新闻筛查→GitHub同步→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.4.20)。基于前一日收盘数据，通过 33步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分→行业集中度→新闻筛查→GitHub同步→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.4.18
+# A股盘前短线标的筛选 v6.4.20
 
 基于前一日完整收盘数据筛选当日有望上涨的A股短线标的。**不追高是硬纪律。**
 
@@ -66,6 +66,10 @@ if beijing_weekday == 0:
 
 data_date = data_date.strftime('%Y-%m-%d')
 prediction_date = prediction_date.strftime('%Y-%m-%d')
+
+# 校验 prediction_date 是否为交易日（防止周六/日推算的周一恰逢节假日）
+# 步骤1会检查节假日，若 prediction_date 为节假日则跳过筛选
+# 此处仅做日期计算，实际交易日判断由步骤1负责
 ```
 
 **交易日对应**：周六/日→跳过本次预测 | 周一→`data_date`=上周五,`prediction_date`=周一 | 周二→周一/周二 | 周三→周二/周三 | 周四→周三/周四 | 周五→周四/周五
@@ -141,7 +145,7 @@ def safe_float(value, ndigits=3):
 
 ## 前置检查（步骤1-8）
 
-**1.节假日**：搜索中国股市交易日历→节假日跳过；长休≥3日→弱市+仓位≤30%+搜索预算+5
+**1.节假日**：搜索中国股市交易日历→data_date 或 prediction_date 为节假日→跳过；长休≥3日→弱市+仓位≤30%+搜索预算+5
 
 **2.极端行情**：上证跌>3%→跳过；涨>3%→仓位30%仅动量延续（若弱市策略A已关闭，则临时启用A仓位15%）；跌停>threshold→跳过
 
@@ -203,7 +207,12 @@ def sync_holding_prices_to_xlsx(holdings, path="/workspace/持仓跟踪.xlsx"):
                 if pnl_amt is not None:
                     ws.cell(row=row, column=9).value = round(pnl_amt, 2)  # 盈亏额
                 pnl_pct_val = h.get("pnl_pct")
-                ws.cell(row=row, column=10).value = round(pnl_pct_val if pnl_pct_val is not None else 0, 4)  # 盈亏率
+                # 安全类型转换：若为字符串（如 "3.5%"），先尝试转为 float
+                try:
+                    pnl_pct_float = float(pnl_pct_val) if pnl_pct_val is not None else 0.0
+                except (ValueError, TypeError):
+                    pnl_pct_float = 0.0
+                ws.cell(row=row, column=10).value = round(pnl_pct_float, 4)  # 盈亏率
                 updated += 1
             except Exception as e:
                 log_alert("WARNING", "持仓跟踪同步", f"单条记录异常(code={h.get('code', 'unknown')}): {str(e)[:80]}")
@@ -278,9 +287,9 @@ try:
     new_history = []
     for r in history:
         t = r.get('type', '')
-        if t in ('weekly_review', 'strategy_check', 'do_T_eval'):
-            new_history.append(r)  # 永久保留
-        elif t in ('holding',):  # do_T 类型由主对话管理，不在此处清理
+        if t in ('weekly_review', 'strategy_check', 'do_T_eval', 'do_T'):
+            new_history.append(r)  # 永久保留（do_T 由主对话管理，不在此处清理）
+        elif t in ('holding',):
             d = r.get('update_date', '')
             if d >= cutoff_90d:
                 new_history.append(r)  # 90天内保留
@@ -299,13 +308,24 @@ except Exception as e:
 
 **注意**：weekly_review/strategy_check 类型保留不清理。
 
-**6.文件初始化**：策略调整记录.json取末条version+params，损坏→默认v6.4.15。交叉验证推荐历史中strategy_check版本，不一致以策略调整记录为准→log_alert INFO。**首次运行或版本变更→safe_append_json追加type="strategy_check"记录**（含version/params/checks），验证各项条件计数与预期一致
+**6.文件初始化**：策略调整记录.json取末条version+params，损坏→默认v6.4.19。交叉验证推荐历史中strategy_check版本，不一致以策略调整记录为准→log_alert INFO。**首次运行或版本变更→safe_append_json追加type="strategy_check"记录**（含version/params/checks），验证各项条件计数与预期一致
 
 版本一致性检查代码：
 ```python
+# 读取策略调整记录（获取 file_version 和 params）
+adj_records = safe_read_json('/workspace/策略调整记录.json')
+if adj_records and len(adj_records) > 0:
+    latest = adj_records[-1]
+    file_version = latest.get('version', 'v6.4.19')
+    params = latest.get('params', {})
+else:
+    file_version = 'v6.4.19'
+    params = {}
+
 # 读取推荐历史找最后一个strategy_check
 history = safe_read_json('/workspace/推荐历史.json')
 last_check = None
+current_version = None  # 显式初始化，防止首次运行 NameError
 for r in reversed(history):
     if r.get('type') == 'strategy_check':
         last_check = r
@@ -766,7 +786,7 @@ if wb:
             for c in row:
                 if isinstance(c.value, float) and '.' in str(c.value) and len(str(c.value).split('.')[-1])>3:
                     c.value = round(c.value, 3)
-                if c.value and hasattr(c, 'font') and c.font and c.font.name != 'Arial':
+                if c.value and c.font and c.font.name and c.font.name != 'Arial':
                     c.font = Font(name='Arial', size=(c.font.size or 10), bold=c.font.bold)
     # 格式化修复无条件保存，错误仅记录日志
     wb.save(path)
@@ -778,11 +798,13 @@ if wb:
     wb.close()
 ```
 
-## 十三.A、GitHub同步 — 仅上传筛选结果Excel
+## 十三.A、GitHub同步 — 推送筛选结果前先校验并同步筛选条件表格
 
 筛选完成后将 `短线标的_YYYYMMDD.xlsx` 同步到 GitHub 仓库 `lc132/lv`。
 
-⚠️ **不上传推荐历史.json**（含持仓隐私）。仅上传筛选结果 Excel。
+推送前先检查 `/workspace/A股短线选股筛选条件.xlsx` 版本是否与当前 `file_version` 一致，不一致则先更新后再推送。
+
+⚠️ **不上传推荐历史.json**（含持仓隐私）。仅上传筛选结果 Excel 和筛选条件表格。
 
 **执行逻辑**（失败仅 log_alert WARNING，不影响主流程）：
 ```python
@@ -806,6 +828,65 @@ if not token:
     log_alert("WARNING", "GitHub同步", "无认证令牌，跳过推送")
     return
 
+# === 推送前校验并同步筛选条件表格 ===
+cond_xlsx = "/workspace/A股短线选股筛选条件.xlsx"
+cond_synced = False  # 仅在版本不一致且成功同步后置为 True
+xlsx_version = None  # 显式初始化，防止 NameError
+if os.path.exists(cond_xlsx):
+    try:
+        from openpyxl import load_workbook
+        from openpyxl.styles import Font, Alignment, Border, Side
+
+        wb_cond = load_workbook(cond_xlsx)
+        ws1 = wb_cond['筛选条件概述']
+        # 读取xlsx中已记录的版本号（第2行第2列）
+        xlsx_version = ws1.cell(row=2, column=2).value
+        if xlsx_version and str(xlsx_version) != str(file_version):
+            log_alert("INFO", "筛选条件", f"版本不一致: xlsx={xlsx_version} ≠ 当前={file_version}，先同步")
+
+            _cell_font = Font(name='Arial', size=10)
+            _bold_font = Font(name='Arial', size=10, bold=True)
+            _thin_border = Border(
+                left=Side(style='thin', color='B0B0B0'),
+                right=Side(style='thin', color='B0B0B0'),
+                top=Side(style='thin', color='B0B0B0'),
+                bottom=Side(style='thin', color='B0B0B0'),
+            )
+
+            # _wc 函数与步骤6中定义一致，提取为独立函数避免重复维护
+            def _wc(ws, r, c, v, font=_cell_font):
+                for mr in list(ws.merged_cells.ranges):
+                    if mr.min_row <= r <= mr.max_row and mr.min_col <= c <= mr.max_col:
+                        if not (r == mr.min_row and c == mr.min_col):
+                            return
+                        ws.unmerge_cells(str(mr))
+                cell = ws.cell(row=r, column=c, value=v)
+                cell.font = font
+                cell.border = _thin_border
+                cell.alignment = Alignment(vertical='center', wrap_text=True)
+
+            _wc(ws1, 1, 1, f'A股短线选股筛选条件 — {file_version}', _bold_font)
+            _wc(ws1, 2, 2, file_version)
+            _wc(ws1, 2, 3, f'{beijing_date}更新')
+            vr = ws1.max_row + 1
+            _wc(ws1, vr, 1, file_version)
+            _wc(ws1, vr, 2, beijing_date)
+            _wc(ws1, vr, 3, 'GitHub推送前自动同步')
+            if '关键纪律' in wb_cond.sheetnames:
+                ws11 = wb_cond['关键纪律']
+                _wc(ws11, 1, 1, f'关键纪律 — {file_version}', _bold_font)
+
+            wb_cond.save(cond_xlsx)
+            cond_synced = True  # 标记已同步，推送时一并上传
+            log_alert("INFO", "筛选条件", f"筛选条件.xlsx 已同步至 {file_version}")
+        else:
+            log_alert("INFO", "筛选条件", f"版本一致 {file_version}，跳过同步")
+    except Exception as e:
+        log_alert("WARNING", "筛选条件", f"版本校验/同步失败: {str(e)[:80]}，继续推送")
+else:
+    log_alert("WARNING", "筛选条件", "筛选条件.xlsx 不存在，跳过校验")
+# === 校验结束，开始推送 ===
+
 repo_url = f"https://{token}@github.com/lc132/lv.git"
 repo_dir = "/tmp/lv_sync"
 try:
@@ -813,13 +894,20 @@ try:
         ["git", "clone", "--depth", "1", "--branch", "main", repo_url, repo_dir],
         capture_output=True, text=True, timeout=30, check=True
     )
-    # 仅推送 xlsx，不覆盖 SKILL.md
+    # 推送筛选结果
     shutil.copy(xlsx_path, os.path.join(repo_dir, f"短线标的_{prediction_date}.xlsx"))
+    # 若筛选条件表格已同步，一并推送
+    if cond_synced and os.path.exists(cond_xlsx):
+        shutil.copy(cond_xlsx, os.path.join(repo_dir, "A股短线选股筛选条件.xlsx"))
     subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True)
     subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True)
-    # 只add xlsx文件，不修改SKILL.md
     subprocess.run(["git", "-C", repo_dir, "add", f"短线标的_{prediction_date}.xlsx"], check=True)
-    subprocess.run(["git", "-C", repo_dir, "commit", "-m", f"筛选结果 {prediction_date}"], check=True)
+    if cond_synced and os.path.exists(cond_xlsx):
+        subprocess.run(["git", "-C", repo_dir, "add", "A股短线选股筛选条件.xlsx"], check=True)
+    commit_msg = f"筛选结果 {prediction_date}"
+    if cond_synced and xlsx_version and str(xlsx_version) != str(file_version):
+        commit_msg += f" + 筛选条件同步至 {file_version}"
+    subprocess.run(["git", "-C", repo_dir, "commit", "-m", commit_msg], check=True)
     result = subprocess.run(
         ["git", "-C", repo_dir, "push", "origin", "main"],
         capture_output=True, text=True, timeout=30
@@ -832,7 +920,7 @@ except Exception as e:
     log_alert("WARNING", "GitHub同步", f"失败: {str(e)[:100]}")
 finally:
     if os.path.exists(repo_dir):
-        subprocess.run(["rm", "-rf", repo_dir])
+        shutil.rmtree(repo_dir, ignore_errors=True)
 ```
 
 ## 十三.B、飞书推送 — 筛选结果通过群机器人 Webhook 推送
@@ -845,6 +933,7 @@ finally:
 
 ```python
 import urllib.request, json, os
+from collections import Counter
 
 # 从外部文件读取飞书 Webhook URL（不入git，防止泄露）
 FEISHU_WEBHOOK = None
@@ -861,7 +950,8 @@ if not FEISHU_WEBHOOK:
 
 # 构建筛选概况卡片
 # 以下变量在筛选管道各阶段累积：total_raw/excluded/filtered/matched/industry_limited/news_filtered/final_recommend_count
-# 各变量由对应步骤计算。strategy_counts 由步骤13 Counter统计
+# 各变量由对应步骤计算。strategy_counts 由步骤13 Counter统计，此处显式初始化防止 NameError
+strategy_counts = strategy_counts if 'strategy_counts' in dir() else Counter()
 card = {
     "msg_type": "interactive",
     "card": {
