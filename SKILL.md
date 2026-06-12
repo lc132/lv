@@ -642,36 +642,6 @@ except Exception as e:
 finally:
     if os.path.exists(repo_dir):
         subprocess.run(["rm", "-rf", repo_dir])
-
-# --- 同步筛选条件表格到 GitHub ---
-# 将 /workspace/A股短线选股筛选条件.xlsx 同步推送到 GitHub
-try:
-    cond_path = "/workspace/A股短线选股筛选条件.xlsx"
-    if not os.path.exists(cond_path):
-        log_alert("WARNING", "筛选条件", "筛选条件.xlsx 不存在，跳过")
-    else:
-        cond_repo = "/tmp/lv_cond_sync"
-        subprocess.run(["rm", "-rf", cond_repo])
-        subprocess.run(
-            ["git", "clone", "--depth", "1", "--branch", "main", repo_url, cond_repo],
-            capture_output=True, text=True, timeout=30, check=True
-        )
-        shutil.copy(cond_path, os.path.join(cond_repo, "A股短线选股筛选条件.xlsx"))
-        subprocess.run(["git", "-C", cond_repo, "config", "user.email", "ashare-bot@github.com"], check=True)
-        subprocess.run(["git", "-C", cond_repo, "config", "user.name", "ashare-screener"], check=True)
-        subprocess.run(["git", "-C", cond_repo, "add", "A股短线选股筛选条件.xlsx"], check=True)
-        subprocess.run(["git", "-C", cond_repo, "commit", "-m", f"筛选条件同步 {prediction_date}"], check=True)
-        cond_result = subprocess.run(
-            ["git", "-C", cond_repo, "push", "origin", "main"],
-            capture_output=True, text=True, timeout=30
-        )
-        if cond_result.returncode == 0:
-            log_alert("INFO", "GitHub同步", f"✅ 筛选条件 {prediction_date} 已推送")
-        else:
-            log_alert("WARNING", "GitHub同步", f"筛选条件推送失败: {cond_result.stderr[:100]}")
-        subprocess.run(["rm", "-rf", cond_repo])
-except Exception as e:
-    log_alert("WARNING", "筛选条件", f"同步失败: {str(e)[:100]}")
 ```
 
 ## 十三.B、飞书推送 — 筛选结果通过群机器人 Webhook 推送
@@ -794,7 +764,7 @@ finally:
 | 持仓跟踪.xlsx | 步骤4B同步持仓收盘价（仅更新当前价/市值/盈亏，不修改成本/持仓量） |
 | 策略调整记录.json | 只读version+params，不写入 |
 | 系统告警.log | 所有异常写入告警日志 |
-| **筛选条件.xlsx** | 步骤26每次推送GitHub后自动生成，含6个Sheet：当前参数/大盘环境/硬排除31项/信号过滤14项/五大策略/数据可达性分级 |
+| **筛选条件.xlsx** | 筛选条件变化时手动更新 `/workspace/A股短线选股筛选条件.xlsx`（11 Sheet），不上传GitHub |
 
 > ⚠️ 绩效统计.xlsx / 周度复盘*.xlsx 均由主对话管理，本技能不操作这些文件。
 
