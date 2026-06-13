@@ -60,7 +60,7 @@ prediction_date = None
 data_date = None
 beijing_weekday = None
 beijing_hour = None
-file_version = "v6.6.0"
+file_version = "v6.6.1"
 
 # ============================================================
 # 筛选管道计数器（各步骤累积）
@@ -2622,6 +2622,52 @@ def step25_print_summary(recos, env, env_positions, crisis_alerts,
 # ============================================================
 # 步骤26：GitHub同步
 # ============================================================
+def _cleanup_stale_files(repo_dir, max_age_days=15):
+    """删除 repo_dir 中文件名日期超过 max_age_days 天的旧文件。
+    匹配模式: 推荐历史_YYYYMMDD.json, 短线标的_YYYYMMDD.xlsx, ashare-screening-YYYYMMDD/
+    """
+    import re
+    today = datetime.now()
+    cutoff = today - timedelta(days=max_age_days)
+
+    date_patterns = [
+        re.compile(r"推荐历史_(\d{4}-\d{2}-\d{2})\.json$"),
+        re.compile(r"短线标的_(\d{4}-\d{2}-\d{2})\.xlsx$"),
+        re.compile(r"ashare-screening-(\d{4})(\d{2})(\d{2})$"),
+    ]
+
+    deleted = []
+    for fname in os.listdir(repo_dir):
+        full = os.path.join(repo_dir, fname)
+        for pat in date_patterns:
+            m = pat.match(fname)
+            if m:
+                try:
+                    groups = m.groups()
+                    if len(groups) == 1:
+                        file_date = datetime.strptime(groups[0], "%Y-%m-%d")
+                    else:
+                        # ashare-screening-YYYYMMDD
+                        file_date = datetime.strptime("".join(groups), "%Y%m%d")
+                    if file_date < cutoff:
+                        if os.path.isdir(full):
+                            shutil.rmtree(full, ignore_errors=True)
+                        else:
+                            os.remove(full)
+                        deleted.append(fname)
+                except ValueError:
+                    pass
+                break  # matched one pattern, stop
+
+    if deleted:
+        log_alert("INFO", "GitHub清理", f"已删除{len(deleted)}个超过{max_age_days}天的旧文件")
+        print(f"[步骤26] 清理旧文件: {len(deleted)}个 ({', '.join(deleted)})")
+    else:
+        print(f"[步骤26] 无超过{max_age_days}天的旧文件需清理")
+
+    return deleted
+
+
 def step26_github_sync(xlsx_path, html_path=None):
     """推送筛选结果到GitHub lc132/lv"""
     print(f"[步骤26] GitHub同步...")
@@ -2700,6 +2746,9 @@ def step26_github_sync(xlsx_path, html_path=None):
 
         if cond_synced and os.path.exists(cond_xlsx):
             shutil.copy(cond_xlsx, os.path.join(repo_dir, "A股短线选股筛选条件.xlsx"))
+
+        # 6) 清理超过15天的旧文件
+        _cleanup_stale_files(repo_dir)
 
         subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True)
         subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True)
@@ -3056,6 +3105,9 @@ def main():
 
     # === 步骤26: GitHub同步 ===
     step26_github_sync(xlsx_path, html_path)
+
+    # 本地也清理超过15天的旧归档文件
+    _cleanup_stale_files(WORKSPACE)
 
     # === 步骤27: 飞书推送 ===
     step27_feishu_push(
