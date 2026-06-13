@@ -1,8 +1,8 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.6.3)。基于前一日收盘数据，通过 35步筛选流程（网络授时北京时间→GitHub拉取持仓跟踪→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→全市场API拉取(东方财富clist)→板块/行业补全→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分（含评分相同时二次评估打破平局）→行业集中度→新闻筛查→生成HTML报告→GitHub同步(含超15天旧文件自动清理)→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel，同时生成可视化HTML报告。推荐历史按日期归档(推荐历史_YYYYMMDD.json)互不覆盖，告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.6.5)。基于前一日收盘数据，通过 35步筛选流程（网络授时北京时间→GitHub拉取持仓跟踪→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→全市场API拉取(东方财富clist)→板块/行业补全→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分（含评分相同时二次评估打破平局）→行业集中度→新闻筛查→生成HTML报告→GitHub同步(含超15天旧文件自动清理)→飞书推送→每周复盘），输出短线标的_YYYYMMDD.md 预测次日上涨的标的为Markdown格式，同时生成可视化HTML报告。推荐历史按日期归档(推荐历史_YYYYMMDD.json)互不覆盖，告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.6.3
+# A股盘前短线标的筛选 v6.6.5
 
 基于前一日完整收盘数据筛选当日有望上涨的A股短线标的。**不追高是硬纪律。**
 
@@ -73,7 +73,7 @@ else:                           # 周日 → 下周一
     prediction_date = (beijing_now + timedelta(days=1)).strftime('%Y-%m-%d')
 ```
 
-所有搜索 query 使用 `data_date`，输出文件名 `/workspace/短线标的_YYYYMMDD.xlsx` 使用 `prediction_date`。API 全部不可达→直接中止，不降级。
+所有搜索 query 使用 `data_date`，输出文件名 `/workspace/短线标的_YYYYMMDD.md` 使用 `prediction_date`。API 全部不可达→直接中止，不降级。
 
 ## 可配置参数
 
@@ -94,7 +94,7 @@ def log_alert(level, module, message, timestamp=None):
         f.write(f"[{ts}] [{level}] {module}: {message}\n")
 ```
 
-触发场景：推荐历史读写失败(ERROR)、JSON格式异常(WARNING)、Excel读写失败(WARNING)、持仓行情搜索失败(WARNING)、持仓跟踪同步失败(WARNING)、持仓跟踪同步成功(INFO)、持仓危机(WARNING)、清理成功(INFO)、清理失败(WARNING)、版本一致(INFO)、版本不一致(INFO)、北京时间API不可达(INFO)、北京时间获取失败(ERROR)、筛选概况与Excel行数不一致(ERROR)、GitHub同步成功(INFO)、GitHub同步失败/无令牌(WARNING)、数据不可达跳过(INFO)、飞书推送成功(INFO)、飞书推送失败(WARNING)、行情数据采集失败(WARNING)、行情数据校验异常(WARNING)
+触发场景：推荐历史读写失败(ERROR)、JSON格式异常(WARNING)、Excel读写失败(WARNING)、持仓行情搜索失败(WARNING)、持仓跟踪同步失败(WARNING)、持仓跟踪同步成功(INFO)、持仓危机(WARNING)、清理成功(INFO)、清理失败(WARNING)、版本一致(INFO)、版本不一致(INFO)、北京时间API不可达(INFO)、北京时间获取失败(ERROR)、筛选概况与MD表格行数不一致(ERROR)、GitHub同步成功(INFO)、GitHub同步失败/无令牌(WARNING)、数据不可达跳过(INFO)、飞书推送成功(INFO)、飞书推送失败(WARNING)、行情数据采集失败(WARNING)、行情数据校验异常(WARNING)
 
 ## 文件容错
 
@@ -436,7 +436,7 @@ if last_check is None or current_version != file_version:
 |------|----------|--------|-------------|
 | **L1 必执行** | 1-16, 20-22, 28 | 公开行情/公告 | 正常排除（WebSearch可获取） |
 | **L2 尽力执行** | 17, 18, 23, 24, 25, 27, 29, 30 | 专业终端（研报/大宗/龙虎榜/质押/减持/商誉） | 标注「数据不可达→跳过」，**不排除**，记录到告警日志 |
-| **L3 降为信号** | 19, 26, 31 | 可部分获取（融券/主力资金/行业政策） | 降为信号级：满足条件→标注⚠️不排除，在Excel「预测逻辑」列注明风险 |
+| **L3 降为信号** | 19, 26, 31 | 可部分获取（融券/主力资金/行业政策） | 降为信号级：满足条件→标注⚠️不排除，在MD「预测逻辑」列注明风险 |
 
 L2 规则执行逻辑：搜索数据→可获取且满足条件→排除；搜索失败/数据不可得→log_alert INFO标注跳过，继续流程。L3 规则执行逻辑：搜索数据→可获取且满足条件→标注⚠️但保留标的，评分时可酌情扣分；搜索失败→跳过。
 
@@ -927,39 +927,16 @@ recos = tie_break_sort(recos)
 
 本任务不执行回滚，由周六Task3负责。本任务只读取当前最新参数。
 
-## 十一、输出（含筛选概况）
+## 十一、Markdown输出（含筛选概况）
 
-**Excel**：`/workspace/短线标的_YYYYMMDD.xlsx`（8工作表），prediction_date命名。18列：序号|策略|标的|代码|板块|行业|当日涨跌|开盘价|收盘价|换手率|振幅|预测逻辑|评分|置信度|进场|止损|止盈|链接
+**输出文件**：`/workspace/短线标的_YYYYMMDD.md`，prediction_date命名。Markdown格式，包含：
 
-**Excel 写入逻辑**（数据来自标的池 candidate 列表，按评分降序排列）：
-
-```python
-# 写入表头
-headers = ["序号","策略","标的","代码","板块","行业","当日涨跌","开盘价","收盘价","换手率","振幅","预测逻辑","评分","置信度","进场","止损","止盈","链接"]
-for col_idx, h in enumerate(headers, 1):
-    ws.cell(row=1, column=col_idx, value=h)
-
-# 写入数据行（recos 为最终推荐列表，先经 tie_break_sort 二次排序打破平局，再按最终排序输出）
-for i, rec in enumerate(recos, 1):
-    ws.cell(row=i+1, column=1, value=i)                          # 序号
-    ws.cell(row=i+1, column=2, value=rec.get("strategy",""))     # 策略
-    ws.cell(row=i+1, column=3, value=rec.get("name",""))         # 标的
-    ws.cell(row=i+1, column=4, value=rec.get("code",""))         # 代码
-    ws.cell(row=i+1, column=5, value=rec.get("sector",""))       # 板块
-    ws.cell(row=i+1, column=6, value=rec.get("industry",""))     # 行业
-    ws.cell(row=i+1, column=7, value=rec.get("change_pct"))      # 当日涨跌
-    ws.cell(row=i+1, column=8, value=rec.get("open"))            # 开盘价 ← 新增
-    ws.cell(row=i+1, column=9, value=rec.get("close"))           # 收盘价 ← 新增
-    ws.cell(row=i+1, column=10, value=rec.get("turnover"))       # 换手率 ← 新增
-    ws.cell(row=i+1, column=11, value=rec.get("amplitude"))      # 振幅 ← 新增
-    ws.cell(row=i+1, column=12, value=rec.get("reason",""))      # 预测逻辑
-    ws.cell(row=i+1, column=13, value=rec.get("score"))          # 评分
-    ws.cell(row=i+1, column=14, value=rec.get("confidence",""))  # 置信度
-    ws.cell(row=i+1, column=15, value=rec.get("entry"))          # 进场
-    ws.cell(row=i+1, column=16, value=rec.get("stop_loss"))      # 止损
-    ws.cell(row=i+1, column=17, value=rec.get("take_profit"))    # 止盈
-    ws.cell(row=i+1, column=18, value=rec.get("url",""))         # 链接
-```
+1. 报告头部（标题+日期+市场环境+建议仓位）
+2. 筛选管道（6级漏斗数量）
+3. 推荐标的表格（# | 策略 | 标的 | 代码 | 行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 评分 | 置信 | 进场 | 止损 | 止盈）
+4. 策略分布统计 + 策略说明
+5. 硬排除 TOP5
+6. 免责声明
 
 **筛选概况（对话中必须输出）**：
 
@@ -970,117 +947,40 @@ for i, rec in enumerate(recos, 1):
 排除TOP5: 股价<5:X只 ST:X只 ...
 ```
 
-阶段通过数N=按顺序检查：①原始池→②硬排除通过→③信号过滤通过→④策略匹配→⑤行业限制→⑥新闻筛查。若某阶段通过数=0，则其后的阶段通过数也必为0（上游空了，下游无输入）。最终N=⑥新闻筛查通过数，必须等于Excel标的池行数（即最终推荐数）。
+阶段通过数N=按顺序检查：①原始池→②硬排除通过→③信号过滤通过→④策略匹配→⑤行业限制→⑥新闻筛查。若某阶段通过数=0，则其后的阶段通过数也必为0（上游空了，下游无输入）。最终N=⑥新闻筛查通过数，必须等于MD表格行数。
 
-## 十二、Excel格式化
-
-表头：Arial 11pt Bold白底蓝(1F4E79)，数据行：Arial 10pt灰边框(B0B0B0)行高22。涨跌红(9C0006)涨绿(006100)跌。策略色：A绿(E2EFDA) B蓝(D6E4F0) C紫(E4DFEC) D黄(FFF2CC)。置信★★★绿加粗/★★黄/★红。链接：蓝下划线(0563C1)，60→sh,00/30→sz,8→bj。创业板标的+⚠️。
-
-**标的池工作表尾部**（数据行下方空一行后追加）：
-1. 一行合并单元格居中：`📊 共筛选出 N 只标的`（灰色底 F1F5F9，Arial 12pt Bold）
-2. 一行合并单元格居中：`策略说明：`（同上格式，左对齐）
-3. 五行分别列出策略说明，每行格式如下（Arial 10pt，左对齐）：
-   - `A 动量延续：涨幅3-7%，量比1.5-3.0，MA5>MA10>MA20 — 仓位强35-40%/震荡12-17%/弱关闭`
-   - `B 超跌反弹：连跌≥3日，量<5日均×0.6，RSI(14)<35，KDJ(K<20且J拐头)，站上MA5+放量确认，股价≥MA60 — 仓位12-15%`
-   - `C 事件驱动：重大合同/预增>50%/部委级政策，事件时效5级衰减 — 仓位5-12%`
-   - `D 资金埋伏：北向3日连续净买+主力流入>{northbound_threshold}万+涨幅<2% — 仓位3-8%`
-   - `E 回调企稳突破：20日内创新高+回调MA20±3%+连3日缩量+站回MA5放量 — 仓位8-15%`
-5. 一行合并单元格居中：`⚠️ 仅供参考，不构成投资建议`（灰色字 6B7280，Arial 9pt）
-
-实现代码示例：
-```python
-from openpyxl.styles import Font, Alignment, PatternFill
-ws = wb["标的池"]
-last_data_row = ws.max_row  # 最后一行数据
-footer_start = last_data_row + 2  # 空一行
-
-# 统计各策略数量
-from collections import Counter
-strategy_counts = Counter()
-for row in ws.iter_rows(min_row=2, max_row=last_data_row, values_only=True):
-    if len(row) > 1 and row[1]:
-        strategy_counts[row[1]] += 1
-
-ws.merge_cells(start_row=footer_start, start_column=1, end_row=footer_start, end_column=18)
-cell = ws.cell(row=footer_start, column=1, value=f"📊 共筛选出 {final_recommend_count} 只标的（A:{strategy_counts.get('A',0)} B:{strategy_counts.get('B',0)} C:{strategy_counts.get('C',0)} D:{strategy_counts.get('D',0)} E:{strategy_counts.get('E',0)}）")
-cell.font = Font(name='Arial', size=12, bold=True)
-cell.fill = PatternFill(start_color='F1F5F9', end_color='F1F5F9', fill_type='solid')
-cell.alignment = Alignment(horizontal='center', vertical='center')
-
-# 策略说明标题
-footer_start += 1
-ws.merge_cells(start_row=footer_start, start_column=1, end_row=footer_start, end_column=18)
-cell = ws.cell(row=footer_start, column=1, value="策略说明：")
-cell.font = Font(name='Arial', size=11, bold=True)
-cell.alignment = Alignment(horizontal='left')
-
-# 五行策略说明
-strategies = [
-    ("A 动量延续", "涨幅3-7%，量比1.5-3.0，量>5日均×1.5且>昨日×1.2，MA5>MA10>MA20 — 仓位强35-40%/震荡12-17%/弱关闭"),
-    ("B 超跌反弹", "连跌≥3日，量<5日均×0.6，RSI(14)<35，KDJ(K<20且J拐头)，站上MA5+放量确认，股价≥MA60 — 仓位强10-12%/震荡12-15%/弱12-15%"),
-    ("C 事件驱动", "重大合同/预增>50%/部委级政策，事件时效5级衰减 — 仓位强10-12%/震荡10-12%/弱5-8%"),
-    ("D 资金埋伏", "北向3日连续净买+主力流入>{northbound_threshold}万+涨幅<2% — 仓位强5-8%/震荡5-8%/弱3-5%（连续5日→上限翻倍至16%）"),
-    ("E 回调企稳突破", "20日内创新高+回调MA20±3%+连3日缩量+站回MA5放量 — 仓位强10-12%/震荡12-15%/弱8-12%"),
-]
-for i, (name, desc) in enumerate(strategies):
-    footer_start += 1
-    ws.merge_cells(start_row=footer_start, start_column=1, end_row=footer_start, end_column=18)
-    cell = ws.cell(row=footer_start, column=1, value=f"{name}：{desc}")
-    cell.font = Font(name='Arial', size=10)
-    cell.alignment = Alignment(horizontal='left', vertical='center')
-
-# 风险提示
-footer_start += 2
-ws.merge_cells(start_row=footer_start, start_column=1, end_row=footer_start, end_column=18)
-cell = ws.cell(row=footer_start, column=1, value="⚠️ 仅供参考，不构成投资建议")
-cell.font = Font(name='Arial', size=9, color='6B7280')
-cell.alignment = Alignment(horizontal='center')
-```
-
-## 十三、最终验证
+## 十二、最终验证
 
 ```python
-from openpyxl.styles import Font
-wb = safe_read_excel(path)
-if wb:
-    errors = []
-    if "标的池" in wb.sheetnames:
-        excel_n = wb["标的池"].max_row - 1
-        if excel_n != final_recommend_count:
-            errors.append(f"概况{final_recommend_count}≠Excel{excel_n}")
-            log_alert("ERROR", "数量校验", f"概况{final_recommend_count}≠Excel{excel_n}")
-    for sn in wb.sheetnames:
-        for row in wb[sn].iter_rows():
-            for c in row:
-                if isinstance(c.value, float) and '.' in str(c.value) and len(str(c.value).split('.')[-1])>3:
-                    c.value = round(c.value, 3)
-                if c.value and c.font and c.font.name and c.font.name != 'Arial':
-                    c.font = Font(name='Arial', size=(c.font.size or 10), bold=c.font.bold)
-    # 格式化修复无条件保存，错误仅记录日志
-    wb.save(path)
-    if errors:
-        for e in errors:
-            log_alert("ERROR", "最终验证", e)
+md_path = ctx.get('md_path', '')
+if os.path.exists(md_path):
+    with open(md_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    # 统计 Markdown 表格中的数据行（以 | 数字 | 开头的行）
+    table_rows = sum(1 for line in content.split('
+')
+                     if line.strip().startswith('| ') and line.split('|')[1].strip().isdigit())
+    if table_rows != final_recommend_count:
+        log_alert("ERROR", "数量校验", f"概况{final_recommend_count}≠MD表格{table_rows}")
     else:
         print(f"✅ 验证通过（{final_recommend_count}只）")
-    wb.close()
 ```
 
 ## 十三.A、GitHub同步 — 推送筛选结果前先校验并同步筛选条件表格
 
-筛选完成后将 `短线标的_YYYYMMDD.xlsx` 同步到 GitHub 仓库 `lc132/lv`。
+筛选完成后将 `短线标的_YYYYMMDD.md` 同步到 GitHub 仓库 `lc132/lv`。
 
 推送前先检查 `/workspace/A股短线选股筛选条件.xlsx` 版本是否与当前 `file_version` 一致，不一致则先更新后再推送。
 
-⚠️ **不上传推荐历史.json**（含持仓隐私）。仅上传筛选结果 Excel 和筛选条件表格。
+⚠️ **不上传推荐历史.json**（含持仓隐私）。上传筛选结果 Markdown、HTML报告和筛选条件表格。
 
 **执行逻辑**（失败仅 log_alert WARNING，不影响主流程）：
 ```python
 import subprocess, os, shutil
 
-xlsx_path = f"/workspace/短线标的_{prediction_date}.xlsx"
-if not os.path.exists(xlsx_path):
-    log_alert("WARNING", "GitHub同步", "xlsx文件不存在，跳过")
+md_path = f"/workspace/短线标的_{prediction_date}.md"
+if not os.path.exists(md_path):
+    log_alert("WARNING", "GitHub同步", "md文件不存在，跳过")
     return
 
 # 读取认证令牌
@@ -1163,13 +1063,13 @@ try:
         capture_output=True, text=True, timeout=30, check=True
     )
     # 推送筛选结果
-    shutil.copy(xlsx_path, os.path.join(repo_dir, f"短线标的_{prediction_date}.xlsx"))
+    shutil.copy(md_path, os.path.join(repo_dir, f"短线标的_{prediction_date}.md"))
     # 若筛选条件表格已同步，一并推送
     if cond_synced and os.path.exists(cond_xlsx):
         shutil.copy(cond_xlsx, os.path.join(repo_dir, "A股短线选股筛选条件.xlsx"))
     subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True)
     subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True)
-    subprocess.run(["git", "-C", repo_dir, "add", f"短线标的_{prediction_date}.xlsx"], check=True)
+    subprocess.run(["git", "-C", repo_dir, "add", f"短线标的_{prediction_date}.md"], check=True)
     if cond_synced and os.path.exists(cond_xlsx):
         subprocess.run(["git", "-C", repo_dir, "add", "A股短线选股筛选条件.xlsx"], check=True)
     commit_msg = f"筛选结果 {prediction_date}"
@@ -1255,11 +1155,11 @@ except Exception as e:
     log_alert("WARNING", "飞书推送", f"请求异常: {str(e)[:100]}")
 ```
 
-**Excel 文件获取**：筛选结果 xlsx 已同步到 GitHub `lc132/lv`，群成员可从 GitHub 下载。若需直接发送文件，需在飞书开发者后台开通 `im:message`/`im:resource` scope 后走 lark-cli API。
+**文件获取**：筛选结果 Markdown 已同步到 GitHub `lc132/lv`，群成员可从 GitHub 下载。若需直接发送文件，需在飞书开发者后台开通 `im:message`/`im:resource` scope 后走 lark-cli API。
 
 ## 十四、每周复盘数据拉取（仅周六执行）
 
-每周六，将 GitHub 上本周所有 `短线标的_YYYYMMDD.xlsx` 文件拉取到本地，汇总生成周度复盘报表，计算本周推荐胜率、平均涨跌、策略分布，推送到飞书群。
+每周六，将 GitHub 上本周所有 `短线标的_YYYYMMDD.md` 文件拉取到本地，汇总生成周度复盘报表，计算本周推荐胜率、平均涨跌、策略分布，推送到飞书群。
 
 ```python
 import subprocess, os, json, shutil
@@ -1285,16 +1185,16 @@ try:
         check=True, timeout=60
     )
     # 列出所有短线标的文件
-    xlsx_files = []
+    md_files = []
     for f in os.listdir(temp_dir):
-        if f.startswith("短线标的_") and f.endswith(".xlsx"):
-            xlsx_files.append((f, os.path.join(temp_dir, f)))
-    if not xlsx_files:
+        if f.startswith("短线标的_") and f.endswith(".md"):
+            md_files.append((f, os.path.join(temp_dir, f)))
+    if not md_files:
         log_alert("INFO", "每周复盘", "本周无推荐文件，跳过")
         return
     # 排序按日期
-    xlsx_files.sort()
-    log_alert("INFO", "每周复盘", f"拉取到 {len(xlsx_files)} 个推荐文件")
+    md_files.sort()
+    log_alert("INFO", "每周复盘", f"拉取到 {len(md_files)} 个推荐文件")
     # 汇总统计...
     # ...（完整统计逻辑在复盘任务中执行）
 except Exception as e:
@@ -1308,15 +1208,15 @@ finally:
 
 ## 十五、完整执行步骤（35步，含3A/4A/4B/4C/10A/10B/20B子步骤）
 
-0.获取北京时间(data_date+prediction_date) → 0A.从GitHub拉取持仓跟踪(同步持仓跟踪.xlsx+推荐历史归档+补齐本地缺失) → 1.节假日检查 → 2.极端行情 → 3.外围市场 → 3A.开盘前外围(期货跌>1%→降档) → 4.持仓行情同步 → 4A.做T评估 → 4B.持仓跟踪同步 → 4C.持仓危机检查 → 5.推荐历史清理(逐日期文件独立清理) → 6.文件初始化 → 7.财报季检测 → 8.大盘判断 → 9.板块轮动 → 9A.最大持仓天数 → 9B.回撤断路器(检查holding实际pnl_pct) → 9C.兑现率闭环 → 10A.全市场API拉取(东方财富clist) → 10B.板块/行业补全(WebSearch) → 11.硬排除31项(含L1/L2/L3分级) → 12.信号过滤14项(缩量上涨/反弹互斥判定) → 13.五策略筛选 → 14.评分门控(含L3扣分) → 15.冲突处理 → 16.综合评分 → 17.行业限制(记录数量) → 18.新闻筛查(记录数量) → 19.推荐不足降级 → 20.输出Excel(含筛选概况) → 20B.生成HTML报告 → 21.最终验证(含数量校验) → 22.写推荐历史(按日期归档) → 23.回溯检查昨日做T(do_T_feasible) → 24.告警日志摘要 → 25.输出📊筛选概况到对话 → 26.GitHub同步(xlsx+html+持仓跟踪+推荐历史归档+清理超15天旧文件) → 27.飞书推送(概况+文件) → 28.每周复盘拉取（仅每周六执行）
+0.获取北京时间(data_date+prediction_date) → 0A.从GitHub拉取持仓跟踪(同步持仓跟踪.xlsx+推荐历史归档+补齐本地缺失) → 1.节假日检查 → 2.极端行情 → 3.外围市场 → 3A.开盘前外围(期货跌>1%→降档) → 4.持仓行情同步 → 4A.做T评估 → 4B.持仓跟踪同步 → 4C.持仓危机检查 → 5.推荐历史清理(逐日期文件独立清理) → 6.文件初始化 → 7.财报季检测 → 8.大盘判断 → 9.板块轮动 → 9A.最大持仓天数 → 9B.回撤断路器(检查holding实际pnl_pct) → 9C.兑现率闭环 → 10A.全市场API拉取(东方财富clist) → 10B.板块/行业补全(WebSearch) → 11.硬排除31项(含L1/L2/L3分级) → 12.信号过滤14项(缩量上涨/反弹互斥判定) → 13.五策略筛选 → 14.评分门控(含L3扣分) → 15.冲突处理 → 16.综合评分 → 17.行业限制(记录数量) → 18.新闻筛查(记录数量) → 19.推荐不足降级 → 20.输出Markdown(含筛选概况) → 20B.生成HTML报告 → 21.最终验证(含数量校验) → 22.写推荐历史(按日期归档) → 23.回溯检查昨日做T(do_T_feasible) → 24.告警日志摘要 → 25.输出📊筛选概况到对话 → 26.GitHub同步(md+html+持仓跟踪+推荐历史归档+清理超15天旧文件) → 27.飞书推送(概况+文件) → 28.每周复盘拉取（仅每周六执行）
 
 步骤说明：
 - **步骤0A 持仓跟踪拉取**：从GitHub lc132/lv仓库拉取持仓跟踪.xlsx 和所有 推荐历史_YYYYMMDD.json 到本地存档（按日期归档，互不覆盖；新文件复制，已有文件若远程更新则覆盖）。解析持仓记录供步骤4使用。拉取失败→记录WARNING，不阻断筛选。
-- **步骤26 GitHub同步**：推送xlsx、html、持仓跟踪、脚本、推荐历史归档到GitHub。同步前自动清理仓库和本地工作区中文件名日期超过15天的旧归档文件（推荐历史_*.json、短线标的_*.xlsx、ashare-screening-*目录），避免仓库膨胀。
+- **步骤26 GitHub同步**：推送md、html、持仓跟踪、脚本、推荐历史归档到GitHub。同步前自动清理仓库和本地工作区中文件名日期超过15天的旧归档文件（推荐历史_*.json、短线标的_*.md、ashare-screening-*目录），避免仓库膨胀。
 
 - **步骤10A 全市场API拉取**：通过东方财富clist API一次性拉取全A股约5500只标的行情（详见六末尾）。
 - **步骤10B 板块/行业补全**：对clist未覆盖的板块/行业/MA/RSI等字段，通过WebSearch逐只补全。
-- **步骤20B 生成HTML报告**（必须完整生成，不可省略任何组件）：基于筛选结果生成自包含HTML报告，输出到 `/workspace/ashare-screening-YYYYMMDD/` 目录。HTML报告与Excel同步推送至GitHub。报告必须包含以下 **7个区域**（缺一不可）：
+- **步骤20B 生成HTML报告**（必须完整生成，不可省略任何组件）：基于筛选结果生成自包含HTML报告，输出到 `/workspace/ashare-screening-YYYYMMDD/` 目录。HTML报告与Markdown同步推送至GitHub。报告必须包含以下 **7个区域**（缺一不可）：
   1. **报告头部**：渐变深蓝背景，左侧标题+日期，右侧5项关键指标卡片（预测日期、数据日期、市场环境、建议仓位、最终推荐数）。使用 `meta-row` 横向排列。
   2. **筛选管道**：6级漏斗可视化（原始标的池→硬排除→信号过滤→策略匹配→行业+新闻→最终推荐），每级显示数量，最终级高亮蓝色边框。每级之间用箭头标注排除数量。
   3. **数据可视化**（纯CSS/HTML，零JS依赖，使用 `chart-grid` 2×2网格布局，手机端离线即可完美渲染）：
@@ -1337,7 +1237,7 @@ finally:
 
 | 文件 | 操作 |
 |------|------|
-| **短线标的_YYYYMMDD.xlsx** | 输出预测结果到该文件（唯一输出文件） |
+| **短线标的_YYYYMMDD.md** | 输出预测结果到该文件（唯一输出文件） |
 | **ashare-screening-YYYYMMDD/** | 输出自包含HTML报告（纯CSS可视化、筛选管道、告警日志，零JS依赖） |
 | 推荐历史.json | safe_append_json追加推荐记录 + 清理7天推荐 + 清理90天holding+do_T；步骤4更新holding收盘价 |
 | 持仓跟踪.xlsx | 步骤4B同步持仓收盘价（仅更新当前价/市值/盈亏，不修改成本/持仓量） |
@@ -1356,6 +1256,6 @@ finally:
 - 硬排除31项→信号过滤14项→5大策略匹配→行业限制→新闻筛查的5级管道
 - 原始标的池通过东方财富clist API一次性拉取全市场（不可达时自动降级为新浪API分批拉取）
 - 新浪API降级时缺少换手率/量比/板块/行业等字段，策略匹配和评分通过成交额+振幅代理
-- Excel必须openpyxl实现红涨绿跌+策略色+置信度色+蓝色链接
+- MD输出格式为Markdown表格，涨跌用🔴🟢emoji，置信度用🟢🟡🔴emoji
 - 所有异常写告警日志
 - 仅供参考，不构成投资建议
