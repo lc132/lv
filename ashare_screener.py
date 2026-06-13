@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-A股每日盘前短线标的筛选 v6.5.3
+A股每日盘前短线标的筛选 v6.5.5
 严格按 SKILL.md「十五、完整执行步骤」（35步）逐步执行。
 
 35步完整流程:
@@ -58,7 +58,7 @@ prediction_date = None
 data_date = None
 beijing_weekday = None
 beijing_hour = None
-file_version = "v6.5.3"
+file_version = "v6.5.5"
 
 # ============================================================
 # 筛选管道计数器（各步骤累积）
@@ -256,9 +256,28 @@ def step0_get_beijing_time():
     beijing_hour = beijing_now.hour
     beijing_weekday = beijing_now.weekday()  # 0=周一, 6=周日
 
-    # 调度器仅在工作日触发，无需周末偏移
-    prediction_date = beijing_date
-    data_date = beijing_date
+    # data_date（数据日期）：数据来源日。周末回退到周五
+    if beijing_weekday == 5:  # 周六 → 数据日期为周五
+        data_dt = beijing_now - timedelta(days=1)
+        data_date = data_dt.strftime('%Y-%m-%d')
+    elif beijing_weekday == 6:  # 周日 → 数据日期为周五
+        data_dt = beijing_now - timedelta(days=2)
+        data_date = data_dt.strftime('%Y-%m-%d')
+    else:
+        data_date = beijing_date
+
+    # prediction_date（预测日期）：下一个交易日
+    # Mon(0)→Tue(+1), Tue(1)→Wed(+1), Wed(2)→Thu(+1), Thu(3)→Fri(+1)
+    # Fri(4)→Mon(+3), Sat(5)→Mon(+2), Sun(6)→Mon(+1)
+    if beijing_weekday <= 3:       # 周一至周四 → 次日
+        pred_dt = beijing_now + timedelta(days=1)
+    elif beijing_weekday == 4:      # 周五 → 下周一
+        pred_dt = beijing_now + timedelta(days=3)
+    elif beijing_weekday == 5:      # 周六 → 下周一
+        pred_dt = beijing_now + timedelta(days=2)
+    else:                            # 周日 → 下周一
+        pred_dt = beijing_now + timedelta(days=1)
+    prediction_date = pred_dt.strftime('%Y-%m-%d')
 
     print(f"[步骤0] 北京时间: {beijing_date} {beijing_now.strftime('%H:%M:%S')}")
     print(f"[步骤0] data_date={data_date}, prediction_date={prediction_date}")
