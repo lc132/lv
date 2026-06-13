@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A股短线标的筛选报告</title>
+<style>
+:root {
+  --bg: #0f172a; --card-bg: #1e293b; --text: #e2e8f0; --muted: #94a3b8;
+  --accent: #3b82f6; --accent2: #06b6d4; --green: #22c55e; --border: #334155;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:var(--bg); color:var(--text); font-family:'Noto Sans SC',-apple-system,sans-serif; min-height:100vh; }
+header { background:linear-gradient(135deg,#1e3a5f,#0f172a); padding:40px 20px; text-align:center; border-bottom:1px solid var(--border); }
+header h1 { font-size:clamp(24px,4vw,36px); margin-bottom:8px; }
+header p { color:var(--muted); }
+.container { max-width:800px; margin:0 auto; padding:24px 16px; }
+.report-card { background:var(--card-bg); border:1px solid var(--border); border-radius:12px; padding:20px 24px; margin-bottom:16px; display:flex; align-items:center; justify-content:space-between; transition:all .2s; }
+.report-card:hover { border-color:var(--accent); box-shadow:0 4px 20px rgba(59,130,246,.15); }
+.report-card .left { display:flex; align-items:center; gap:16px; }
+.report-icon { width:44px; height:44px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0; }
+.icon-chart { background:rgba(59,130,246,.2); color:var(--accent); }
+.report-title { font-weight:600; font-size:16px; }
+.report-date { color:var(--muted); font-size:13px; margin-top:2px; }
+.report-badge { background:rgba(34,197,94,.15); color:var(--green); padding:4px 12px; border-radius:20px; font-size:12px; font-weight:500; white-space:nowrap; }
+.report-link { color:var(--accent2); text-decoration:none; font-size:14px; font-weight:500; }
+.report-link:hover { text-decoration:underline; }
+footer { text-align:center; padding:32px 16px; color:var(--muted); font-size:13px; border-top:1px solid var(--border); margin-top:40px; }
+.empty { text-align:center; padding:40px; color:var(--muted); }
+.version { font-size:12px; color:#64748b; }
+@media (max-width:500px) {
+  .report-card { flex-direction:column; align-items:flex-start; gap:12px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>📊 A股短线标的筛选报告</h1>
+  <p>每日盘前短线标的智能筛选 · GitHub Pages</p>
+</header>
+
+<div class="container" id="report-list">
+  <div class="empty">加载中文报告列表...</div>
+</div>
+
+<footer>
+  <p>⚠️ 仅供参考，不构成投资建议</p>
+  <p class="version">lc132/lv · <span id="gen-time"></span></p>
+</footer>
+
+<script>
+(async function(){
+  try {
+    const resp = await fetch('https://api.github.com/repos/lc132/lv/contents/');
+    const data = await resp.json();
+    const dirs = data.filter(d => d.type === 'dir' && d.name.startsWith('ashare-screening-'));
+    dirs.sort((a,b) => b.name.localeCompare(a.name));
+    
+    const container = document.getElementById('report-list');
+    if (dirs.length === 0) {
+      container.innerHTML = '<div class="empty">暂无报告</div>';
+      return;
+    }
+    
+    let html = '';
+    for (const dir of dirs) {
+      const dateStr = dir.name.replace('ashare-screening-','');
+      const displayDate = dateStr.length === 8
+        ? `${dateStr.slice(0,4)}-${dateStr.slice(4,6)}-${dateStr.slice(6,8)}`
+        : dateStr;
+      html += `
+      <div class="report-card">
+        <div class="left">
+          <div class="report-icon icon-chart">📈</div>
+          <div>
+            <div class="report-title">短线标的筛选报告</div>
+            <div class="report-date">${displayDate}</div>
+          </div>
+        </div>
+        <a class="report-link" href="./${dir.name}/${dir.name}.html" target="_blank">打开报告 →</a>
+      </div>`;
+    }
+    container.innerHTML = html;
+  } catch(e) {
+    document.getElementById('report-list').innerHTML = '<div class="empty">加载失败，刷新重试</div>';
+  }
+  document.getElementById('gen-time').textContent = new Date().toISOString().slice(0,16).replace('T',' ');
+})();
+</script>
+</body>
+</html>

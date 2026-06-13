@@ -2314,6 +2314,11 @@ def step26_github_sync(ctx):
                 shutil.rmtree(dest_html_dir, ignore_errors=True)
             shutil.copytree(report_dir, dest_html_dir)
         
+        # 推送 GitHub Pages 首页 index.html
+        local_index = f"{DATA_DIR}/index.html"
+        if os.path.exists(local_index):
+            shutil.copy(local_index, os.path.join(repo_dir, "index.html"))
+        
         # Git操作
         subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True)
         subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True)
@@ -2346,7 +2351,7 @@ def step26_github_sync(ctx):
             shutil.rmtree(repo_dir, ignore_errors=True)
 
 # ============================================================
-# 步骤27: 飞书推送
+# 步骤27: 飞书推送（单卡片，GitHub Pages 跳转链接）
 # ============================================================
 def step27_feishu_push(ctx):
     print("\n" + "=" * 60)
@@ -2361,30 +2366,24 @@ def step27_feishu_push(ctx):
     strategy_counts = ctx.get('strategy_counts', Counter())
     prediction_date = ctx['prediction_date']
     pred_yyyymmdd = prediction_date.replace('-', '')
-    md_path = ctx.get('md_path', '')
     html_path = ctx.get('html_path', '')
     
-    def _send_webhook(payload, desc):
-        """发送飞书Webhook消息，返回是否成功"""
-        try:
-            req = urllib.request.Request(
-                FEISHU_WEBHOOK,
-                data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
-                headers={'Content-Type': 'application/json'},
-                method='POST'
-            )
-            resp = urllib.request.urlopen(req, timeout=10)
-            result = json.loads(resp.read())
-            if result.get('code') == 0:
-                return True
-            else:
-                log_alert("WARNING", "飞书推送", f"{desc} 失败: {result.get('msg','')}")
-                return False
-        except Exception as e:
-            log_alert("WARNING", "飞书推送", f"{desc} 异常: {str(e)[:100]}")
-            return False
+    # GitHub Pages URL（仓库已启用 Pages，从 main 分支根目录服务）
+    pages_base = f"https://lc132.github.io/lv"
+    pages_home = pages_base
+    pages_report = f"{pages_base}/ashare-screening-{pred_yyyymmdd}/ashare-screening-{pred_yyyymmdd}.html"
     
-    # === 消息1: 筛选概况卡片 ===
+    final_count = ctx.get('final_recommend_count', 0)
+    
+    # 构建推荐标的摘要（仅策略分布，详细信息在 Pages 报告中）
+    strategy_lines = []
+    for s in ['A', 'B', 'C', 'D', 'E']:
+        cnt = strategy_counts.get(s, 0)
+        if cnt > 0:
+            names = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '资金埋伏', 'E': '回调企稳'}
+            strategy_lines.append(f"{names[s]}({s}): {cnt}只")
+    strategy_summary = "  ".join(strategy_lines) if strategy_lines else "无"
+    
     card = {
         "msg_type": "interactive",
         "card": {
@@ -2393,62 +2392,60 @@ def step27_feishu_push(ctx):
                 "template": "blue"
             },
             "elements": [
-                {"tag": "div", "text": {"tag": "lark_md", "content": f"**数据来源**: {ctx['data_date']} | **市场环境**: {ctx.get('market_condition','未知')} | **建议仓位**: {ctx.get('position',0)}%"}},
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**数据来源**: {ctx['data_date']}  |  **市场环境**: {ctx.get('market_condition','未知')}  |  **建议仓位**: {ctx.get('position',0)}%"
+                    }
+                },
                 {"tag": "hr"},
-                {"tag": "div", "text": {"tag": "lark_md", "content": f"原始标的池: **{ctx.get('total_raw',0)}**只 → 硬排除: **{ctx.get('excluded_count',0)}**只 → 信号过滤: **{ctx.get('signal_dropped',0)}**只 → 策略匹配: **{ctx.get('passed_strategy',0)}**只 → 行业限制: **{ctx.get('passed_industry',0)}**只 → 新闻筛查: **{ctx.get('passed_news',0)}**只 → ★ 最终: **{ctx.get('final_recommend_count',0)}**只"}},
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"原始标的池: **{ctx.get('total_raw',0)}**只 → 硬排除: **{ctx.get('excluded_count',0)}**只 → 信号过滤: **{ctx.get('signal_dropped',0)}**只 → 策略匹配: **{ctx.get('passed_strategy',0)}**只 → 行业限制: **{ctx.get('passed_industry',0)}**只 → 新闻筛查: **{ctx.get('passed_news',0)}**只 → ★ 最终: **{final_count}**只"
+                    }
+                },
                 {"tag": "hr"},
-                {"tag": "div", "text": {"tag": "lark_md", "content": f"策略分布: A动量:{strategy_counts.get('A',0)} B超跌:{strategy_counts.get('B',0)} C事件:{strategy_counts.get('C',0)} D资金:{strategy_counts.get('D',0)} E回调:{strategy_counts.get('E',0)}"}},
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**策略分布**: {strategy_summary}"
+                    }
+                },
+                {"tag": "hr"},
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"📈 [**查看完整可视化报告（GitHub Pages）**]({pages_report})\n📁 [**报告列表首页**]({pages_home})"
+                    }
+                },
                 {"tag": "note", "elements": [{"tag": "plain_text", "content": "⚠️ 仅供参考，不构成投资建议"}]}
             ]
         }
     }
     
-    success_count = 0
-    if _send_webhook(card, "概况卡片"):
-        success_count += 1
-        print("  ✅ 概况卡片已推送")
-    
-    # === 消息2: MD筛选报告全文 ===
-    if md_path and os.path.exists(md_path):
-        try:
-            with open(md_path, 'r', encoding='utf-8') as f:
-                md_content = f.read()
-            # 飞书文本消息长度限制约20KB，截断处理
-            if len(md_content) > 15000:
-                md_content = md_content[:15000] + "\n\n... (内容截断，完整报告见GitHub)"
-            text_msg = {
-                "msg_type": "text",
-                "content": {"text": md_content}
-            }
-            if _send_webhook(text_msg, "MD报告"):
-                success_count += 1
-                print("  ✅ MD报告已推送")
-        except Exception as e:
-            log_alert("WARNING", "飞书推送", f"MD文件读取失败: {str(e)[:80]}")
-    
-    # === 消息3: HTML报告信息（含GitHub链接） ===
-    if html_path and os.path.exists(html_path):
-        gh_url = f"https://github.com/{GITHUB_REPO}/blob/main/ashare-screening-{pred_yyyymmdd}/ashare-screening-{pred_yyyymmdd}.html"
-        html_msg = {
-            "msg_type": "text",
-            "content": {
-                "text": f"📊 HTML可视化报告已生成\n\n"
-                        f"**文件**: ashare-screening-{pred_yyyymmdd}.html\n"
-                        f"**位置**: GitHub仓库 {GITHUB_REPO}\n"
-                        f"**下载**: {gh_url}\n\n"
-                        f"报告包含7大区域：筛选管道漏斗图、策略分布柱状图、硬排除TOP5、"
-                        f"推荐标的表、策略说明、系统告警、免责声明。\n"
-                        f"纯CSS可视化，零JS依赖，手机端离线即可完美渲染。"
-            }
-        }
-        if _send_webhook(html_msg, "HTML报告"):
-            success_count += 1
-            print("  ✅ HTML报告信息已推送")
-    
-    if success_count >= 2:
-        log_alert("INFO", "飞书推送", f"✅ {prediction_date} 文件已推送到飞书群 ({success_count}/3条消息)")
-    else:
-        log_alert("WARNING", "飞书推送", f"部分消息推送失败 ({success_count}/3条)")
+    try:
+        req = urllib.request.Request(
+            FEISHU_WEBHOOK,
+            data=json.dumps(card, ensure_ascii=False).encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        resp = urllib.request.urlopen(req, timeout=10)
+        result = json.loads(resp.read())
+        if result.get('code') == 0:
+            print(f"  ✅ 飞书推送成功（GitHub Pages: {pages_report}）")
+            log_alert("INFO", "飞书推送", f"✅ {prediction_date} 已推送到飞书群（Pages: {pages_report}）")
+        else:
+            print(f"  ⚠️ 飞书推送失败: {result.get('msg','')}")
+            log_alert("WARNING", "飞书推送", f"推送失败: {result.get('msg','')}")
+    except Exception as e:
+        print(f"  ⚠️ 飞书推送异常: {str(e)[:80]}")
+        log_alert("WARNING", "飞书推送", f"请求异常: {str(e)[:100]}")
 
 # ============================================================
 # 步骤24: 告警日志摘要
