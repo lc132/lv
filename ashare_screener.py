@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-A股每日盘前短线标的筛选 v6.5.2
+A股每日盘前短线标的筛选 v6.5.3
 严格按 SKILL.md「十五、完整执行步骤」（35步）逐步执行。
 
 35步完整流程:
@@ -58,7 +58,7 @@ prediction_date = None
 data_date = None
 beijing_weekday = None
 beijing_hour = None
-file_version = "v6.5.2"
+file_version = "v6.5.3"
 
 # ============================================================
 # 筛选管道计数器（各步骤累积）
@@ -2745,7 +2745,7 @@ def main():
     global strategy_counts, exclude_stats, filter_stats
 
     print("=" * 60)
-    print("A股每日盘前短线标的筛选 v6.5.2")
+    print("A股每日盘前短线标的筛选 v6.5.3")
     print(f"执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
