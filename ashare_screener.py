@@ -11,7 +11,7 @@ from collections import Counter
 # ============================================================
 # 全局配置
 # ============================================================
-BUILTIN_VERSION = "v6.6.11"
+BUILTIN_VERSION = "v6.6.12"
 DATA_DIR = "/workspace"
 TEMP_DIR = "/data/user/work"
 # GitHub Token 从外部文件读取（不入git，防止泄露）
@@ -736,11 +736,11 @@ def step8_market_judgment(ctx):
     
     # 仓位分布
     if market == '强市':
-        position_plan = {'A': 37, 'B': 11, 'C': 11, 'D': 6, 'E': 11}
+        position_plan = {'A': 37, 'B': 11, 'C': 11, 'D': 11, 'E': 6}
     elif market == '震荡':
-        position_plan = {'A': 15, 'B': 12, 'C': 9, 'D': 6, 'E': 12}
+        position_plan = {'A': 15, 'B': 12, 'C': 9, 'D': 12, 'E': 6}
     else:
-        position_plan = {'A': 0, 'B': 14, 'C': 7, 'D': 4, 'E': 10}
+        position_plan = {'A': 0, 'B': 14, 'C': 7, 'D': 10, 'E': 4}
     
     ctx['position_plan'] = position_plan
     print(f"  市场环境: {market} → 总仓位{position}% → A:{position_plan['A']}% B:{position_plan['B']}% C:{position_plan['C']}% D:{position_plan['D']}% E:{position_plan['E']}%")
@@ -1614,30 +1614,30 @@ def step13_strategy_match(ctx):
         if not is_earnings and 1 <= change_pct <= 4 and is_active and amplitude >= 4 and amount >= 200_000_000:
             strategies.append(('C', '事件驱动(放量异动)', 1))
         
-        # 策略D: 资金埋伏 (极温和涨幅0-1.5%+中等活跃+收盘>开盘+量比>0.8)
-        # 与策略E分离：D聚焦<1.5%的潜伏标的，E聚焦1-3%的回调突破
-        if 0 < change_pct <= 1.5 and is_moderate and close > open_p and volume_ratio >= 0.8:
-            strategies.append(('D', '资金埋伏', 0.5))
-        
-        # 策略D增强: 主力流入信号+量比>0.8
-        if main_inflow and main_inflow > 0 and 0 < change_pct < 2 and volume_ratio >= 0.8:
-            strategies.append(('D', '资金埋伏(主力流入)', 1))
-        
-        # 策略E: 回调企稳突破 (温和涨幅1-3%+高活跃+收盘>开盘+有一定振幅)
+        # 策略D: 回调企稳突破 (温和涨幅1-3%+高活跃+收盘>开盘+有一定振幅)
+        # D(回调企稳)信号强于E(资金埋伏)，因此D排在E前（A>B>C>D>E自然顺序）
         if 1 <= change_pct <= 3 and is_active and close > open_p and amplitude >= 2:
-            strategies.append(('E', '回调企稳突破', 1))
+            strategies.append(('D', '回调企稳突破', 1))
         
-        # 策略E: 强势突破 (涨幅3-5%+高活跃+收盘>开盘+高振幅)
+        # 策略D: 强势突破 (涨幅3-5%+高活跃+收盘>开盘+高振幅)
         if 3 < change_pct <= 5 and is_active and close > open_p and amplitude >= 3:
-            strategies.append(('E', '强势突破', 1.5))
+            strategies.append(('D', '强势突破', 1.5))
+        
+        # 策略E: 资金埋伏 (极温和涨幅0-1.5%+中等活跃+收盘>开盘+量比>0.8)
+        if 0 < change_pct <= 1.5 and is_moderate and close > open_p and volume_ratio >= 0.8:
+            strategies.append(('E', '资金埋伏', 0.5))
+        
+        # 策略E增强: 主力流入信号+量比>0.8
+        if main_inflow and main_inflow > 0 and 0 < change_pct < 2 and volume_ratio >= 0.8:
+            strategies.append(('E', '资金埋伏(主力流入)', 1))
         
         # 兜底策略：涨幅适中+活跃→A
         if not strategies and 2 < change_pct <= 5 and is_active and close > open_p:
             strategies.append(('A', '动量延续(活跃)', 1))
         
-        # 兜底：极温和+活跃→D
+        # 兜底：极温和+活跃→E
         if not strategies and 0 < change_pct <= 2 and is_active and close > open_p and volume_ratio >= 0.8:
-            strategies.append(('D', '资金埋伏(活跃)', 0.5))
+            strategies.append(('E', '资金埋伏(活跃)', 0.5))
         
         if not strategies and -3 <= change_pct < 0 and is_moderate:
             strategies.append(('B', '超跌反弹(弱势)', 0.5))
@@ -1646,8 +1646,8 @@ def step13_strategy_match(ctx):
             strategies.append(('B', '超跌反弹(量价异动)', 0.8))
         
         if strategies:
-            # 按优先级排序: A>B>C>E>D（E调至D前：E需is_active+amplitude比D的is_moderate更严格→信号更强）
-            strategies.sort(key=lambda x: {'A': 0, 'B': 1, 'C': 2, 'E': 3, 'D': 4}[x[0]])
+            # 按优先级排序: A>B>C>D>E（D回调企稳>E资金埋伏，自然顺序即可）
+            strategies.sort(key=lambda x: {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4}[x[0]])
             best = strategies[0]
             c['strategy'] = best[0]
             c['strategy_reason'] = best[1]
@@ -1703,7 +1703,7 @@ def step14_16_scoring(ctx):
             act_score = 0
         
         # 基础分：策略基准
-        strategy_base = {'A': 5, 'B': 4, 'C': 3, 'D': 2, 'E': 3}
+        strategy_base = {'A': 5, 'B': 4, 'C': 3, 'D': 3, 'E': 2}
         score = strategy_base.get(strategy, 3)
         
         # 加分项
@@ -1722,12 +1722,12 @@ def step14_16_scoring(ctx):
         elif strategy == 'B' and -5 <= change_pct <= -2:
             score += 2
             reasons.append("超跌充分+2")
-        elif strategy == 'D' and 0.5 <= change_pct <= 1.5:
-            score += 1
-            reasons.append("温和涨幅+1")
-        elif strategy == 'E' and 1 <= change_pct <= 2.5:
+        elif strategy == 'D' and 1 <= change_pct <= 2.5:
             score += 1
             reasons.append("温和突破+1")
+        elif strategy == 'E' and 0.5 <= change_pct <= 1.5:
+            score += 1
+            reasons.append("温和涨幅+1")
         
         # 量比/活跃度
         if volume_ratio is not None and 1.5 <= volume_ratio <= 2.5:
@@ -1786,7 +1786,7 @@ def step14_16_scoring(ctx):
         elif strategy == 'B':
             stop_loss = round(close * 0.95, 2)
             take_profit = round(close * 1.06, 2)
-        elif strategy == 'E':
+        elif strategy == 'D':
             stop_loss = round(close * 0.95, 2)
             take_profit = round(close * 1.05, 2)
         else:
@@ -1825,13 +1825,13 @@ def step17_industry_limit(ctx):
     max_per_market = {
         '强市': {'A': 3, 'B': 2, 'C': 2, 'D': 2, 'E': 2},
         '震荡': {'A': 3, 'B': 2, 'C': 2, 'D': 3, 'E': 3},
-        '弱市': {'A': 0, 'B': 3, 'C': 1, 'D': 1, 'E': 2},
+        '弱市': {'A': 0, 'B': 3, 'C': 1, 'D': 2, 'E': 1},
     }
     if is_sina_fallback:
         max_per_market = {
             '强市': {'A': 4, 'B': 3, 'C': 3, 'D': 3, 'E': 3},
             '震荡': {'A': 4, 'B': 3, 'C': 3, 'D': 4, 'E': 4},
-            '弱市': {'A': 0, 'B': 4, 'C': 2, 'D': 2, 'E': 3},
+            '弱市': {'A': 0, 'B': 4, 'C': 2, 'D': 3, 'E': 2},
         }
     limits = max_per_market.get(market, {'A': 2, 'B': 2, 'C': 2, 'D': 2, 'E': 2})
     max_total = sum(limits.values())
@@ -1923,7 +1923,7 @@ def step20_output_markdown(ctx):
     # 构建策略标签映射
     strategy_labels = {
         'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动',
-        'D': '资金埋伏', 'E': '回调企稳'
+        'D': '回调企稳', 'E': '资金埋伏'
     }
     confidence_emoji = {'★★★': '🟢', '★★': '🟡', '★': '🔴'}
     
@@ -1980,7 +1980,7 @@ def step20_output_markdown(ctx):
         )
     
     lines.append("")
-    lines.append(f"📊 共筛选出 **{len(candidates)}** 只标的（A动量:{strategy_counts.get('A',0)} B超跌:{strategy_counts.get('B',0)} C事件:{strategy_counts.get('C',0)} D资金:{strategy_counts.get('D',0)} E回调:{strategy_counts.get('E',0)}）")
+    lines.append(f"📊 共筛选出 **{len(candidates)}** 只标的（A动量:{strategy_counts.get('A',0)} B超跌:{strategy_counts.get('B',0)} C事件:{strategy_counts.get('C',0)} D回调:{strategy_counts.get('D',0)} E资金:{strategy_counts.get('E',0)}）")
     lines.append("")
     
     # 策略说明
@@ -1990,8 +1990,8 @@ def step20_output_markdown(ctx):
         ("**A 动量延续**", "涨幅3-7%，量比1.5-3.0，量>5日均×1.5且>昨日×1.2，MA5>MA10>MA20 — 仓位强35-40%/震荡12-17%/弱关闭"),
         ("**B 超跌反弹**", "连跌≥3日，量<5日均×0.6，RSI(14)连续≥3日<35或底背离，MA20/MA60支撑，KDJ的K<20且J拐头向上 — 仓位强10-12%/震荡12-15%/弱12-15%"),
         ("**C 事件驱动**", "重大合同/预增>50%或部委级政策，事件时效5级衰减 — 仓位强10-12%/震荡10-12%/弱5-8%"),
-        ("**D 资金埋伏**", "北向3日连续净买+主力流入>3000万+涨幅<2% — 仓位强5-8%/震荡5-8%/弱3-5%"),
-        ("**E 回调企稳突破**", "20日内创新高+回调至MA20±3%+连续3日缩量+站回MA5放量 — 仓位强10-12%/震荡12-15%/弱8-12%"),
+        ("**D 回调企稳突破**", "20日内创新高+回调至MA20±3%+连续3日缩量+站回MA5放量 — 仓位强10-12%/震荡12-15%/弱8-12%"),
+        ("**E 资金埋伏**", "北向3日连续净买+主力流入>3000万+涨幅<2% — 仓位强5-8%/震荡5-8%/弱3-5%"),
     ]
     for name, desc in strategies_desc:
         lines.append(f"- {name}：{desc}")
@@ -2044,8 +2044,8 @@ def step20B_html_report(ctx):
     data_date = ctx['data_date']
     
     # 构建HTML
-    strategy_colors = {'A': '#2E7D32', 'B': '#1565C0', 'C': '#7B1FA2', 'D': '#F9A825', 'E': '#E65100'}
-    strategy_bg = {'A': '#E8F5E9', 'B': '#E3F2FD', 'C': '#F3E5F5', 'D': '#FFF8E1', 'E': '#FBE9E7'}
+    strategy_colors = {'A': '#2E7D32', 'B': '#1565C0', 'C': '#7B1FA2', 'D': '#E65100', 'E': '#F9A825'}
+    strategy_bg = {'A': '#E8F5E9', 'B': '#E3F2FD', 'C': '#F3E5F5', 'D': '#FBE9E7', 'E': '#FFF8E1'}
     
     # 生成标的表格行
     rows_html = ""
@@ -2253,8 +2253,8 @@ td {{ padding:8px; text-align:center; border-bottom:1px solid #e0e0e0; white-spa
         <tr style="background:{strategy_bg['A']}"><td style="font-weight:bold;color:{strategy_colors['A']}">A 动量延续</td><td>涨幅3-7%，量比1.5-3.0，MA5>MA10>MA20 — 仓位强35-40%/震荡12-17%/弱关闭</td></tr>
         <tr style="background:{strategy_bg['B']}"><td style="font-weight:bold;color:{strategy_colors['B']}">B 超跌反弹</td><td>连跌≥3日，量<5日均×0.6，RSI(14)<35，KDJ(K<20且J拐头)，站上MA5+放量确认 — 仓位10-15%</td></tr>
         <tr style="background:{strategy_bg['C']}"><td style="font-weight:bold;color:{strategy_colors['C']}">C 事件驱动</td><td>重大合同/预增>50%/部委级政策，事件时效5级衰减 — 仓位5-12%</td></tr>
-        <tr style="background:{strategy_bg['D']}"><td style="font-weight:bold;color:{strategy_colors['D']}">D 资金埋伏</td><td>北向3日连续净买+主力流入>3000万+涨幅<2% — 仓位3-8%</td></tr>
-        <tr style="background:{strategy_bg['E']}"><td style="font-weight:bold;color:{strategy_colors['E']}">E 回调企稳突破</td><td>20日内创新高+回调MA20±3%+连3日缩量+站回MA5放量 — 仓位8-15%</td></tr>
+        <tr style="background:{strategy_bg['D']}"><td style="font-weight:bold;color:{strategy_colors['D']}">D 回调企稳突破</td><td>20日内创新高+回调MA20±3%+连3日缩量+站回MA5放量 — 仓位8-15%</td></tr>
+        <tr style="background:{strategy_bg['E']}"><td style="font-weight:bold;color:{strategy_colors['E']}">E 资金埋伏</td><td>北向3日连续净买+主力流入>3000万+涨幅<2% — 仓位3-8%</td></tr>
     </table>
 </div>
 
@@ -2529,7 +2529,7 @@ def step27_feishu_push(ctx):
     for s in ['A', 'B', 'C', 'D', 'E']:
         cnt = strategy_counts.get(s, 0)
         if cnt > 0:
-            names = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '资金埋伏', 'E': '回调企稳'}
+            names = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏'}
             strategy_lines.append(f"{names[s]}({s}): {cnt}只")
     strategy_summary = "  ".join(strategy_lines) if strategy_lines else "无"
     
