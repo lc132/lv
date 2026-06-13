@@ -14,7 +14,7 @@ data:[{value:3,name:"B 超跌反弹",itemStyle:{color:"#3B82F6"}},
 {value:0,name:"E 回调企稳",itemStyle:{color:"#EC4899"}}]}]});
 window.addEventListener("resize",function(){c1.resize()});
 
-var exNames=["\u80a1\u4ef7<5\u5143", "7\u65e5\u5185\u5df2\u63a8\u8350", "ST/*ST", "\u6da8\u505c/\u8fde\u677f", "\u6da8\u5e45>7%"],exVals=[171, 10, 9, 9, 4];
+var exNames=["\u80a1\u4ef7<5\u5143", "ST/*ST", "\u6da8\u505c/\u8fde\u677f", "\u6da8\u5e45>7%", "\u80a1\u4ef7>100\u5143"],exVals=[171, 9, 9, 4, 4];
 var c2=echarts.init(document.getElementById("chart-exclusion"),null,{renderer:"svg"});
 c2.setOption({animation:false,tooltip:{trigger:"axis",appendToBody:true,axisPointer:{type:"shadow"}},
 grid:{left:90,right:30,top:10,bottom:20},
@@ -30,9 +30,9 @@ c3.setOption({animation:false,tooltip:{trigger:"item",appendToBody:true,formatte
 series:[{type:"funnel",left:"15%",right:"15%",top:20,bottom:20,minSize:"18%",maxSize:"100%",sort:"descending",gap:6,
 label:{show:true,position:"inside",formatter:"{b}\n{c}只",fontSize:12,color:"#FFF"},
 data:[{value:500,name:"1 原始标的池",itemStyle:{color:"#64748B"}},
-{value:290,name:"2 硬排除后",itemStyle:{color:"#3B82F6"}},
-{value:255,name:"3 信号过滤后",itemStyle:{color:"#6366F1"}},
-{value:5,name:"4 策略匹配",itemStyle:{color:"#8B5CF6"}},
+{value:300,name:"2 硬排除后",itemStyle:{color:"#3B82F6"}},
+{value:265,name:"3 信号过滤后",itemStyle:{color:"#6366F1"}},
+{value:15,name:"4 策略匹配",itemStyle:{color:"#8B5CF6"}},
 {value:3,name:"5 行业+新闻",itemStyle:{color:"#A855F7"}}]}]});
 window.addEventListener("resize",function(){c3.resize()});
 
