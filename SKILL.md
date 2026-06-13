@@ -1,8 +1,8 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.5.4)。基于前一日收盘数据，通过 35步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→全市场API拉取(东方财富clist)→板块/行业补全→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分（含评分相同时二次评估打破平局）→行业集中度→新闻筛查→生成HTML报告→GitHub同步→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel，同时生成可视化HTML报告。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.5.5)。基于前一日收盘数据，通过 35步筛选流程（网络授时北京时间→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→全市场API拉取(东方财富clist)→板块/行业补全→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分（含评分相同时二次评估打破平局）→行业集中度→新闻筛查→生成HTML报告→GitHub同步→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel，同时生成可视化HTML报告。推荐历史json和告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.5.4
+# A股盘前短线标的筛选 v6.5.5
 
 基于前一日完整收盘数据筛选当日有望上涨的A股短线标的。**不追高是硬纪律。**
 
@@ -46,9 +46,25 @@ beijing_date = beijing_now.strftime('%Y-%m-%d')
 beijing_hour = beijing_now.hour
 beijing_weekday = beijing_now.weekday()  # 0=周一,6=周日
 
-# 调度器仅在工作日触发，无需周末偏移
-prediction_date = beijing_date
-data_date = beijing_date
+# data_date（数据日期）：数据来源日。周末回退到周五
+if beijing_weekday == 5:       # 周六 → 数据日期为周五
+    data_date = (beijing_now - timedelta(days=1)).strftime('%Y-%m-%d')
+elif beijing_weekday == 6:     # 周日 → 数据日期为周五
+    data_date = (beijing_now - timedelta(days=2)).strftime('%Y-%m-%d')
+else:
+    data_date = beijing_date
+
+# prediction_date（预测日期）：下一个交易日
+# Mon(0)→Tue(+1), Tue(1)→Wed(+1), Wed(2)→Thu(+1), Thu(3)→Fri(+1)
+# Fri(4)→Mon(+3), Sat(5)→Mon(+2), Sun(6)→Mon(+1)
+if beijing_weekday <= 3:       # 周一至周四 → 次日
+    prediction_date = (beijing_now + timedelta(days=1)).strftime('%Y-%m-%d')
+elif beijing_weekday == 4:     # 周五 → 下周一
+    prediction_date = (beijing_now + timedelta(days=3)).strftime('%Y-%m-%d')
+elif beijing_weekday == 5:     # 周六 → 下周一
+    prediction_date = (beijing_now + timedelta(days=2)).strftime('%Y-%m-%d')
+else:                           # 周日 → 下周一
+    prediction_date = (beijing_now + timedelta(days=1)).strftime('%Y-%m-%d')
 ```
 
 所有搜索 query 使用 `data_date`，输出文件名 `/workspace/短线标的_YYYYMMDD.xlsx` 使用 `prediction_date`。API 全部不可达→直接中止，不降级。
