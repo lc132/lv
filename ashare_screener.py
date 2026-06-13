@@ -51,6 +51,8 @@ PARAMS = {
     "data_tier_l3_downgrade_to_signal": True, "strategy_a_weak_market": "closed"
 }
 
+BUILTIN_VERSION = "v6.6.1"
+
 # ============================================================
 # 全局变量（步骤0填充）
 # ============================================================
@@ -60,7 +62,7 @@ prediction_date = None
 data_date = None
 beijing_weekday = None
 beijing_hour = None
-file_version = "v6.6.1"
+file_version = BUILTIN_VERSION
 
 # ============================================================
 # 筛选管道计数器（各步骤累积）
@@ -522,17 +524,25 @@ def step0a_fetch_holding_tracking():
         else:
             log_alert("INFO", "持仓跟踪拉取", "GitHub上无持仓跟踪.xlsx")
 
-        # 2) 同步所有 推荐历史_*.json 到本地
+        # 2) 同步所有 推荐历史_*.json 到本地（新文件复制，已有文件更新）
         import glob as _g
-        synced_dates = []
+        synced_new = []
+        synced_upd = []
         for fpath in sorted(_g.glob(os.path.join(repo_dir, "推荐历史_*.json"))):
             fname = os.path.basename(fpath)
             dst = os.path.join(HISTORY_DIR, fname)
             if not os.path.exists(dst):
                 shutil.copy(fpath, dst)
-                synced_dates.append(fname)
-        if synced_dates:
-            print(f"[步骤0A] 同步历史存档: {len(synced_dates)} 个新文件")
+                synced_new.append(fname)
+            else:
+                # GitHub版本可能更新（如清理了过期记录），始终覆盖本地
+                remote_mtime = os.path.getmtime(fpath)
+                local_mtime = os.path.getmtime(dst)
+                if remote_mtime > local_mtime:
+                    shutil.copy(fpath, dst)
+                    synced_upd.append(fname)
+        if synced_new or synced_upd:
+            print(f"[步骤0A] 同步历史存档: {len(synced_new)}个新文件, {len(synced_upd)}个更新")
 
         # 3) 解析持仓
         holdings = []
@@ -595,7 +605,7 @@ def step4_holding_sync(tracking_holdings=None):
         code = str(h.get('code', ''))
         if not code:
             continue
-        h['prev_close'] = h.get('current')  # 保存旧current为prev_close
+        old_current = h.get('current')  # 暂存旧值，拉取失败时保留
         try:
             market = '0' if code.startswith(('000', '002', '003', '300', '301')) else '1'
             url = f"https://push2.eastmoney.com/api/qt/stock/get?secid={market}.{code}&fields=f43,f170"
@@ -604,6 +614,7 @@ def step4_holding_sync(tracking_holdings=None):
             d = json.loads(resp.read())
             if d and d.get('data') and d['data'].get('f43'):
                 current = d['data']['f43'] / 100
+                h['prev_close'] = old_current  # 仅在拉取成功后更新prev_close
                 h['current'] = current
                 h['update_date'] = data_date
                 cost = h.get('cost', current)
@@ -615,6 +626,7 @@ def step4_holding_sync(tracking_holdings=None):
                 updated += 1
         except Exception as e:
             log_alert("WARNING", "持仓行情", f"{code} {h.get('name','')}: {str(e)[:60]}")
+            h['prev_close'] = old_current  # 拉取失败时回退prev_close
 
     if updated > 0:
         # 仅将更新后的 holding 记录写回当前日期文件（不重复写全量合并历史）
@@ -845,12 +857,12 @@ def step6_file_init():
     adj_records = safe_read_json(PARAMS_PATH)
     if adj_records and len(adj_records) > 0:
         latest = adj_records[-1]
-        file_version = latest.get('version', 'v6.5.1')
+        file_version = latest.get('version', BUILTIN_VERSION)
         loaded_params = latest.get('params', {})
         if loaded_params:
             PARAMS.update(loaded_params)
     else:
-        file_version = 'v6.5.1'
+        file_version = BUILTIN_VERSION
 
     history = read_all_history()
     last_check = None
@@ -1086,16 +1098,14 @@ def step9a_max_holding_days_check(history):
 
 
 def step9b_circuit_breaker(history):
-    """9B 回撤断路器：T+1估算最大亏损>阈值%"""
+    """9B 回撤断路器：检查持仓holding记录的回撤幅度"""
     print(f"[步骤9B] 回撤断路器检查...")
     threshold = PARAMS.get("circuit_breaker_threshold_pct", 3.0)
-    # 简化：检查最近两条推荐记录的持仓盈亏
-    recent_recs = [r for r in history if r.get('type') == 'recommendation']
-    recent_recs.sort(key=lambda x: x.get('date', ''), reverse=True)
-    recent = recent_recs[:5]
+    # 检查holding记录的pnl_pct（而非recommendation，后者无此字段）
+    holdings = [r for r in history if r.get('type') == 'holding']
     breach_count = 0
-    for rec in recent:
-        pnl = rec.get('pnl_pct', 0) or 0
+    for h in holdings:
+        pnl = h.get('pnl_pct', 0) or 0
         if pnl < -threshold:
             breach_count += 1
 
@@ -1494,18 +1504,15 @@ def step12_signal_filter(candidates):
         flags = c.get('signal_flags', [])
         deductions = 0
 
-        # 9. 缩量上涨 -3分
-        if chg > 3 and vr < 0.7:
-            flags.append('缩量上涨(-3分)')
-            deductions += 3
-
-        # 10. 涨停反复开板（跳过，无数据）
-
-        # 11. 缩量反弹 -4分
+        # 9. 缩量上涨/反弹（整体判断，避免双重扣分）
         if chg > 0 and prev_close > 0 and close_p > prev_close:
             if vr < 0.7:
-                flags.append('缩量反弹(-4分)')
-                deductions += 4
+                if chg > 3:
+                    flags.append('缩量上涨(-3分)')
+                    deductions += 3
+                else:
+                    flags.append('缩量反弹(-4分)')
+                    deductions += 4
 
         # 12. 缩量三连阴 -3分（简化检查）
         if chg < 0 and vr < 0.7:
@@ -2559,7 +2566,10 @@ def step23_back_check_do_t():
     missing = []
     for ev in yesterday_do_t_eval:
         code = ev.get('code', '')
-        if ev.get('status') in ('重点评估', '谨慎评估'):
+        feasible = ev.get('do_T_feasible', False)
+        # do_T_feasible 可以是 True / "谨慎" / False
+        should_eval = feasible == True or str(feasible).strip() == '谨慎'
+        if should_eval:
             if not any(d.get('code') == code for d in yesterday_do_t):
                 missing.append(f"  {code} {ev.get('name','')}: 做T评估可行但未执行do_T")
 
