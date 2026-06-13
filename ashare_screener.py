@@ -51,7 +51,7 @@ PARAMS = {
     "data_tier_l3_downgrade_to_signal": True, "strategy_a_weak_market": "closed"
 }
 
-BUILTIN_VERSION = "v6.6.1"
+BUILTIN_VERSION = "v6.6.2"
 
 # ============================================================
 # 全局变量（步骤0填充）
