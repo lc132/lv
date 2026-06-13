@@ -11,7 +11,7 @@ from collections import Counter
 # ============================================================
 # 全局配置
 # ============================================================
-BUILTIN_VERSION = "v6.6.5"
+BUILTIN_VERSION = "v6.6.6"
 DATA_DIR = "/workspace"
 TEMP_DIR = "/data/user/work"
 # GitHub Token 从外部文件读取（不入git，防止泄露）
@@ -1443,6 +1443,15 @@ def step13_strategy_match(ctx):
         amount = c.get('amount') or 0  # 成交额(元)
         volume = c.get('volume', 0)    # 成交量(手)
         main_inflow = c.get('main_inflow')
+        volume_ratio = c.get('volume_ratio')
+        # Sina API无volume_ratio，用成交额代理：>=1亿→1.5, >=5000万→0.9, 否则→0.5
+        if volume_ratio is None:
+            if amount >= 100_000_000:
+                volume_ratio = 1.5
+            elif amount >= 50_000_000:
+                volume_ratio = 0.9
+            else:
+                volume_ratio = 0.5
         
         # 活跃度评估（新浪API无换手率，用成交额和振幅替代）
         # amount >= 1亿 = 活跃, >= 5000万 = 较活跃, < 5000万 = 不活跃
@@ -2350,12 +2359,37 @@ def step27_feishu_push(ctx):
         return
     
     strategy_counts = ctx.get('strategy_counts', Counter())
+    prediction_date = ctx['prediction_date']
+    pred_yyyymmdd = prediction_date.replace('-', '')
+    md_path = ctx.get('md_path', '')
+    html_path = ctx.get('html_path', '')
     
+    def _send_webhook(payload, desc):
+        """发送飞书Webhook消息，返回是否成功"""
+        try:
+            req = urllib.request.Request(
+                FEISHU_WEBHOOK,
+                data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
+                headers={'Content-Type': 'application/json'},
+                method='POST'
+            )
+            resp = urllib.request.urlopen(req, timeout=10)
+            result = json.loads(resp.read())
+            if result.get('code') == 0:
+                return True
+            else:
+                log_alert("WARNING", "飞书推送", f"{desc} 失败: {result.get('msg','')}")
+                return False
+        except Exception as e:
+            log_alert("WARNING", "飞书推送", f"{desc} 异常: {str(e)[:100]}")
+            return False
+    
+    # === 消息1: 筛选概况卡片 ===
     card = {
         "msg_type": "interactive",
         "card": {
             "header": {
-                "title": {"tag": "plain_text", "content": f"📊 每日短线标的筛选 — {ctx['prediction_date']}"},
+                "title": {"tag": "plain_text", "content": f"📊 每日短线标的筛选 — {prediction_date}"},
                 "template": "blue"
             },
             "elements": [
@@ -2369,24 +2403,52 @@ def step27_feishu_push(ctx):
         }
     }
     
-    try:
-        req = urllib.request.Request(
-            FEISHU_WEBHOOK,
-            data=json.dumps(card, ensure_ascii=False).encode('utf-8'),
-            headers={'Content-Type': 'application/json'},
-            method='POST'
-        )
-        resp = urllib.request.urlopen(req, timeout=10)
-        result = json.loads(resp.read())
-        if result.get('code') == 0:
-            print(f"  ✅ 飞书推送成功")
-            log_alert("INFO", "飞书推送", "✅ 筛选概况已推送到飞书群")
-        else:
-            print(f"  ⚠️ 飞书推送失败: {result.get('msg','')}")
-            log_alert("WARNING", "飞书推送", f"推送失败: {result.get('msg','')}")
-    except Exception as e:
-        print(f"  ⚠️ 飞书推送异常: {str(e)[:80]}")
-        log_alert("WARNING", "飞书推送", f"请求异常: {str(e)[:100]}")
+    success_count = 0
+    if _send_webhook(card, "概况卡片"):
+        success_count += 1
+        print("  ✅ 概况卡片已推送")
+    
+    # === 消息2: MD筛选报告全文 ===
+    if md_path and os.path.exists(md_path):
+        try:
+            with open(md_path, 'r', encoding='utf-8') as f:
+                md_content = f.read()
+            # 飞书文本消息长度限制约20KB，截断处理
+            if len(md_content) > 15000:
+                md_content = md_content[:15000] + "\n\n... (内容截断，完整报告见GitHub)"
+            text_msg = {
+                "msg_type": "text",
+                "content": {"text": md_content}
+            }
+            if _send_webhook(text_msg, "MD报告"):
+                success_count += 1
+                print("  ✅ MD报告已推送")
+        except Exception as e:
+            log_alert("WARNING", "飞书推送", f"MD文件读取失败: {str(e)[:80]}")
+    
+    # === 消息3: HTML报告信息（含GitHub链接） ===
+    if html_path and os.path.exists(html_path):
+        gh_url = f"https://github.com/{GITHUB_REPO}/blob/main/ashare-screening-{pred_yyyymmdd}/ashare-screening-{pred_yyyymmdd}.html"
+        html_msg = {
+            "msg_type": "text",
+            "content": {
+                "text": f"📊 HTML可视化报告已生成\n\n"
+                        f"**文件**: ashare-screening-{pred_yyyymmdd}.html\n"
+                        f"**位置**: GitHub仓库 {GITHUB_REPO}\n"
+                        f"**下载**: {gh_url}\n\n"
+                        f"报告包含7大区域：筛选管道漏斗图、策略分布柱状图、硬排除TOP5、"
+                        f"推荐标的表、策略说明、系统告警、免责声明。\n"
+                        f"纯CSS可视化，零JS依赖，手机端离线即可完美渲染。"
+            }
+        }
+        if _send_webhook(html_msg, "HTML报告"):
+            success_count += 1
+            print("  ✅ HTML报告信息已推送")
+    
+    if success_count >= 2:
+        log_alert("INFO", "飞书推送", f"✅ {prediction_date} 文件已推送到飞书群 ({success_count}/3条消息)")
+    else:
+        log_alert("WARNING", "飞书推送", f"部分消息推送失败 ({success_count}/3条)")
 
 # ============================================================
 # 步骤24: 告警日志摘要

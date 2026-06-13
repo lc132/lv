@@ -1,8 +1,8 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.6.5)。基于前一日收盘数据，通过 35步筛选流程（网络授时北京时间→GitHub拉取持仓跟踪→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→全市场API拉取(东方财富clist)→板块/行业补全→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分（含评分相同时二次评估打破平局）→行业集中度→新闻筛查→生成HTML报告→GitHub同步(含超15天旧文件自动清理)→飞书推送→每周复盘），输出短线标的_YYYYMMDD.md 预测次日上涨的标的为Markdown格式，同时生成可视化HTML报告。推荐历史按日期归档(推荐历史_YYYYMMDD.json)互不覆盖，告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.6.6)。基于前一日收盘数据，通过 35步筛选流程（网络授时北京时间→GitHub拉取持仓跟踪→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→全市场API拉取(东方财富clist)→板块/行业补全→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分（含评分相同时二次评估打破平局）→行业集中度→新闻筛查→生成HTML报告→GitHub同步(含超15天旧文件自动清理)→飞书推送→每周复盘），输出短线标的_YYYYMMDD.md 预测次日上涨的标的为Markdown格式，同时生成可视化HTML报告。推荐历史按日期归档(推荐历史_YYYYMMDD.json)互不覆盖，告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.6.5
+# A股盘前短线标的筛选 v6.6.6
 
 基于前一日完整收盘数据筛选当日有望上涨的A股短线标的。**不追高是硬纪律。**
 
@@ -1091,9 +1091,12 @@ finally:
         shutil.rmtree(repo_dir, ignore_errors=True)
 ```
 
-## 十三.B、飞书推送 — 筛选结果通过群机器人 Webhook 推送
+## 十三.B、飞书推送 — 筛选结果通过群机器人 Webhook 推送（三消息推送）
 
-筛选完成后，通过飞书群机器人 Webhook 发送筛选概况卡片到指定群聊。
+筛选完成后，通过飞书群机器人 Webhook 发送 **3条消息** 到指定群聊：
+1. **筛选概况卡片**（interactive card）：数据来源、市场环境、6级管道、策略分布
+2. **MD筛选报告全文**（text）：短线标的_YYYYMMDD.md 完整内容（超15000字符截断）
+3. **HTML报告信息**（text）：HTML报告说明 + GitHub 下载链接
 
 **前置条件**：飞书群已添加自定义机器人，获得 Webhook URL（`https://open.feishu.cn/open-apis/bot/v2/hook/xxx`）。
 
@@ -1116,9 +1119,27 @@ if not FEISHU_WEBHOOK:
     log_alert("WARNING", "飞书推送", "未配置Webhook URL，跳过")
     return
 
-# 构建筛选概况卡片
-# 以下变量在筛选管道各阶段累积：total_raw/excluded/filtered/matched/industry_limited/news_filtered/final_recommend_count
-# 各变量由对应步骤计算。strategy_counts 由步骤13 Counter统计，此处显式初始化防止 NameError
+def _send_webhook(payload, desc):
+    """发送飞书Webhook消息，返回是否成功"""
+    try:
+        req = urllib.request.Request(
+            FEISHU_WEBHOOK,
+            data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        resp = urllib.request.urlopen(req, timeout=10)
+        result = json.loads(resp.read())
+        if result.get('code') == 0:
+            return True
+        else:
+            log_alert("WARNING", "飞书推送", f"{desc} 失败: {result.get('msg','')}")
+            return False
+    except Exception as e:
+        log_alert("WARNING", "飞书推送", f"{desc} 异常: {str(e)[:100]}")
+        return False
+
+# === 消息1: 筛选概况卡片 ===
 strategy_counts = strategy_counts if 'strategy_counts' in dir() else Counter()
 card = {
     "msg_type": "interactive",
@@ -1128,7 +1149,7 @@ card = {
             "template": "blue"
         },
         "elements": [
-            {"tag": "div", "text": {"tag": "lark_md", "content": f"**数据来源**: {data_date}"}},
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"**数据来源**: {data_date} | **市场环境**: {market_condition} | **建议仓位**: {position}%"}},
             {"tag": "hr"},
             {"tag": "div", "text": {"tag": "lark_md", "content": f"原始标的池: **{total_raw}**只 → 硬排除: **{excluded}**只 → 信号过滤: **{filtered}**只 → 策略匹配: **{matched}**只 → 行业限制: **{industry_limited}**只 → 新闻筛查: **{news_filtered}**只 → ★ 最终: **{final_recommend_count}**只"}},
             {"tag": "hr"},
@@ -1137,25 +1158,35 @@ card = {
         ]
     }
 }
+_send_webhook(card, "概况卡片")
 
-try:
-    req = urllib.request.Request(
-        FEISHU_WEBHOOK,
-        data=json.dumps(card, ensure_ascii=False).encode('utf-8'),
-        headers={'Content-Type': 'application/json'},
-        method='POST'
-    )
-    resp = urllib.request.urlopen(req, timeout=10)
-    result = json.loads(resp.read())
-    if result.get('code') == 0:
-        log_alert("INFO", "飞书推送", f"✅ 筛选概况已推送到飞书群")
-    else:
-        log_alert("WARNING", "飞书推送", f"推送失败: {result.get('msg','')}")
-except Exception as e:
-    log_alert("WARNING", "飞书推送", f"请求异常: {str(e)[:100]}")
+# === 消息2: MD筛选报告全文 ===
+if md_path and os.path.exists(md_path):
+    with open(md_path, 'r', encoding='utf-8') as f:
+        md_content = f.read()
+    if len(md_content) > 15000:
+        md_content = md_content[:15000] + "\n\n... (内容截断，完整报告见GitHub)"
+    _send_webhook({"msg_type": "text", "content": {"text": md_content}}, "MD报告")
+
+# === 消息3: HTML报告信息（含GitHub链接） ===
+if html_path and os.path.exists(html_path):
+    gh_url = f"https://github.com/lc132/lv/blob/main/ashare-screening-{pred_yyyymmdd}/ashare-screening-{pred_yyyymmdd}.html"
+    html_msg = {
+        "msg_type": "text",
+        "content": {
+            "text": f"📊 HTML可视化报告已生成\n\n"
+                    f"**文件**: ashare-screening-{pred_yyyymmdd}.html\n"
+                    f"**位置**: GitHub仓库 lc132/lv\n"
+                    f"**下载**: {gh_url}\n\n"
+                    f"报告包含7大区域：筛选管道漏斗图、策略分布柱状图、硬排除TOP5、"
+                    f"推荐标的表、策略说明、系统告警、免责声明。\n"
+                    f"纯CSS可视化，零JS依赖，手机端离线即可完美渲染。"
+        }
+    }
+    _send_webhook(html_msg, "HTML报告")
 ```
 
-**文件获取**：筛选结果 Markdown 已同步到 GitHub `lc132/lv`，群成员可从 GitHub 下载。若需直接发送文件，需在飞书开发者后台开通 `im:message`/`im:resource` scope 后走 lark-cli API。
+**文件获取**：MD 和 HTML 报告均同步到 GitHub `lc132/lv`，群成员可从 GitHub 下载。飞书群内直接查看 MD 全文和 HTML 报告链接。
 
 ## 十四、每周复盘数据拉取（仅周六执行）
 
