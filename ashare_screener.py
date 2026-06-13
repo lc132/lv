@@ -27,7 +27,9 @@ from openpyxl.utils import get_column_letter
 # 文件路径
 # ============================================================
 WORKSPACE = "/workspace"
-HISTORY_PATH = f"{WORKSPACE}/推荐历史.json"
+HISTORY_DIR = WORKSPACE                             # 推荐历史存放目录
+HISTORY_GLOB = "推荐历史_*.json"                      # 日期归档匹配模式
+HISTORY_PATH = None                                  # 动态设置: 推荐历史_{prediction_date}.json
 ALERT_LOG_PATH = f"{WORKSPACE}/系统告警.log"
 TRACKING_XLSX = f"{WORKSPACE}/持仓跟踪.xlsx"
 PARAMS_PATH = f"{WORKSPACE}/策略调整记录.json"
@@ -58,7 +60,7 @@ prediction_date = None
 data_date = None
 beijing_weekday = None
 beijing_hour = None
-file_version = "v6.5.5"
+file_version = "v6.6.0"
 
 # ============================================================
 # 筛选管道计数器（各步骤累积）
@@ -152,6 +154,22 @@ def read_file_token(path):
     except Exception:
         pass
     return None
+
+
+def read_all_history():
+    """合并读取所有日期归档的推荐历史文件，返回合并后的记录列表。"""
+    import glob as _g
+    pattern = os.path.join(HISTORY_DIR, HISTORY_GLOB)
+    all_records = []
+    for fpath in sorted(_g.glob(pattern)):
+        try:
+            with open(fpath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    all_records.extend(data)
+        except (json.JSONDecodeError, PermissionError) as e:
+            log_alert("ERROR", "read_all_history", f"{fpath}: {str(e)[:60]}")
+    return all_records
 
 
 # ============================================================
@@ -278,6 +296,10 @@ def step0_get_beijing_time():
     else:                            # 周日 → 下周一
         pred_dt = beijing_now + timedelta(days=1)
     prediction_date = pred_dt.strftime('%Y-%m-%d')
+
+    # 动态设置按日期归档的推荐历史路径
+    global HISTORY_PATH
+    HISTORY_PATH = os.path.join(HISTORY_DIR, f"推荐历史_{prediction_date}.json")
 
     print(f"[步骤0] 北京时间: {beijing_date} {beijing_now.strftime('%H:%M:%S')}")
     print(f"[步骤0] data_date={data_date}, prediction_date={prediction_date}")
@@ -470,8 +492,8 @@ def step3a_futures_check(global_result):
 # 步骤0A：从GitHub拉取持仓跟踪
 # ============================================================
 def step0a_fetch_holding_tracking():
-    """从GitHub拉取持仓跟踪.xlsx，提取持仓记录供后续步骤使用"""
-    print(f"[步骤0A] 从GitHub拉取持仓跟踪...")
+    """从GitHub拉取持仓跟踪.xlsx + 所有日期归档的推荐历史JSON，补齐本地存档"""
+    print(f"[步骤0A] 从GitHub拉取持仓跟踪和推荐历史...")
     token = read_file_token(GITHUB_TOKEN_PATH)
     if not token:
         log_alert("INFO", "持仓跟踪拉取", "无GitHub令牌，跳过")
@@ -492,40 +514,51 @@ def step0a_fetch_holding_tracking():
             log_alert("WARNING", "持仓跟踪拉取", f"clone失败: {result.stderr[:100]}")
             return []
 
+        # 1) 同步持仓跟踪.xlsx
         tracking_src = os.path.join(repo_dir, "持仓跟踪.xlsx")
-        if not os.path.exists(tracking_src):
+        if os.path.exists(tracking_src):
+            shutil.copy(tracking_src, TRACKING_XLSX)
+        else:
             log_alert("INFO", "持仓跟踪拉取", "GitHub上无持仓跟踪.xlsx")
-            shutil.rmtree(repo_dir, ignore_errors=True)
-            return []
 
-        # Copy to workspace
-        shutil.copy(tracking_src, TRACKING_XLSX)
+        # 2) 同步所有 推荐历史_*.json 到本地
+        import glob as _g
+        synced_dates = []
+        for fpath in sorted(_g.glob(os.path.join(repo_dir, "推荐历史_*.json"))):
+            fname = os.path.basename(fpath)
+            dst = os.path.join(HISTORY_DIR, fname)
+            if not os.path.exists(dst):
+                shutil.copy(fpath, dst)
+                synced_dates.append(fname)
+        if synced_dates:
+            print(f"[步骤0A] 同步历史存档: {len(synced_dates)} 个新文件")
 
-        # Parse holdings from xlsx
+        # 3) 解析持仓
         holdings = []
-        wb = load_workbook(TRACKING_XLSX)
-        ws = wb["持仓明细"]
-        for row in range(2, ws.max_row + 1):
-            code = ws.cell(row=row, column=1).value
-            if not code:
-                continue
-            code = str(code).strip()
-            holdings.append({
-                "code": code,
-                "name": str(ws.cell(row=row, column=2).value or ""),
-                "cost": ws.cell(row=row, column=3).value,
-                "shares": ws.cell(row=row, column=4).value,
-                "available_shares": ws.cell(row=row, column=5).value,
-                "sector": str(ws.cell(row=row, column=6).value or ""),
-                "industry": str(ws.cell(row=row, column=7).value or ""),
-                "current": ws.cell(row=row, column=8).value,
-                "market_value": ws.cell(row=row, column=9).value,
-                "pnl_amount": ws.cell(row=row, column=10).value,
-                "pnl_pct": ws.cell(row=row, column=11).value,
-                "update_date": str(ws.cell(row=row, column=12).value or ""),
-            })
+        if os.path.exists(TRACKING_XLSX):
+            wb = load_workbook(TRACKING_XLSX)
+            ws = wb["持仓明细"]
+            for row in range(2, ws.max_row + 1):
+                code = ws.cell(row=row, column=1).value
+                if not code:
+                    continue
+                code = str(code).strip()
+                holdings.append({
+                    "code": code,
+                    "name": str(ws.cell(row=row, column=2).value or ""),
+                    "cost": ws.cell(row=row, column=3).value,
+                    "shares": ws.cell(row=row, column=4).value,
+                    "available_shares": ws.cell(row=row, column=5).value,
+                    "sector": str(ws.cell(row=row, column=6).value or ""),
+                    "industry": str(ws.cell(row=row, column=7).value or ""),
+                    "current": ws.cell(row=row, column=8).value,
+                    "market_value": ws.cell(row=row, column=9).value,
+                    "pnl_amount": ws.cell(row=row, column=10).value,
+                    "pnl_pct": ws.cell(row=row, column=11).value,
+                    "update_date": str(ws.cell(row=row, column=12).value or ""),
+                })
+            wb.close()
 
-        wb.close()
         shutil.rmtree(repo_dir, ignore_errors=True)
 
         log_alert("INFO", "持仓跟踪拉取", f"已加载 {len(holdings)} 只持仓")
@@ -541,7 +574,7 @@ def step0a_fetch_holding_tracking():
 def step4_holding_sync(tracking_holdings=None):
     """持仓行情同步：更新收盘价/盈亏。tracking_holdings 由步骤0A从GitHub拉取。"""
     print(f"[步骤4] 持仓行情同步...")
-    history = safe_read_json(HISTORY_PATH)
+    history = read_all_history()
 
     # 优先使用步骤0A从GitHub拉取的持仓，其次使用推荐历史中的holding
     holdings = tracking_holdings if tracking_holdings is not None else []
@@ -579,7 +612,11 @@ def step4_holding_sync(tracking_holdings=None):
             log_alert("WARNING", "持仓行情", f"{code} {h.get('name','')}: {str(e)[:60]}")
 
     if updated > 0:
-        safe_write_json(HISTORY_PATH, history)
+        # 仅将更新后的 holding 记录写回当前日期文件（不重复写全量合并历史）
+        current_holdings = [r for r in history if r.get('type') == 'holding']
+        current_existing = safe_read_json(HISTORY_PATH) if os.path.exists(HISTORY_PATH) else []
+        other_records = [r for r in current_existing if r.get('type') != 'holding']
+        safe_write_json(HISTORY_PATH, other_records + current_holdings)
         log_alert("INFO", "持仓行情", f"已更新{updated}只持仓")
     print(f"[步骤4] 持仓更新: {updated}只")
     return holdings, history
@@ -747,7 +784,7 @@ def step5_history_cleanup():
     """清理7天前recommendation + 90天前holding"""
     print(f"[步骤5] 推荐历史清理...")
     try:
-        history = safe_read_json(HISTORY_PATH)
+        history = read_all_history()
         data_dt = datetime.strptime(data_date, '%Y-%m-%d')
         cutoff_7d = (data_dt - timedelta(days=7)).strftime('%Y-%m-%d')
         cutoff_90d = (data_dt - timedelta(days=90)).strftime('%Y-%m-%d')
@@ -795,7 +832,7 @@ def step6_file_init():
     else:
         file_version = 'v6.5.1'
 
-    history = safe_read_json(HISTORY_PATH)
+    history = read_all_history()
     last_check = None
     current_version = None
     for r in reversed(history):
@@ -2492,7 +2529,7 @@ def step22_write_history(recos):
 def step23_back_check_do_t():
     """回溯检查昨日do_T_eval → do_T缺失则提醒"""
     print(f"[步骤23] 回溯检查昨日做T...")
-    history = safe_read_json(HISTORY_PATH)
+    history = read_all_history()
     yesterday = (datetime.strptime(beijing_date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
     yesterday_do_t_eval = [r for r in history
                            if r.get('type') == 'do_T_eval' and r.get('date') == yesterday]
@@ -2655,6 +2692,12 @@ def step26_github_sync(xlsx_path, html_path=None):
         if os.path.exists(TRACKING_XLSX):
             shutil.copy(TRACKING_XLSX, os.path.join(repo_dir, "持仓跟踪.xlsx"))
 
+        # 5) 推送本次日期归档的推荐历史
+        if HISTORY_PATH and os.path.exists(HISTORY_PATH):
+            hist_fname = os.path.basename(HISTORY_PATH)
+            shutil.copy(HISTORY_PATH, os.path.join(repo_dir, hist_fname))
+            print(f"[步骤26] 推送推荐历史: {hist_fname}")
+
         if cond_synced and os.path.exists(cond_xlsx):
             shutil.copy(cond_xlsx, os.path.join(repo_dir, "A股短线选股筛选条件.xlsx"))
 
@@ -2678,6 +2721,7 @@ def step26_github_sync(xlsx_path, html_path=None):
             parts.append(f"xlsx")
             if html_path: parts.append("html")
             if os.path.exists(TRACKING_XLSX): parts.append("持仓跟踪")
+            if HISTORY_PATH and os.path.exists(HISTORY_PATH): parts.append("推荐历史")
             parts.append("script")
             log_alert("INFO", "GitHub同步", f"  {prediction_date} 已推送 ({', '.join(parts)})")
             print(f"[步骤26]  GitHub推送成功 ({', '.join(parts)})")
