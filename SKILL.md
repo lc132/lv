@@ -72,7 +72,7 @@ prediction_date = prediction_date.strftime('%Y-%m-%d')
 # 此处仅做日期计算，实际交易日判断由步骤1负责
 ```
 
-**交易日对应**：周六/日→跳过本次预测 | 周一→`data_date`=上周五,`prediction_date`=周一 | 周二→周一/周二 | 周三→周二/周三 | 周四→周三/周四 | 周五→周四/周五
+**交易日对应**：周六/日→调整日期继续执行（data_date=上周五, prediction_date=下周一） | 周一→`data_date`=上周五,`prediction_date`=周一 | 周二→周一/周二 | 周三→周二/周三 | 周四→周三/周四 | 周五→周四/周五
 
 所有搜索 query 使用 `data_date`，输出文件名 `/workspace/短线标的_YYYYMMDD.xlsx` 使用 `prediction_date`。API 全部不可达→直接中止，不降级。
 

@@ -2773,7 +2773,7 @@ def main():
     # === 步骤1: 节假日检查 ===
     holiday = step1_holiday_check()
     if holiday == "SKIP":
-        print("节假日/周末，跳过筛选")
+        print("节假日，跳过筛选")
         step28_weekly_review()
         return None
 
