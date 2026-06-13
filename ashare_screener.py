@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的筛选 v6.6.4
+A股每日盘前短线标的筛选 v6.6.5
 严格按 SKILL.md 十五、完整执行步骤 逐步执行
 """
 import os, sys, json, time, urllib.request, urllib.error, subprocess, shutil, re
@@ -11,7 +11,7 @@ from collections import Counter
 # ============================================================
 # 全局配置
 # ============================================================
-BUILTIN_VERSION = "v6.6.4"
+BUILTIN_VERSION = "v6.6.5"
 DATA_DIR = "/workspace"
 TEMP_DIR = "/data/user/work"
 # GitHub Token 从外部文件读取（不入git，防止泄露）
@@ -895,7 +895,7 @@ def step10A_fetch_all_stocks(ctx):
                 "ut": "bd1d9ddb04089700cf9c27f6f7426281",
                 "fltt": "2", "invt": "2", "fid": "f6",  # 按成交额排序
                 "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
-                "fields": "f2,f3,f5,f6,f7,f8,f10,f12,f14,f15,f16,f17,f18,f20,f62",
+                "fields": "f2,f3,f5,f6,f7,f8,f10,f12,f14,f15,f16,f17,f18,f20,f62,f100,f102",
                 "_": str(int(time.time() * 1000))
             }
             try:
@@ -965,6 +965,8 @@ def step10A_fetch_all_stocks(ctx):
                         "prev_close": float(item.get('f18', 0)) if item.get('f18') not in (None, '-') else None,
                         "main_inflow": float(item.get('f62', 0)) if item.get('f62') not in (None, '-') else None,
                         "total_cap": float(item.get('f20', 0)) if item.get('f20') not in (None, '-') else None,
+                        "sector": str(item.get('f102', '') or '').strip() or '未知',
+                        "industry": str(item.get('f100', '') or '').strip() or '未知',
                     })
                 except (ValueError, TypeError):
                     continue
@@ -1075,6 +1077,88 @@ def step10A_fetch_all_stocks(ctx):
     ctx['total_raw'] = len(raw_pool)
     print(f"  原始标的池: {len(raw_pool)} 只（涨跌幅>0%且活跃TOP500）")
     log_alert("INFO", "行情采集", f"原始标的池: {len(raw_pool)} 只（全市场{len(stocks)}只中涨跌幅>0%且活跃TOP500）")
+    ctx['_data_source'] = source
+
+# 批量行业查询（东方财富 clist 轻量API，一次性拉取行业映射）
+def _batch_sector_lookup_clist(codes):
+    """
+    用东方财富 clist API 批量查询行业/板块。
+    单次请求 fields=f12,f14,f100,f102, pz=6000 → 理论上全市场行业数据。
+    如果API不可达，返回空dict让后续名称推断兜底。
+    """
+    sector_map = {}
+    try:
+        import urllib.parse as up
+        url = "https://push2.eastmoney.com/api/qt/clist/get"
+        # 拉全量行业映射：只取代码+名称+行业+板块，pz=6000
+        params = {
+            "pn": "1", "pz": "6000", "po": "0", "np": "1",
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "fltt": "2", "invt": "2", "fid": "f12",
+            "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:0+t:81+s:2048",
+            "fields": "f12,f14,f100,f102",
+            "_": str(int(time.time() * 1000))
+        }
+        req = urllib.request.Request(f"{url}?{up.urlencode(params)}", headers={
+            'User-Agent': 'Mozilla/5.0',
+            'Referer': 'https://quote.eastmoney.com/'
+        })
+        resp = urllib.request.urlopen(req, timeout=8)
+        data = json.loads(resp.read())
+        if data and data.get('data') and data['data'].get('diff'):
+            for item in data['data']['diff']:
+                code = str(item.get('f12', ''))
+                industry = str(item.get('f100', '') or '').strip()
+                sector = str(item.get('f102', '') or '').strip()
+                if code and (industry or sector):
+                    sector_map[code] = {
+                        "sector": sector or '未知',
+                        "industry": industry or '未知',
+                    }
+    except Exception:
+        pass  # API不可达，后续名称推断兜底
+    return sector_map
+
+
+# 从股票名称推断行业（正则匹配）
+_INDUSTRY_PATTERNS = [
+    (r'银行', '银行'),
+    (r'保险|人寿|平安(?!银行)', '非银金融'),
+    (r'证券|券商|民生(?!银行)', '非银金融'),
+    (r'铝业|铜业|有色|黄金|稀土|钢铁|矿业|钨业|钼业|钛业|镁业|锌业', '有色金属'),
+    (r'煤炭|煤业|能源(?!新)', '煤炭'),
+    (r'石油|石化|油田|海油', '石油石化'),
+    (r'汽车|客车|摩托|动力(?!电池)', '汽车'),
+    (r'电力|电网|核电|水电|风电|光伏|太阳能|新能源(?!汽车)', '电力设备'),
+    (r'化工|化学|化肥|农药|塑料|橡胶|化纤|涂料', '基础化工'),
+    (r'制药|医药|药业|生物|医疗|器械|疫苗', '医药生物'),
+    (r'电子|半导体|芯片|集成|电路|光电|微电子', '电子'),
+    (r'软件|信息|科技|数据|网络|通信|互联|智能|数字', '计算机'),
+    (r'食品|饮料|乳业|酒|啤酒|白酒|调味|零食|农产品|养殖|饲料|渔业', '食品饮料'),
+    (r'地产|房产|物业|园区|城建', '房地产'),
+    (r'建筑|建材|水泥|玻璃|工程|基建|路桥|钢构', '建筑装饰'),
+    (r'军工|航空|航天|船舶|兵器|卫星|导弹', '国防军工'),
+    (r'机场|航空(?!航天)|港口|航运|物流|高速|铁路|地铁|运输|中远|上港', '交通运输'),
+    (r'中免|免税|百货|零售|超市|商业|连锁|贸易', '商贸零售'),
+    (r'传媒|影视|出版|广电|广告|游戏|文化|教育|娱乐|体育', '传媒'),
+    (r'环保|水务|节能|碳|治理(?!环境)', '环保'),
+    (r'家电|电器|空调|冰箱|洗衣机', '家用电器'),
+    (r'纺织|服装|服饰|家纺|印染', '纺织服饰'),
+    (r'旅游|酒店|景区|旅行社', '社会服务'),
+    (r'机械|重工|装备|机床|模具|轴承|液压|锅炉|泵', '机械设备'),
+    (r'造纸|印刷|包装', '轻工制造'),
+    (r'保险|信托|租赁', '非银金融'),
+    (r'电信|联通|移动|通信(?!计算机)', '通信'),
+]
+
+def _infer_industry_from_name(name):
+    """根据股票名称中的关键词推断申万一级行业"""
+    if not name:
+        return None
+    for pattern, industry in _INDUSTRY_PATTERNS:
+        if re.search(pattern, name):
+            return industry
+    return None
 
 # ============================================================
 # 步骤10B: 板块/行业补全
@@ -1086,15 +1170,45 @@ def step10B_sector_backfill(ctx):
     
     raw_pool = ctx.get('raw_pool', [])
     candidates = []
+    source = ctx.get('_data_source', 'unknown')
     
-    # 构建标的池（含板块/行业初始为空白）
+    # 如果数据来自 Sina（无行业数据），批量查东方财富补全
+    sector_lookup = {}
+    sina_codes = [s['code'] for s in raw_pool if not s.get('sector') or s.get('sector') == '未知' or s.get('sector') == '']
+    
+    if sina_codes:
+        print(f"  行业补全: {len(sina_codes)} 只标的需要查板块...")
+        # 策略1: 东方财富批量行业API（单次拉取所有标的的行业映射，轻量级）
+        sector_lookup = _batch_sector_lookup_clist(sina_codes)
+        filled_via_api = sum(1 for v in sector_lookup.values() if v.get('industry') and v['industry'] != '未知')
+        print(f"  clist行业API: {filled_via_api}/{len(sina_codes)} 成功")
+        
+        # 策略2: 名称规则推断（作为兜底）
+        for s in raw_pool:
+            code = s['code']
+            if code in sector_lookup and sector_lookup[code].get('industry') and sector_lookup[code]['industry'] != '未知':
+                continue
+            inferred = _infer_industry_from_name(s.get('name', ''))
+            if inferred:
+                sector_lookup[code] = {"sector": inferred, "industry": inferred}
+        
+        rule_filled = sum(1 for s in raw_pool if s['code'] in sector_lookup and sector_lookup[s['code']].get('industry') and sector_lookup[s['code']]['industry'] != '未知')
+        print(f"  总计行业已知: {rule_filled}/{len(sina_codes)}")
+    else:
+        print(f"  clist数据已含行业信息，无需补全")
+    
+    # 构建标的池（含板块/行业）
     for s in raw_pool:
         code = s['code']
+        # 优先用 clist 自带数据，其次查表，最后标记未知
+        sector = s.get('sector', '') or sector_lookup.get(code, {}).get('sector', '') or '未知'
+        industry = s.get('industry', '') or sector_lookup.get(code, {}).get('industry', '') or '未知'
+        
         c = {
             "code": code,
             "name": s["name"],
-            "sector": "未知",
-            "industry": "未知",
+            "sector": sector,
+            "industry": industry,
             "change_pct": s.get("change_pct"),
             "open": s.get("open"),
             "close": s.get("close"),
@@ -1127,7 +1241,8 @@ def step10B_sector_backfill(ctx):
         
         candidates.append(c)
     
-    print(f"  标的池构建完成: {len(candidates)} 只 (板块/行业标记为'未知')")
+    unknown_count = sum(1 for c in candidates if c['industry'] == '未知')
+    print(f"  标的池构建完成: {len(candidates)} 只 (行业已知: {len(candidates)-unknown_count}, 未知: {unknown_count})")
     ctx['candidates'] = candidates
     ctx['total_candidates'] = len(candidates)
 
