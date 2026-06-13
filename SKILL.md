@@ -50,29 +50,10 @@ beijing_date = beijing_now.strftime('%Y-%m-%d')
 beijing_hour = beijing_now.hour
 beijing_weekday = beijing_now.weekday()  # 0=周一,6=周日
 
-# 交易日对应：计算 data_date（行情日期）和 prediction_date（预测日期）
-if beijing_weekday == 5:  # 周六
-    prediction_date = beijing_now + timedelta(days=2)
-    data_date = beijing_now - timedelta(days=1)
-elif beijing_weekday == 6:  # 周日
-    prediction_date = beijing_now + timedelta(days=1)
-    data_date = beijing_now - timedelta(days=2)
-else:  # 周一至周五
-    prediction_date = beijing_now
-    data_date = beijing_now
-# 周一特殊处理：data_date 应为上周五
-if beijing_weekday == 0:
-    data_date = beijing_now - timedelta(days=3)
-
-data_date = data_date.strftime('%Y-%m-%d')
-prediction_date = prediction_date.strftime('%Y-%m-%d')
-
-# 校验 prediction_date 是否为交易日（防止周六/日推算的周一恰逢节假日）
-# 步骤1会检查节假日，若 prediction_date 为节假日则跳过筛选
-# 此处仅做日期计算，实际交易日判断由步骤1负责
+# 调度器仅在工作日触发，无需周末偏移
+prediction_date = beijing_date
+data_date = beijing_date
 ```
-
-**交易日对应**：周六/日→调整日期继续执行（data_date=上周五, prediction_date=下周一） | 周一→`data_date`=上周五,`prediction_date`=周一 | 周二→周一/周二 | 周三→周二/周三 | 周四→周三/周四 | 周五→周四/周五
 
 所有搜索 query 使用 `data_date`，输出文件名 `/workspace/短线标的_YYYYMMDD.xlsx` 使用 `prediction_date`。API 全部不可达→直接中止，不降级。
 
