@@ -44,7 +44,7 @@ DEFAULT_PARAMS = {
     "win_rate_drop_threshold": 10, "limit_down_threshold": 100,
     "max_adjust_params": 3, "confidence_position_enabled": True,
     "max_holding_days": 5, "circuit_breaker_threshold_pct": 3.0,
-    "strategy_concentration_pct": 60, "do_t_success_reset_count": 3,
+    "strategy_concentration_pct": 80, "do_t_success_reset_count": 3,
     "conversion_rate_window_days": 10, "conversion_rate_threshold": 0.3,
     "conversion_rate_restore": 0.6, "conversion_rate_consecutive_days": 3,
     "data_tier_l2_skip_on_unavailable": True,
@@ -1469,12 +1469,12 @@ def step13_strategy_match(ctx):
         if is_earnings and 0 < change_pct <= 5 and is_active:
             strategies.append(('C', '事件驱动(财报季)', 0.5))
         
-        # 策略D: 资金埋伏 (温和涨幅+活跃度中等+收盘>开盘)
-        if 0 < change_pct <= 2 and is_moderate and close > open_p:
+        # 策略D: 资金埋伏 (温和涨幅+活跃度中等+收盘>开盘+量比>0.8)
+        if 0 < change_pct <= 2 and is_moderate and close > open_p and volume_ratio >= 0.8:
             strategies.append(('D', '资金埋伏', 0.5))
         
-        # 策略D增强: 主力流入信号
-        if main_inflow and main_inflow > 0 and 0 < change_pct < 2:
+        # 策略D增强: 主力流入信号+量比>0.8
+        if main_inflow and main_inflow > 0 and 0 < change_pct < 2 and volume_ratio >= 0.8:
             strategies.append(('D', '资金埋伏(主力流入)', 1))
         
         # 策略E: 回调企稳突破 (温和涨幅+高活跃+收盘>开盘+有一定振幅)
@@ -1489,7 +1489,7 @@ def step13_strategy_match(ctx):
         if not strategies and 2 < change_pct <= 5 and is_active and close > open_p:
             strategies.append(('A', '动量延续(活跃)', 1))
         
-        if not strategies and 0 < change_pct <= 2 and is_active and close > open_p:
+        if not strategies and 0 < change_pct <= 2 and is_active and close > open_p and volume_ratio >= 0.8:
             strategies.append(('D', '资金埋伏(活跃)', 0.5))
         
         if not strategies and -3 <= change_pct < 0 and is_moderate:
@@ -1672,7 +1672,7 @@ def step17_industry_limit(ctx):
     # 根据市场环境确定各策略推荐上限
     max_per_market = {
         '强市': {'A': 3, 'B': 2, 'C': 2, 'D': 2, 'E': 2},
-        '震荡': {'A': 2, 'B': 2, 'C': 2, 'D': 2, 'E': 2},
+        '震荡': {'A': 3, 'B': 2, 'C': 2, 'D': 3, 'E': 3},
         '弱市': {'A': 0, 'B': 3, 'C': 1, 'D': 1, 'E': 2},
     }
     limits = max_per_market.get(market, {'A': 2, 'B': 2, 'C': 2, 'D': 2, 'E': 2})
