@@ -1751,178 +1751,118 @@ def step19_insufficient_downgrade(ctx):
 # ============================================================
 # 步骤20: 输出Excel
 # ============================================================
-def step20_output_excel(ctx):
+def step20_output_markdown(ctx):
     print("\n" + "=" * 60)
-    print("步骤20: 输出Excel")
+    print("步骤20: 输出Markdown")
     print("=" * 60)
     
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-    
     prediction_date = ctx['prediction_date']
-    pred_yyyymmdd = prediction_date.replace('-', '')
-    xlsx_path = f"{DATA_DIR}/短线标的_{prediction_date}.xlsx"
+    md_path = f"{DATA_DIR}/短线标的_{prediction_date}.md"
     candidates = ctx.get('candidates', [])
-    
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "标的池"
-    
-    # 表头
-    headers = ["序号", "策略", "标的", "代码", "板块", "行业", "当日涨跌", "开盘价", "收盘价", 
-               "换手率", "振幅", "预测逻辑", "评分", "置信度", "进场", "止损", "止盈", "链接"]
-    
-    header_font = Font(name='Arial', size=11, bold=True, color='FFFFFF')
-    header_fill = PatternFill(start_color='1F4E79', end_color='1F4E79', fill_type='solid')
-    data_font = Font(name='Arial', size=10)
-    thin_border = Border(
-        left=Side(style='thin', color='B0B0B0'),
-        right=Side(style='thin', color='B0B0B0'),
-        top=Side(style='thin', color='B0B0B0'),
-        bottom=Side(style='thin', color='B0B0B0'),
-    )
-    
-    for col_idx, h in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col_idx, value=h)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal='center', vertical='center')
-        cell.border = thin_border
-    
-    # 策略色
-    strategy_colors = {
-        'A': PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid'),
-        'B': PatternFill(start_color='D6E4F0', end_color='D6E4F0', fill_type='solid'),
-        'C': PatternFill(start_color='E4DFEC', end_color='E4DFEC', fill_type='solid'),
-        'D': PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid'),
-        'E': PatternFill(start_color='FCE4D6', end_color='FCE4D6', fill_type='solid'),
-    }
-    
-    red_font = Font(name='Arial', size=10, color='9C0006')
-    green_font = Font(name='Arial', size=10, color='006100')
-    link_font = Font(name='Arial', size=10, color='0563C1', underline='single')
-    green_bold = Font(name='Arial', size=10, color='006100', bold=True)
-    yellow_font = Font(name='Arial', size=10, color='BF8F00')
-    red_bold = Font(name='Arial', size=10, color='9C0006', bold=True)
     
     strategy_counts = Counter()
     
+    # 构建策略标签映射
+    strategy_labels = {
+        'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动',
+        'D': '资金埋伏', 'E': '回调企稳'
+    }
+    confidence_emoji = {'★★★': '🟢', '★★': '🟡', '★': '🔴'}
+    
+    lines = []
+    lines.append(f"# 📊 A股短线标的筛选 — {prediction_date}")
+    lines.append("")
+    lines.append(f"> **数据日期**: {ctx.get('data_date', prediction_date)} | **市场环境**: {ctx.get('market_condition', '未知')} | **建议仓位**: {ctx.get('position', 0)}%")
+    lines.append("")
+    
+    # 筛选管道
+    lines.append("## 筛选管道")
+    lines.append("")
+    pipeline = (
+        f"原始 {ctx.get('total_raw', 0)}只 "
+        f"→ 硬排除 {ctx.get('excluded_count', 0)}只 "
+        f"→ 信号过滤 {ctx.get('signal_dropped', 0)}只 "
+        f"→ 策略匹配 {ctx.get('passed_strategy', 0)}只 "
+        f"→ 行业限制 {ctx.get('passed_industry', 0)}只 "
+        f"→ 新闻筛查 {ctx.get('passed_news', 0)}只 "
+        f"→ ★ **最终 {len(candidates)}只**"
+    )
+    lines.append(pipeline)
+    lines.append("")
+    
+    # 推荐标的表
+    lines.append("## 🎯 推荐标的")
+    lines.append("")
+    lines.append("| # | 策略 | 标的 | 代码 | 行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 评分 | 置信 | 进场 | 止损 | 止盈 |")
+    lines.append("|---|------|------|------|------|--------|------|------|------|------|------|------|------|------|")
+    
     for i, rec in enumerate(candidates, 1):
-        row = i + 1
         strategy = rec.get('strategy', '')
         strategy_counts[strategy] += 1
+        label = strategy_labels.get(strategy, strategy)
         
-        strategy_fill = strategy_colors.get(strategy, PatternFill())
-        
-        ws.cell(row=row, column=1, value=i).font = data_font
-        ws.cell(row=row, column=2, value=strategy).font = Font(name='Arial', size=10, bold=True)
-        ws.cell(row=row, column=3, value=rec.get('name', '')).font = data_font
-        ws.cell(row=row, column=4, value=rec.get('code', '')).font = data_font
-        ws.cell(row=row, column=5, value=rec.get('sector', '')).font = data_font
-        ws.cell(row=row, column=6, value=rec.get('industry', '')).font = data_font
-        
-        # 涨跌幅
         chg_pct = rec.get('change_pct', 0)
-        chg_cell = ws.cell(row=row, column=7, value=round(chg_pct, 2))
-        chg_cell.font = red_font if chg_pct > 0 else green_font
-        chg_cell.number_format = '0.00%'
+        chg_str = f"🔴+{chg_pct:.2f}%" if chg_pct > 0 else f"🟢{chg_pct:.2f}%"
         
-        ws.cell(row=row, column=8, value=rec.get('open')).font = data_font
-        ws.cell(row=row, column=9, value=rec.get('close')).font = data_font
-        
-        # 换手率
-        turnover_val = rec.get('turnover', 0)
-        ws.cell(row=row, column=10, value=round(turnover_val, 2)).font = data_font
-        
-        # 振幅
-        ws.cell(row=row, column=11, value=round(rec.get('amplitude', 0), 2)).font = data_font
-        
-        # 预测逻辑
-        ws.cell(row=row, column=12, value=rec.get('reason', '')).font = data_font
-        
-        # 评分
-        ws.cell(row=row, column=13, value=rec.get('score', 0)).font = data_font
-        
-        # 置信度
         conf = rec.get('confidence', '')
-        conf_cell = ws.cell(row=row, column=14, value=conf)
-        if conf == '★★★':
-            conf_cell.font = green_bold
-        elif conf == '★★':
-            conf_cell.font = yellow_font
-        else:
-            conf_cell.font = red_bold
+        mark = confidence_emoji.get(conf, '')
+        conf_str = f"{mark}{conf}"
         
-        ws.cell(row=row, column=15, value=rec.get('entry')).font = data_font
-        ws.cell(row=row, column=16, value=rec.get('stop_loss')).font = data_font
-        ws.cell(row=row, column=17, value=rec.get('take_profit')).font = data_font
+        entry = rec.get('entry', '')
+        stop_loss = rec.get('stop_loss', '')
+        take_profit = rec.get('take_profit', '')
+        amplitude = rec.get('amplitude', 0)
         
-        # 链接
-        url_cell = ws.cell(row=row, column=18, value=rec.get('url', ''))
-        url_cell.font = link_font
-        url_cell.hyperlink = rec.get('url', '')
-        
-        # 行样式
-        for col in range(1, 19):
-            cell = ws.cell(row=row, column=col)
-            cell.border = thin_border
-            cell.alignment = Alignment(vertical='center', wrap_text=True)
-            if not cell.fill or cell.fill.start_color.index == '00000000':
-                cell.fill = strategy_fill
-        
-        # 行高
-        ws.row_dimensions[row].height = 22
+        lines.append(
+            f"| {i} | **{label}** | **{rec.get('name', '')}** | {rec.get('code', '')} | "
+            f"{rec.get('industry', '') or rec.get('sector', '')} | {chg_str} | "
+            f"{rec.get('open', '')} | {rec.get('close', '')} | "
+            f"{amplitude:.2f}% | {rec.get('score', 0)} | {conf_str} | "
+            f"{entry} | {stop_loss} | {take_profit} |"
+        )
     
-    # 尾部策略说明
-    last_data_row = len(candidates) + 1
-    footer_start = last_data_row + 2
-    
-    # 统计行
-    ws.merge_cells(start_row=footer_start, start_column=1, end_row=footer_start, end_column=18)
-    cell = ws.cell(row=footer_start, column=1, 
-                   value=f"📊 共筛选出 {len(candidates)} 只标的（A:{strategy_counts.get('A',0)} B:{strategy_counts.get('B',0)} C:{strategy_counts.get('C',0)} D:{strategy_counts.get('D',0)} E:{strategy_counts.get('E',0)}）")
-    cell.font = Font(name='Arial', size=12, bold=True)
-    cell.fill = PatternFill(start_color='F1F5F9', end_color='F1F5F9', fill_type='solid')
-    cell.alignment = Alignment(horizontal='center', vertical='center')
+    lines.append("")
+    lines.append(f"📊 共筛选出 **{len(candidates)}** 只标的（A动量:{strategy_counts.get('A',0)} B超跌:{strategy_counts.get('B',0)} C事件:{strategy_counts.get('C',0)} D资金:{strategy_counts.get('D',0)} E回调:{strategy_counts.get('E',0)}）")
+    lines.append("")
     
     # 策略说明
-    footer_start += 1
-    ws.merge_cells(start_row=footer_start, start_column=1, end_row=footer_start, end_column=18)
-    cell = ws.cell(row=footer_start, column=1, value="策略说明：")
-    cell.font = Font(name='Arial', size=11, bold=True)
-    cell.alignment = Alignment(horizontal='left')
-    
+    lines.append("## 策略说明")
+    lines.append("")
     strategies_desc = [
-        ("A 动量延续", "涨幅3-7%，量比1.5-3.0，MA5>MA10>MA20 — 仓位强35-40%/震荡12-17%/弱关闭"),
-        ("B 超跌反弹", "连跌≥3日，量<5日均×0.6，RSI(14)<35，KDJ(K<20且J拐头)，站上MA5+放量确认 — 仓位强10-12%/震荡12-15%/弱12-15%"),
-        ("C 事件驱动", "重大合同/预增>50%/部委级政策，事件时效5级衰减 — 仓位强10-12%/震荡10-12%/弱5-8%"),
-        ("D 资金埋伏", "北向3日连续净买+主力流入>3000万+涨幅<2% — 仓位强5-8%/震荡5-8%/弱3-5%"),
-        ("E 回调企稳突破", "20日内创新高+回调MA20±3%+连3日缩量+站回MA5放量 — 仓位强10-12%/震荡12-15%/弱8-12%"),
+        ("**A 动量延续**", "涨幅3-7%，量比1.5-3.0，量>5日均×1.5且>昨日×1.2，MA5>MA10>MA20 — 仓位强35-40%/震荡12-17%/弱关闭"),
+        ("**B 超跌反弹**", "连跌≥3日，量<5日均×0.6，RSI(14)连续≥3日<35或底背离，MA20/MA60支撑，KDJ的K<20且J拐头向上 — 仓位强10-12%/震荡12-15%/弱12-15%"),
+        ("**C 事件驱动**", "重大合同/预增>50%或部委级政策，事件时效5级衰减 — 仓位强10-12%/震荡10-12%/弱5-8%"),
+        ("**D 资金埋伏**", "北向3日连续净买+主力流入>3000万+涨幅<2% — 仓位强5-8%/震荡5-8%/弱3-5%"),
+        ("**E 回调企稳突破**", "20日内创新高+回调至MA20±3%+连续3日缩量+站回MA5放量 — 仓位强10-12%/震荡12-15%/弱8-12%"),
     ]
     for name, desc in strategies_desc:
-        footer_start += 1
-        ws.merge_cells(start_row=footer_start, start_column=1, end_row=footer_start, end_column=18)
-        cell = ws.cell(row=footer_start, column=1, value=f"{name}：{desc}")
-        cell.font = Font(name='Arial', size=10)
-        cell.alignment = Alignment(horizontal='left', vertical='center')
+        lines.append(f"- {name}：{desc}")
+    
+    lines.append("")
+    
+    # 硬排除TOP5
+    if ctx.get('exclusion_stats'):
+        lines.append("## 硬排除 TOP5")
+        lines.append("")
+        for reason, count in ctx['exclusion_stats'].most_common(5):
+            lines.append(f"- {reason}: {count}只")
+        lines.append("")
     
     # 风险提示
-    footer_start += 2
-    ws.merge_cells(start_row=footer_start, start_column=1, end_row=footer_start, end_column=18)
-    cell = ws.cell(row=footer_start, column=1, value="⚠️ 仅供参考，不构成投资建议")
-    cell.font = Font(name='Arial', size=9, color='6B7280')
-    cell.alignment = Alignment(horizontal='center')
+    lines.append("---")
+    lines.append("")
+    lines.append("> ⚠️ **免责声明**: 仅供参考，不构成投资建议。投资有风险，入市需谨慎。")
+    lines.append(f"> 版本: {BUILTIN_VERSION} | 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} CST")
     
-    # 列宽
-    col_widths = [6, 6, 12, 10, 10, 10, 10, 10, 10, 10, 10, 30, 8, 10, 10, 10, 10, 45]
-    for i, w in enumerate(col_widths, 1):
-        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
+    md_content = "\n".join(lines)
     
-    wb.save(xlsx_path)
-    print(f"  Excel已保存: {xlsx_path}")
+    with open(md_path, 'w', encoding='utf-8') as f:
+        f.write(md_content)
+    
+    print(f"  Markdown已保存: {md_path}")
     print(f"  最终推荐: {len(candidates)} 只")
     
-    ctx['xlsx_path'] = xlsx_path
+    ctx['md_path'] = md_path
     ctx['final_recommend_count'] = len(candidates)
     ctx['strategy_counts'] = strategy_counts
 
@@ -2193,26 +2133,31 @@ def step21_final_verify(ctx):
     print("步骤21: 最终验证")
     print("=" * 60)
     
-    from openpyxl import load_workbook
-    xlsx_path = ctx.get('xlsx_path', '')
+    md_path = ctx.get('md_path', '')
     final_count = ctx.get('final_recommend_count', 0)
     
     try:
-        wb = load_workbook(xlsx_path)
-        if "标的池" in wb.sheetnames:
-            excel_n = wb["标的池"].max_row
-            # 减去表头+尾部行
-            data_rows = 0
-            for row in wb["标的池"].iter_rows(min_row=2, max_row=excel_n, values_only=True):
-                if row[0] and isinstance(row[0], (int, float)):
-                    data_rows += 1
-            if data_rows != final_count:
-                err = f"概况{final_count}≠Excel data_rows{data_rows}"
-                print(f"  ⚠️ {err}")
-                log_alert("ERROR", "数量校验", err)
-            else:
-                print(f"  ✅ 验证通过（{final_count}只）")
-        wb.close()
+        if not os.path.exists(md_path):
+            print(f"  ⚠️ MD文件不存在: {md_path}")
+            log_alert("WARNING", "数量校验", f"MD文件不存在: {md_path}")
+            return
+        
+        with open(md_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # 统计 Markdown 表格中的数据行（以 | 数字 | 开头的行）
+        table_rows = 0
+        for line in content.split('\n'):
+            line = line.strip()
+            if line and line.startswith('| ') and line.split('|')[1].strip().isdigit():
+                table_rows += 1
+        
+        if table_rows != final_count:
+            err = f"概况{final_count}≠MD表格行数{table_rows}"
+            print(f"  ⚠️ {err}")
+            log_alert("ERROR", "数量校验", err)
+        else:
+            print(f"  ✅ 验证通过（{final_count}只）")
     except Exception as e:
         print(f"  验证异常: {str(e)[:60]}")
 
@@ -2284,15 +2229,15 @@ def step26_github_sync(ctx):
     print("步骤26: GitHub同步")
     print("=" * 60)
     
-    xlsx_path = ctx.get('xlsx_path', '')
+    md_path = ctx.get('md_path', '')
     html_path = ctx.get('html_path', '')
     report_dir = ctx.get('report_dir', '')
     prediction_date = ctx['prediction_date']
     pred_yyyymmdd = prediction_date.replace('-', '')
     
-    if not os.path.exists(xlsx_path):
-        log_alert("WARNING", "GitHub同步", "xlsx文件不存在，跳过")
-        print("  xlsx文件不存在，跳过")
+    if not os.path.exists(md_path):
+        log_alert("WARNING", "GitHub同步", "md文件不存在，跳过")
+        print("  md文件不存在，跳过")
         return
     
     repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
@@ -2319,9 +2264,9 @@ def step26_github_sync(ctx):
                         print(f"  清理旧文件: {f}")
                 except:
                     pass
-            if f.startswith("短线标的_") and f.endswith(".xlsx"):
+            if (f.startswith("短线标的_") and (f.endswith(".md") or f.endswith(".xlsx"))):
                 try:
-                    date_str = f.replace("短线标的_", "").replace(".xlsx", "").replace("-", "")
+                    date_str = f.replace("短线标的_", "").replace(".md", "").replace(".xlsx", "").replace("-", "")
                     f_date = datetime.strptime(date_str, '%Y%m%d')
                     if f_date < cutoff_date:
                         os.remove(os.path.join(repo_dir, f))
@@ -2341,7 +2286,7 @@ def step26_github_sync(ctx):
                     pass
         
         # 复制文件
-        shutil.copy(xlsx_path, os.path.join(repo_dir, f"短线标的_{prediction_date}.xlsx"))
+        shutil.copy(md_path, os.path.join(repo_dir, f"短线标的_{prediction_date}.md"))
         
         # 推送持仓跟踪
         local_holding = f"{DATA_DIR}/持仓跟踪.xlsx"
@@ -2557,8 +2502,8 @@ def main():
         # 步骤19: 推荐不足降级
         step19_insufficient_downgrade(ctx)
         
-        # 步骤20: 输出Excel
-        step20_output_excel(ctx)
+        # 步骤20: 输出Markdown
+        step20_output_markdown(ctx)
         
         # 步骤20B: HTML报告
         step20B_html_report(ctx)
