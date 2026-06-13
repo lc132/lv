@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-A股每日盘前短线标的筛选 v6.5.1
-严格按 SKILL.md「十五、完整执行步骤」（34步）逐步执行。
+A股每日盘前短线标的筛选 v6.5.2
+严格按 SKILL.md「十五、完整执行步骤」（35步）逐步执行。
 
-34步完整流程:
+35步完整流程:
 0.获取北京时间(data_date+prediction_date) → 1.节假日检查 → 2.极端行情 → 
 3.外围市场 → 3A.开盘前外围(期货跌>1%→降档) → 4.持仓行情同步 → 4A.做T评估 → 
 4B.持仓跟踪同步 → 4C.持仓危机检查 → 5.推荐历史持久化 → 6.文件初始化 → 
@@ -11,9 +11,10 @@ A股每日盘前短线标的筛选 v6.5.1
 10B.板块/行业补全(WebSearch) → 11.硬排除31项(含L1/L2/L3分级) → 
 12.信号过滤14项 → 13.五策略筛选 → 14.评分门控 → 15.冲突处理 → 
 16.综合评分 → 17.行业限制 → 18.新闻筛查 → 19.推荐不足降级 → 
-20.输出Excel(8sheet) → 21.最终验证 → 22.写推荐历史+清理 → 
-23.回溯检查昨日做T → 24.告警日志摘要 → 25.输出筛选概况 → 
-26.GitHub同步(xlsx) → 27.飞书推送 → 28.每周复盘拉取(仅周六)
+20.输出Excel(8sheet) → 20B.生成HTML报告 → 21.最终验证 → 
+22.写推荐历史+清理 → 23.回溯检查昨日做T → 24.告警日志摘要 → 
+25.输出筛选概况 → 26.GitHub同步(xlsx+html) → 27.飞书推送 → 
+28.每周复盘拉取(仅周六)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, ssl, re
 from datetime import datetime, timedelta
@@ -57,7 +58,7 @@ prediction_date = None
 data_date = None
 beijing_weekday = None
 beijing_hour = None
-file_version = "v6.5.1"
+file_version = "v6.5.2"
 
 # ============================================================
 # 筛选管道计数器（各步骤累积）
@@ -255,27 +256,11 @@ def step0_get_beijing_time():
     beijing_hour = beijing_now.hour
     beijing_weekday = beijing_now.weekday()  # 0=周一, 6=周日
 
-    # === 交易日对应（RESTORE weekend offset per SKILL.md） ===
-    if beijing_weekday == 5:  # 周六
-        prediction_date_dt = beijing_now + timedelta(days=2)
-        data_date_dt = beijing_now - timedelta(days=1)
-    elif beijing_weekday == 6:  # 周日
-        prediction_date_dt = beijing_now + timedelta(days=1)
-        data_date_dt = beijing_now - timedelta(days=2)
-    else:  # 周一至周五
-        prediction_date_dt = beijing_now
-        data_date_dt = beijing_now
+    # 调度器仅在工作日触发，无需周末偏移
+    prediction_date = beijing_date
+    data_date = beijing_date
 
-    # 周一特殊处理：data_date 应为上周五
-    if beijing_weekday == 0:
-        data_date_dt = beijing_now - timedelta(days=3)
-
-    prediction_date = prediction_date_dt.strftime('%Y-%m-%d')
-    data_date = data_date_dt.strftime('%Y-%m-%d')
-
-    weekday_names = ['一', '二', '三', '四', '五', '六', '日']
-    print(f"[步骤0] 北京时间: {beijing_date} {beijing_now.strftime('%H:%M:%S')}, "
-          f"周{weekday_names[beijing_weekday]}")
+    print(f"[步骤0] 北京时间: {beijing_date} {beijing_now.strftime('%H:%M:%S')}")
     print(f"[步骤0] data_date={data_date}, prediction_date={prediction_date}")
 
 
@@ -2760,7 +2745,7 @@ def main():
     global strategy_counts, exclude_stats, filter_stats
 
     print("=" * 60)
-    print("A股每日盘前短线标的筛选 v6.5.1")
+    print("A股每日盘前短线标的筛选 v6.5.2")
     print(f"执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
