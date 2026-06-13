@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的筛选 v6.6.3
+A股每日盘前短线标的筛选 v6.6.4
 严格按 SKILL.md 十五、完整执行步骤 逐步执行
 """
 import os, sys, json, time, urllib.request, urllib.error, subprocess, shutil, re
@@ -11,7 +11,7 @@ from collections import Counter
 # ============================================================
 # 全局配置
 # ============================================================
-BUILTIN_VERSION = "v6.6.3"
+BUILTIN_VERSION = "v6.6.4"
 DATA_DIR = "/workspace"
 TEMP_DIR = "/data/user/work"
 # GitHub Token 从外部文件读取（不入git，防止泄露）
@@ -870,29 +870,78 @@ def step10A_fetch_all_stocks(ctx):
     stocks = None
     source = None
     
-    # 方案一：东方财富 clist API
+    # 方案一：东方财富 clist API（分页拉取，按成交额排序确保活跃标的优先）
+    # v6.6.4 fix: 原按涨跌幅(fid=f3)降序导致只拉到涨停/连板标的被硬排除全灭
+    # 改为按成交额(fid=f6)降序 + 分页循环 + 数据量门控
     try:
         import urllib.parse
         url = "https://push2.eastmoney.com/api/qt/clist/get"
-        params = {
-            "pn": "1", "pz": "6000", "po": "1", "np": "1",
-            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-            "fltt": "2", "invt": "2", "fid": "f3",
-            "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
-            "fields": "f2,f3,f5,f6,f7,f8,f10,f12,f14,f15,f16,f17,f18,f20,f62",
-            "_": str(int(time.time() * 1000))
-        }
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Referer': 'https://quote.eastmoney.com/'
         }
-        req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers=headers)
-        resp = urllib.request.urlopen(req, timeout=10)
-        data = json.loads(resp.read())
         
-        if data and data.get('data') and data['data'].get('diff'):
+        # 分页拉取：每次取100只，循环直到取完或达到上限
+        # 按成交额(f6)降序(po=0) — 活跃标的最可能成为短线候选
+        page_size = 100
+        max_pages = 60  # 最多60页 = 6000只，覆盖全市场
+        all_items = []
+        total_from_api = 0
+        seen_codes = set()
+        
+        for page in range(1, max_pages + 1):
+            params = {
+                "pn": str(page), "pz": str(page_size), "po": "0", "np": "1",
+                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+                "fltt": "2", "invt": "2", "fid": "f6",  # 按成交额排序
+                "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
+                "fields": "f2,f3,f5,f6,f7,f8,f10,f12,f14,f15,f16,f17,f18,f20,f62",
+                "_": str(int(time.time() * 1000))
+            }
+            try:
+                req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers=headers)
+                resp = urllib.request.urlopen(req, timeout=10)
+                data = json.loads(resp.read())
+            except Exception:
+                if page == 1:
+                    raise  # 首页失败 = API不可达
+                break  # 后续页失败 = 已取完或限流
+            
+            if not data or not data.get('data'):
+                break
+            
+            diff = data['data'].get('diff')
+            if not diff or len(diff) == 0:
+                break
+            
+            if page == 1:
+                total_from_api = data['data'].get('total', 0)
+            
+            new_count = 0
+            for item in diff:
+                code = str(item.get('f12', ''))
+                if code in seen_codes:
+                    continue  # 去重
+                seen_codes.add(code)
+                all_items.append(item)
+                new_count += 1
+            
+            # 如果本页全部重复或返回量不足一页，说明已拉完
+            if new_count == 0 or len(diff) < page_size:
+                break
+            
+            time.sleep(0.05)  # 限流保护
+        
+        # 数据量门控：clist 返回 < 500 只时判定为异常，触发新浪降级
+        CLIST_MIN_THRESHOLD = 500
+        if len(all_items) < CLIST_MIN_THRESHOLD:
+            print(f"  clist仅返回 {len(all_items)} 只（总计 {total_from_api}），低于门控 {CLIST_MIN_THRESHOLD} → 强制降级新浪API")
+            log_alert("WARN", "行情采集", f"clist返回量({len(all_items)})低于门控({CLIST_MIN_THRESHOLD})，降级新浪")
+            stocks = None  # 触发新浪降级
+        else:
+            # 解析为统一格式
             stocks = []
-            for item in data['data']['diff']:
+            for item in all_items:
                 code = item.get('f12', '')
                 name = item.get('f14', '')
                 if not code or not name:
@@ -920,8 +969,10 @@ def step10A_fetch_all_stocks(ctx):
                 except (ValueError, TypeError):
                     continue
             source = "clist"
+            print(f"  clist分页拉取: {len(stocks)} 只（总计 {total_from_api}，{len(all_items)-len(stocks)} 只解析跳过）")
     except Exception as e:
         source = None
+        stocks = None
         print(f"  东方财富clist不可达: {str(e)[:60]}，降级为新浪API")
         log_alert("INFO", "行情采集", f"东方财富clist不可达: {str(e)[:60]}，降级为新浪API")
     
