@@ -1335,8 +1335,8 @@ def step11_hard_exclude(ctx):
         elif code in recommended_codes:
             reason = "7日内已推荐(规则13)"
             skip = True
-        # 规则21: 创业板(300xxx)仅强市+动量延续
-        elif code.startswith('300'):
+        # 规则21: 创业板(300xxx/301xxx)仅强市+动量延续
+        elif code.startswith(('300', '301')):
             if ctx.get('market_condition') != '强市':
                 reason = "创业板非强市(规则21)"
                 skip = True
