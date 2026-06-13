@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-A股每日盘前短线标的筛选 v6.5.5
+A股每日盘前短线标的筛选 v6.6.1
 严格按 SKILL.md「十五、完整执行步骤」（35步）逐步执行。
 
 35步完整流程:
@@ -140,9 +140,10 @@ def safe_read_excel(path):
 def safe_float(value, ndigits=3):
     if value is None:
         return None
-    if isinstance(value, (int, float)):
+    try:
         return round(float(value), ndigits)
-    return value
+    except (ValueError, TypeError):
+        return None
 
 
 def read_file_token(path):
@@ -539,10 +540,14 @@ def step0a_fetch_holding_tracking():
             wb = load_workbook(TRACKING_XLSX)
             ws = wb["持仓明细"]
             for row in range(2, ws.max_row + 1):
-                code = ws.cell(row=row, column=1).value
-                if not code:
+                raw_code = ws.cell(row=row, column=1).value
+                if not raw_code:
                     continue
-                code = str(code).strip()
+                code = str(raw_code).strip()
+                if len(code) == 4:  # Excel可能丢失前导零
+                    code = code.zfill(6)
+                if not code.isdigit() or len(code) != 6:
+                    continue
                 holdings.append({
                     "code": code,
                     "name": str(ws.cell(row=row, column=2).value or ""),
@@ -685,9 +690,13 @@ def step4b_tracking_sync(holdings):
         ws = wb["持仓明细"]
         code_row = {}
         for row in range(2, ws.max_row + 1):
-            code = ws.cell(row=row, column=1).value
-            if code and isinstance(code, str) and len(code) == 6:
-                code_row[str(code)] = row
+            raw_code = ws.cell(row=row, column=1).value
+            if raw_code:
+                code = str(raw_code).strip()
+                if len(code) == 4:  # Excel可能丢失前导零，补齐
+                    code = code.zfill(6)
+                if code.isdigit() and len(code) == 6:
+                    code_row[code] = row
 
         updated = 0
         for h in holdings:
@@ -699,19 +708,20 @@ def step4b_tracking_sync(holdings):
                 log_alert("WARNING", "持仓跟踪同步", f"{code} 缺少current字段，跳过")
                 continue
             row = code_row[code]
-            ws.cell(row=row, column=7).value = current  # 当前价
+            ws.cell(row=row, column=8).value = current  # 当前价 (H)
+            ws.cell(row=row, column=12).value = beijing_date  # 更新日期 (L)
             mv = h.get("market_value")
             if mv is not None:
-                ws.cell(row=row, column=8).value = mv  # 市值
+                ws.cell(row=row, column=9).value = mv  # 市值 (I)
             pnl_amt = h.get("pnl_amount")
             if pnl_amt is not None:
-                ws.cell(row=row, column=9).value = round(pnl_amt, 2)  # 盈亏额
+                ws.cell(row=row, column=10).value = round(pnl_amt, 2)  # 盈亏额 (J)
             pnl_pct = h.get("pnl_pct")
             if pnl_pct is not None:
                 try:
-                    ws.cell(row=row, column=10).value = round(float(pnl_pct), 4)
+                    ws.cell(row=row, column=11).value = round(float(pnl_pct), 4)  # 盈亏率 (K)
                 except (ValueError, TypeError):
-                    ws.cell(row=row, column=10).value = 0.0
+                    ws.cell(row=row, column=11).value = 0.0
             updated += 1
 
         if updated > 0:
@@ -781,34 +791,44 @@ def step4c_crisis_check(holdings):
 # 步骤5：推荐历史持久化 + 清理
 # ============================================================
 def step5_history_cleanup():
-    """清理7天前recommendation + 90天前holding"""
+    """清理7天前recommendation + 90天前holding。改在各日期归档文件内操作，不破坏归档隔离。"""
+    import glob as _g
     print(f"[步骤5] 推荐历史清理...")
     try:
-        history = read_all_history()
         data_dt = datetime.strptime(data_date, '%Y-%m-%d')
         cutoff_7d = (data_dt - timedelta(days=7)).strftime('%Y-%m-%d')
         cutoff_90d = (data_dt - timedelta(days=90)).strftime('%Y-%m-%d')
-        new_history = []
-        for r in history:
-            t = r.get('type', '')
-            if t in ('weekly_review', 'strategy_check', 'do_T_eval', 'do_T'):
-                new_history.append(r)
-            elif t == 'holding':
-                d = r.get('update_date', '')
-                if d >= cutoff_90d:
-                    new_history.append(r)
-            elif t == 'recommendation':
-                d = r.get('date', '')
-                if d >= cutoff_7d:
-                    new_history.append(r)
-            else:
-                new_history.append(r)
 
-        removed = len(history) - len(new_history)
-        if removed > 0:
-            safe_write_json(HISTORY_PATH, new_history)
-            log_alert("INFO", "清理", f"已清理{removed}条过期记录")
-            print(f"[步骤5] 清理{removed}条过期记录")
+        pattern = os.path.join(HISTORY_DIR, HISTORY_GLOB)
+        total_removed = 0
+        for fpath in sorted(_g.glob(pattern)):
+            records = safe_read_json(fpath)
+            if not records:
+                continue
+            new_records = []
+            for r in records:
+                t = r.get('type', '')
+                if t in ('weekly_review', 'strategy_check', 'do_T_eval', 'do_T'):
+                    new_records.append(r)
+                elif t == 'holding':
+                    d = r.get('update_date', '')
+                    if d >= cutoff_90d:
+                        new_records.append(r)
+                elif t == 'recommendation':
+                    d = r.get('date', '')
+                    if d >= cutoff_7d:
+                        new_records.append(r)
+                else:
+                    new_records.append(r)
+
+            removed = len(records) - len(new_records)
+            if removed > 0:
+                safe_write_json(fpath, new_records)
+                total_removed += removed
+
+        if total_removed > 0:
+            log_alert("INFO", "清理", f"已清理{total_removed}条过期记录(跨{len(list(_g.glob(pattern)))}文件)")
+            print(f"[步骤5] 清理{total_removed}条过期记录")
         else:
             log_alert("INFO", "清理", "无需清理")
             print(f"[步骤5] 无需清理")
@@ -1498,8 +1518,8 @@ def step12_signal_filter(candidates):
             deductions += 2
 
         # 14. 连板后首阴 +1分（需K线数据确认，简化标记）
-        if -3 < chg < 0 and turnover > 0.8 * (c.get('turnover', 0) or 0):
-            # 简化条件：小幅下跌+活跃
+        if -3 < chg < 0 and turnover > 3:
+            # 小幅下跌+换手率>3%表示活跃筹码换手
             flags.append('首阴候选(+1分)')
 
         c['signal_flags'] = flags
@@ -2936,7 +2956,7 @@ def main():
     global strategy_counts, exclude_stats, filter_stats
 
     print("=" * 60)
-    print("A股每日盘前短线标的筛选 v6.5.3")
+    print("A股每日盘前短线标的筛选 " + file_version)
     print(f"执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
