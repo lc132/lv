@@ -467,13 +467,87 @@ def step3a_futures_check(global_result):
 
 
 # ============================================================
-# 步骤4：持仓行情同步
+# 步骤0A：从GitHub拉取持仓跟踪
 # ============================================================
-def step4_holding_sync():
-    """持仓行情同步：更新收盘价/盈亏"""
+def step0a_fetch_holding_tracking():
+    """从GitHub拉取持仓跟踪.xlsx，提取持仓记录供后续步骤使用"""
+    print(f"[步骤0A] 从GitHub拉取持仓跟踪...")
+    token = read_file_token(GITHUB_TOKEN_PATH)
+    if not token:
+        log_alert("INFO", "持仓跟踪拉取", "无GitHub令牌，跳过")
+        return []
+
+    repo_url = f"https://{token}@github.com/lc132/lv.git"
+    repo_dir = "/tmp/lv_holding_fetch"
+
+    try:
+        if os.path.exists(repo_dir):
+            shutil.rmtree(repo_dir, ignore_errors=True)
+
+        result = subprocess.run(
+            ["git", "clone", "--depth", "1", "--branch", "main", repo_url, repo_dir],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            log_alert("WARNING", "持仓跟踪拉取", f"clone失败: {result.stderr[:100]}")
+            return []
+
+        tracking_src = os.path.join(repo_dir, "持仓跟踪.xlsx")
+        if not os.path.exists(tracking_src):
+            log_alert("INFO", "持仓跟踪拉取", "GitHub上无持仓跟踪.xlsx")
+            shutil.rmtree(repo_dir, ignore_errors=True)
+            return []
+
+        # Copy to workspace
+        shutil.copy(tracking_src, TRACKING_XLSX)
+
+        # Parse holdings from xlsx
+        holdings = []
+        wb = load_workbook(TRACKING_XLSX)
+        ws = wb["持仓明细"]
+        for row in range(2, ws.max_row + 1):
+            code = ws.cell(row=row, column=1).value
+            if not code:
+                continue
+            code = str(code).strip()
+            holdings.append({
+                "code": code,
+                "name": str(ws.cell(row=row, column=2).value or ""),
+                "cost": ws.cell(row=row, column=3).value,
+                "shares": ws.cell(row=row, column=4).value,
+                "available_shares": ws.cell(row=row, column=5).value,
+                "sector": str(ws.cell(row=row, column=6).value or ""),
+                "industry": str(ws.cell(row=row, column=7).value or ""),
+                "current": ws.cell(row=row, column=8).value,
+                "market_value": ws.cell(row=row, column=9).value,
+                "pnl_amount": ws.cell(row=row, column=10).value,
+                "pnl_pct": ws.cell(row=row, column=11).value,
+                "update_date": str(ws.cell(row=row, column=12).value or ""),
+            })
+
+        wb.close()
+        shutil.rmtree(repo_dir, ignore_errors=True)
+
+        log_alert("INFO", "持仓跟踪拉取", f"已加载 {len(holdings)} 只持仓")
+        print(f"[步骤0A] 持仓跟踪: {len(holdings)} 只 "
+              + ", ".join(f"{h['code']}({h['pnl_pct']:.1f}%)" for h in holdings))
+        return holdings
+
+    except Exception as e:
+        log_alert("WARNING", "持仓跟踪拉取", f"异常: {str(e)[:100]}")
+        if os.path.exists(repo_dir):
+            shutil.rmtree(repo_dir, ignore_errors=True)
+        return []
+def step4_holding_sync(tracking_holdings=None):
+    """持仓行情同步：更新收盘价/盈亏。tracking_holdings 由步骤0A从GitHub拉取。"""
     print(f"[步骤4] 持仓行情同步...")
     history = safe_read_json(HISTORY_PATH)
-    holdings = [r for r in history if r.get('type') == 'holding']
+
+    # 优先使用步骤0A从GitHub拉取的持仓，其次使用推荐历史中的holding
+    holdings = tracking_holdings if tracking_holdings is not None else []
+    if not holdings:
+        holdings = [r for r in history if r.get('type') == 'holding']
+
     if not holdings:
         print(f"[步骤4] 无持仓记录，跳过")
         return holdings, history
@@ -2577,6 +2651,10 @@ def step26_github_sync(xlsx_path, html_path=None):
         if os.path.exists(script_src):
             shutil.copy(script_src, os.path.join(repo_dir, "ashare_screener.py"))
 
+        # 4) 推送持仓跟踪
+        if os.path.exists(TRACKING_XLSX):
+            shutil.copy(TRACKING_XLSX, os.path.join(repo_dir, "持仓跟踪.xlsx"))
+
         if cond_synced and os.path.exists(cond_xlsx):
             shutil.copy(cond_xlsx, os.path.join(repo_dir, "A股短线选股筛选条件.xlsx"))
 
@@ -2599,6 +2677,7 @@ def step26_github_sync(xlsx_path, html_path=None):
             parts = []
             parts.append(f"xlsx")
             if html_path: parts.append("html")
+            if os.path.exists(TRACKING_XLSX): parts.append("持仓跟踪")
             parts.append("script")
             log_alert("INFO", "GitHub同步", f"  {prediction_date} 已推送 ({', '.join(parts)})")
             print(f"[步骤26]  GitHub推送成功 ({', '.join(parts)})")
@@ -2774,6 +2853,9 @@ def main():
     # 重置搜索预算
     _reset_search_budget()
 
+    # === 步骤0A: 从GitHub拉取持仓跟踪 ===
+    tracking_holdings = step0a_fetch_holding_tracking()
+
     # === 步骤1: 节假日检查 ===
     holiday = step1_holiday_check()
     if holiday == "SKIP":
@@ -2797,7 +2879,7 @@ def main():
     futures_action = step3a_futures_check(global_result)
 
     # === 步骤4-4C: 持仓同步 ===
-    holdings, history = step4_holding_sync()
+    holdings, history = step4_holding_sync(tracking_holdings)
     step4a_do_t_eval(holdings)
     step4b_tracking_sync(holdings)
     crisis_alerts = step4c_crisis_check(holdings)
