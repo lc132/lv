@@ -11,7 +11,7 @@ from collections import Counter
 # ============================================================
 # 全局配置
 # ============================================================
-BUILTIN_VERSION = "v6.6.10"
+BUILTIN_VERSION = "v6.6.11"
 DATA_DIR = "/workspace"
 TEMP_DIR = "/data/user/work"
 # GitHub Token 从外部文件读取（不入git，防止泄露）
@@ -1145,19 +1145,19 @@ _INDUSTRY_PATTERNS = [
     (r'银行', '银行'),
     (r'保险|人寿|平安(?!银行)', '非银金融'),
     (r'证券|券商|民生(?!银行)', '非银金融'),
-    (r'铝业|铜业|有色|黄金|稀土|钢铁|杭钢|宝钢|中钢|矿业|钨业|钼业|钛业|镁业|锌业|锆业|硅业|资源', '有色金属'),
+    (r'铝业|铜业|有色|黄金|稀土|钢铁|杭钢|宝钢|中钢|矿业|钨业|钼业|钛业|镁业|锌业|锆业|硅业|资源|金银', '有色金属'),
     (r'煤炭|煤业|煤电|煤化工|华阳|山煤|平煤|盘江|兖矿|神华|中煤|陕西煤业|淮北|安源|昊华', '煤炭'),
     (r'石油|石化|油田|海油', '石油石化'),
-    (r'汽车|客车|摩托|动力(?!电池)|电驱|轮胎|隆鑫|宇通|中通|金龙|福田|江淮|中鼎|均胜', '汽车'),
-    (r'电力|电网|核电|水电|风电|光伏|太阳能|电气|新能源(?!汽车)|林洋|新能', '电力设备'),
-    (r'化工|化学|化肥|农药|塑料|橡胶|化纤|涂料|索普|华鲁|鲁西|华峰', '基础化工'),
-    (r'制药|医药|药业|生物|医疗|器械|疫苗|酵母', '医药生物'),
+    (r'汽车|客车|摩托|动力(?!电池)|电驱|轮胎|隆鑫|宇通|上汽|中通|金龙|福田|江淮|中鼎|均胜', '汽车'),
+    (r'电力|电网|核电|水电|风电|光伏|太阳能|电气|电机|新能源(?!汽车)|林洋|新能', '电力设备'),
+    (r'化工|化学|化肥|农药|塑料|橡胶|化纤|氟|涂料|索普|华鲁|鲁西|华峰', '基础化工'),
+    (r'制药|医药|药业|生物|医疗|器械|疫苗|敖东|海思|人福|华海|普利', '医药生物'),
     (r'电子|半导体|芯片|集成|电路|光电|微电子|京东方|宏昌|景旺|深南电路|沪电', '电子'),
-    (r'软件|信息|科技|数据|网络|通信|互联|智能|数字|恒通', '计算机'),
-    (r'食品|饮料|乳业|酒|啤酒|白酒|调味|零食|农产品|养殖|饲料|渔业|牧原|温氏', '食品饮料'),
-    (r'地产|房产|物业|园区|城建', '房地产'),
-    (r'建筑|建材|水泥|玻璃|工程|基建|路桥|钢构|雨虹|铁建|中铁|电建|交建', '建筑装饰'),
-    (r'军工|航空|航天|船舶|兵器|卫星|导弹|防务|红箭|兵装|中兵|光启|彩虹|雷科', '国防军工'),
+    (r'软件|信息|科技|数据|网络|通信|互联|智能|数字|视觉|恒通|东华|用友', '计算机'),
+    (r'食品|饮料|乳业|酒|啤酒|白酒|调味|零食|农产品|养殖|饲料|渔业|海天|牧原|温氏', '食品饮料'),
+    (r'地产|房产|物业|园区|城建|保利|万科|招商蛇口|金地|金科|龙湖', '房地产'),
+    (r'建筑|建材|水泥|玻璃|工程|基建|路桥|钢构|防水|铁建|中铁|电建|交建', '建筑装饰'),
+    (r'军工|航空|航天|船舶|兵器|卫星|导弹|导航|北斗|防务|红箭|兵装|中兵|光启|彩虹|雷科', '国防军工'),
     (r'机场|航空(?!航天)|港口|航运|物流|高速|高铁|铁路|地铁|运输|中远|上港|东航|大秦|京沪', '交通运输'),
     (r'中免|免税|百货|零售|超市|商业|连锁|贸易|五矿|合百|大商|王府井|银座', '商贸零售'),
     (r'传媒|影视|电影|出版|广电|广告|游戏|文化|教育|娱乐|体育|人民|三七|儒意', '传媒'),
@@ -1168,9 +1168,9 @@ _INDUSTRY_PATTERNS = [
     (r'机械|重工|装备|机床|模具|轴承|液压|锅炉|泵|应流|冰轮|陕鼓|大连重工', '机械设备'),
     (r'造纸|印刷|包装', '轻工制造'),
     (r'保险|信托|租赁', '非银金融'),
-    (r'电信|联通|移动|通信|通讯(?!计算机)|共进', '通信'),
+    (r'电信|联通|移动|通信|通讯(?!计算机)|共进|一二|烽火|中兴', '通信'),
     (r'电缆|线缆|亨通|精达|汉缆', '电力设备'),
-    (r'裕能|电池|锂|储能|正极|负极|隔膜|电解|能科|协鑫|申能|新能', '电力设备'),
+    (r'裕能|电池|锂|储能|正极|负极|隔膜|电解|胜华|能科|协鑫|申能|新能', '电力设备'),
     (r'材料|龙盛|天赐|宏大|神马|新材|楚江|雅化|西部', '基础化工'),
     (r'中车|东睦|重工|装备|机床|模具|轴承|液压|锅炉|泵|应流|冰轮|陕鼓', '机械设备'),
     (r'煤|焦炭|焦化', '煤炭'),
@@ -1236,6 +1236,8 @@ _INDUSTRY_CORRECTIONS = {
     '002283': '汽车',       # 天润工业（曲轴/汽车零部件）
     '600312': '电力设备',   # 平高电气
     '603000': '传媒',       # 人民网
+    '603026': '电力设备',   # 石大胜华（锂电池电解液溶剂）
+    '000975': '有色金属',   # 山金国际（黄金矿业）
 }
 
 def _clean_name(name):
@@ -1366,14 +1368,29 @@ def step11_hard_exclude(ctx):
     holdings = ctx.get('holdings', [])
     holding_codes = set(h.get('code', '') for h in holdings)
     
-    # 获取已推荐标的
+    # 获取已推荐标的（按分组窗口去重，避免测试运行的重复写入导致排除过度膨胀）
+    # 窗口：(data_date - 3天, data_date]，按 (data_date, code) 去重
     all_history = ctx.get('all_history', [])
-    recommended_codes = set()
+    data_dt = datetime.strptime(ctx['data_date'], '%Y-%m-%d')
+    window_start = data_dt - timedelta(days=3)
+    
+    # 收集窗口内的唯一推荐：按(code)去重（同一天同一代码多次写入只算一次）
+    window_recommendations = {}  # code → earliest_date
     for r in all_history:
         if r.get('type') == 'recommendation':
             code = r.get('code', '')
-            if code:
-                recommended_codes.add(code)
+            r_date_str = r.get('date', '')
+            if not code or not r_date_str:
+                continue
+            try:
+                r_date = datetime.strptime(r_date_str, '%Y-%m-%d')
+            except ValueError:
+                continue
+            if window_start <= r_date <= data_dt:
+                if code not in window_recommendations:
+                    window_recommendations[code] = r_date_str
+    
+    recommended_codes = set(window_recommendations.keys())
     
     excluded = []
     passed = []
@@ -1597,26 +1614,28 @@ def step13_strategy_match(ctx):
         if not is_earnings and 1 <= change_pct <= 4 and is_active and amplitude >= 4 and amount >= 200_000_000:
             strategies.append(('C', '事件驱动(放量异动)', 1))
         
-        # 策略D: 资金埋伏 (温和涨幅+活跃度中等+收盘>开盘+量比>0.8)
-        if 0 < change_pct <= 2 and is_moderate and close > open_p and volume_ratio >= 0.8:
+        # 策略D: 资金埋伏 (极温和涨幅0-1.5%+中等活跃+收盘>开盘+量比>0.8)
+        # 与策略E分离：D聚焦<1.5%的潜伏标的，E聚焦1-3%的回调突破
+        if 0 < change_pct <= 1.5 and is_moderate and close > open_p and volume_ratio >= 0.8:
             strategies.append(('D', '资金埋伏', 0.5))
         
         # 策略D增强: 主力流入信号+量比>0.8
         if main_inflow and main_inflow > 0 and 0 < change_pct < 2 and volume_ratio >= 0.8:
             strategies.append(('D', '资金埋伏(主力流入)', 1))
         
-        # 策略E: 回调企稳突破 (温和涨幅+高活跃+收盘>开盘+有一定振幅)
-        if 0 < change_pct <= 3 and is_active and close > open_p and amplitude >= 2:
+        # 策略E: 回调企稳突破 (温和涨幅1-3%+高活跃+收盘>开盘+有一定振幅)
+        if 1 <= change_pct <= 3 and is_active and close > open_p and amplitude >= 2:
             strategies.append(('E', '回调企稳突破', 1))
         
         # 策略E: 强势突破 (涨幅3-5%+高活跃+收盘>开盘+高振幅)
         if 3 < change_pct <= 5 and is_active and close > open_p and amplitude >= 3:
             strategies.append(('E', '强势突破', 1.5))
         
-        # 兜底策略：涨幅适中+活跃
+        # 兜底策略：涨幅适中+活跃→A
         if not strategies and 2 < change_pct <= 5 and is_active and close > open_p:
             strategies.append(('A', '动量延续(活跃)', 1))
         
+        # 兜底：极温和+活跃→D
         if not strategies and 0 < change_pct <= 2 and is_active and close > open_p and volume_ratio >= 0.8:
             strategies.append(('D', '资金埋伏(活跃)', 0.5))
         
