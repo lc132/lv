@@ -1340,3 +1340,27 @@ finally:
 - Excel必须openpyxl实现红涨绿跌+策略色+置信度色+蓝色链接
 - 所有异常写告警日志
 - 仅供参考，不构成投资建议
+
+## 漏洞修复记录
+
+### v6.6.1 修复（第一轮，共6项）
+
+| # | 严重度 | 位置 | 漏洞 | 修复 |
+|---|--------|------|------|------|
+| 1 | P0 | step4b_tracking_sync | 列偏移错误：数据写入7-10列，当前价→市值列全错位 | 修正为8-11列，与持仓跟踪.xlsx表头对齐 |
+| 2 | P0 | step5_history_cleanup | 合并所有日期归档写入单一文件，破坏按日期隔离 | 改为逐文件操作，每个归档文件独立清理 |
+| 3 | P1 | step0a / step4b | 代码长度校验 `len(code)==6` 且 `isinstance(str)` 漏掉Excel数字化的代码 | 改为 `str()` 后检测，4位自动 `zfill(6)` 补齐 |
+| 4 | P1 | step12_signal_filter | `turnover > 0.8 * turnover` 永远为true，首阴判定逻辑无意义 | 改为 `turnover > 3`（换手率>3%表示活跃） |
+| 5 | P1 | safe_float | 只处理int/float，字符串输入直接返回原值 | 改为 `try: float(value)` 统一处理所有类型 |
+| 6 | P2 | main() | 版本号硬编码 `v6.5.3`，与 `file_version` 不同步 | 改为引用 `file_version` 变量 |
+
+### v6.6.2 修复（第二轮，共6项）
+
+| # | 严重度 | 位置 | 漏洞 | 修复 |
+|---|--------|------|------|------|
+| 1 | P0 | step9b_circuit_breaker | 熔断检查读取 `recommendation` 记录的 `pnl_pct`，但推荐记录无此字段，**熔断永不触发** | 改为读取 `holding` 类型记录的实际 `pnl_pct` |
+| 2 | P1 | step12_signal_filter | `chg>3%` 时同时命中「缩量上涨 -3分」和「缩量反弹 -4分」，**双重扣分 -7** | 合并为互斥判断：chg>3%→缩量上涨-3；chg>0≤3%→缩量反弹-4 |
+| 3 | P1 | step4_holding_sync | `prev_close` 在API拉取前就被覆盖为旧current。拉取失败则prev_close永久丢失 | 先保存 `old_current`，仅在API返回成功后更新 `prev_close`，失败时回退 |
+| 4 | P2 | step6 | 策略调整记录JSON中的旧版本号 `v6.5.1` 强制覆盖脚本真实版本 | 提取 `BUILTIN_VERSION` 常量，JSON版本作为fallback而非强制覆盖 |
+| 5 | P2 | step23 | 回溯做T检查读取 `ev.get('status')`，但 `do_T_eval` 字段名是 `do_T_feasible`，**永远匹配不上** | 改为 `do_T_feasible`，处理 `True`/`"谨慎"`/`False` 三种值 |
+| 6 | P2 | step0a | 同步推荐历史仅复制本地不存在的文件，**GitHub上的更新从不应用到本地** | 增加 `remote_mtime > local_mtime` 判断，远程更新时覆盖本地 |
