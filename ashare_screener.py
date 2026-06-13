@@ -11,7 +11,7 @@ from collections import Counter
 # ============================================================
 # 全局配置
 # ============================================================
-BUILTIN_VERSION = "v6.6.6"
+BUILTIN_VERSION = "v6.6.7"
 DATA_DIR = "/workspace"
 TEMP_DIR = "/data/user/work"
 # GitHub Token 从外部文件读取（不入git，防止泄露）
@@ -1066,17 +1066,37 @@ def step10A_fetch_all_stocks(ctx):
     print(f"  全市场拉取到 {len(stocks)} 只标的 (来源: {source})")
     log_alert("INFO", "行情采集", f"全市场拉取到 {len(stocks)} 只标的（来源: {source}）")
     
-    # 构建原始标的池：涨跌幅>0且非停牌，按换手率排序取TOP500
-    raw_pool = [s for s in stocks
-                if s['change_pct'] is not None and s['change_pct'] > 0
-                and s['close'] is not None and s['close'] > 0]
-    raw_pool.sort(key=lambda x: (x.get('turnover', 0) or 0), reverse=True)
-    raw_pool = raw_pool[:500]
+    # 构建原始标的池：分两路
+    # 上涨池：涨跌幅0%~7%（涨停/涨幅>7%会被硬排除，不浪费名额），按成交额取TOP400
+    gainers = [s for s in stocks
+               if s['change_pct'] is not None and 0 < s['change_pct'] <= 7
+               and s['close'] is not None and s['close'] > 0
+               and s.get('amount', 0) >= 10_000_000]  # 至少1000万成交额
+    if source == 'clist':
+        gainers.sort(key=lambda x: (x.get('turnover', 0) or 0), reverse=True)
+    else:
+        gainers.sort(key=lambda x: (x.get('amount', 0) or 0), reverse=True)
+    gainers = gainers[:400]
+    
+    # 下跌池：涨跌幅-7%~0%（跌停会被硬排除），按成交额取TOP100
+    losers = [s for s in stocks
+              if s['change_pct'] is not None and -7 <= s['change_pct'] < 0
+              and s['close'] is not None and s['close'] > 0
+              and s.get('amount', 0) >= 10_000_000]
+    if source == 'clist':
+        losers.sort(key=lambda x: (x.get('turnover', 0) or 0), reverse=True)
+    else:
+        losers.sort(key=lambda x: (x.get('amount', 0) or 0), reverse=True)
+    losers = losers[:100]
+    
+    raw_pool = gainers + losers
     
     ctx['raw_pool'] = raw_pool
     ctx['total_raw'] = len(raw_pool)
-    print(f"  原始标的池: {len(raw_pool)} 只（涨跌幅>0%且活跃TOP500）")
-    log_alert("INFO", "行情采集", f"原始标的池: {len(raw_pool)} 只（全市场{len(stocks)}只中涨跌幅>0%且活跃TOP500）")
+    gainer_cnt = len(gainers)
+    loser_cnt = len(losers)
+    print(f"  原始标的池: {len(raw_pool)} 只（上涨{gainer_cnt}+下跌{loser_cnt}，成交额≥1000万）")
+    log_alert("INFO", "行情采集", f"原始标的池: {len(raw_pool)} 只（上涨{gainer_cnt}+下跌{loser_cnt}）")
     ctx['_data_source'] = source
 
 # 批量行业查询（东方财富 clist 轻量API，一次性拉取行业映射）
@@ -1444,6 +1464,7 @@ def step13_strategy_match(ctx):
         volume = c.get('volume', 0)    # 成交量(手)
         main_inflow = c.get('main_inflow')
         volume_ratio = c.get('volume_ratio')
+        source = ctx.get('_data_source', 'sina')
         # Sina API无volume_ratio，用成交额代理：>=1亿→1.5, >=5000万→0.9, 否则→0.5
         if volume_ratio is None:
             if amount >= 100_000_000:
@@ -1466,17 +1487,27 @@ def step13_strategy_match(ctx):
         if market != '弱市' and 3 <= change_pct <= 7 and close > open_p and is_active:
             strategies.append(('A', '动量延续', 2))
         
-        # 策略B: 超跌反弹 (跌幅-1%到-5%、低活跃度、缩量特征)
-        if -5 <= change_pct <= -1 and is_moderate and amplitude >= 2:
+        # 策略B: 超跌反弹 (跌幅-1%到-5%、活跃度中等、缩量特征)
+        # Sina降级时用振幅+成交额代理换手率：振幅≥2%且成交额≥5000万→符合
+        b_amp_ok = (turnover <= 0 and amplitude >= 2 and is_moderate) if source == 'sina' else (amplitude >= 2)
+        if -5 <= change_pct <= -1 and is_moderate and b_amp_ok:
             strategies.append(('B', '超跌反弹', 1.5))
         
         # 策略B: 更深超跌
-        if -10 <= change_pct < -5 and is_moderate:
+        if -7 <= change_pct < -5 and is_moderate:
             strategies.append(('B', '深度超跌反弹', 1))
         
-        # 策略C: 事件驱动 (财报季+活跃标的)
+        # 策略B增强：下跌缩量（成交额<1亿但振幅>3%→恐慌性抛售后的企稳信号）
+        if source == 'sina' and -7 <= change_pct <= -2 and amount < 100_000_000 and amplitude >= 3 and is_moderate:
+            strategies.append(('B', '超跌缩量企稳', 1.2))
+        
+        # 策略C: 事件驱动
+        # 财报季：活跃标的+温和涨幅
         if is_earnings and 0 < change_pct <= 5 and is_active:
             strategies.append(('C', '事件驱动(财报季)', 0.5))
+        # 非财报季：底部放量反弹+振幅>4%（可能是消息驱动，成交额≥2亿）
+        if not is_earnings and 1 <= change_pct <= 4 and is_active and amplitude >= 4 and amount >= 200_000_000:
+            strategies.append(('C', '事件驱动(放量异动)', 1))
         
         # 策略D: 资金埋伏 (温和涨幅+活跃度中等+收盘>开盘+量比>0.8)
         if 0 < change_pct <= 2 and is_moderate and close > open_p and volume_ratio >= 0.8:
@@ -1503,6 +1534,9 @@ def step13_strategy_match(ctx):
         
         if not strategies and -3 <= change_pct < 0 and is_moderate:
             strategies.append(('B', '超跌反弹(弱势)', 0.5))
+        # Sina降级兜底：振幅异常+量价背离的下跌股也可能有反弹机会
+        if not strategies and source == 'sina' and -3 <= change_pct < 0 and amplitude >= 3 and amount >= 50_000_000:
+            strategies.append(('B', '超跌反弹(量价异动)', 0.8))
         
         if strategies:
             # 按优先级排序: A>B>C>D>E
@@ -1679,11 +1713,19 @@ def step17_industry_limit(ctx):
     total_position = ctx.get('position', 55)
     
     # 根据市场环境确定各策略推荐上限
+    # Sina降级时数据质量差，各策略上限+1以补偿信号失真
+    is_sina_fallback = ctx.get('_data_source', '') == 'sina'
     max_per_market = {
         '强市': {'A': 3, 'B': 2, 'C': 2, 'D': 2, 'E': 2},
         '震荡': {'A': 3, 'B': 2, 'C': 2, 'D': 3, 'E': 3},
         '弱市': {'A': 0, 'B': 3, 'C': 1, 'D': 1, 'E': 2},
     }
+    if is_sina_fallback:
+        max_per_market = {
+            '强市': {'A': 4, 'B': 3, 'C': 3, 'D': 3, 'E': 3},
+            '震荡': {'A': 4, 'B': 3, 'C': 3, 'D': 4, 'E': 4},
+            '弱市': {'A': 0, 'B': 4, 'C': 2, 'D': 2, 'E': 3},
+        }
     limits = max_per_market.get(market, {'A': 2, 'B': 2, 'C': 2, 'D': 2, 'E': 2})
     max_total = sum(limits.values())
     
@@ -1712,7 +1754,7 @@ def step17_industry_limit(ctx):
             industry_count[industry] += 1
         strategy_limited.append(c)
     
-    print(f"  行业+策略限制: {len(candidates)}→{len(strategy_limited)} 只")
+    print(f"  行业+策略限制: {len(candidates)}→{len(strategy_limited)} 只{'（Sina降级放宽）' if is_sina_fallback else ''}")
     print(f"    A≤{limits['A']}:{strategy_count['A']} B≤{limits['B']}:{strategy_count['B']} C≤{limits['C']}:{strategy_count['C']} D≤{limits['D']}:{strategy_count['D']} E≤{limits['E']}:{strategy_count['E']}")
     
     ctx['candidates'] = strategy_limited
