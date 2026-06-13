@@ -18,7 +18,6 @@ beijing_now = None
 
 # 仅通过网络授时API获取北京时间（多源冗余，任一成功即可）
 TIME_APIS = [
-    'https://worldtimeapi.org/api/timezone/Asia/Shanghai',
     'https://timeapi.io/api/time/current/zone?timeZone=Asia/Shanghai',
 ]
 for api_url in TIME_APIS:
@@ -26,10 +25,7 @@ for api_url in TIME_APIS:
         req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0'})
         resp = urllib.request.urlopen(req, timeout=5)
         data = json.loads(resp.read())
-        if 'worldtimeapi' in api_url:
-            beijing_now = datetime.fromisoformat(data['datetime'])
-        else:
-            beijing_now = datetime.fromisoformat(data['dateTime'])
+        beijing_now = datetime.fromisoformat(data['dateTime'])
         break
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
         log_alert("INFO", "北京时间", f"{api_url} 网络不可达: {str(e)[:60]}")
@@ -1286,17 +1282,17 @@ finally:
 - **步骤20B 生成HTML报告**（必须完整生成，不可省略任何组件）：基于筛选结果生成自包含HTML报告，输出到 `/workspace/ashare-screening-YYYYMMDD/` 目录。HTML报告与Excel同步推送至GitHub。报告必须包含以下 **7个区域**（缺一不可）：
   1. **报告头部**：渐变深蓝背景，左侧标题+日期，右侧5项关键指标卡片（预测日期、数据日期、市场环境、建议仓位、最终推荐数）。使用 `meta-row` 横向排列。
   2. **筛选管道**：6级漏斗可视化（原始标的池→硬排除→信号过滤→策略匹配→行业+新闻→最终推荐），每级显示数量，最终级高亮蓝色边框。每级之间用箭头标注排除数量。
-  3. **数据可视化**（ECharts 4图表，使用 `chart-grid` 2×2网格布局，引用 `_shared/js/echarts.min.js`）：
-     - 策略分布饼图（`chart-strategy`）：环形饼图，5色（A绿/B蓝/C紫/D黄/E粉），显示各策略匹配数量+百分比。
-     - 硬排除TOP5横向柱状图（`chart-exclusion`）：蓝紫渐变柱，数值标签在右侧。
-     - 筛选漏斗图（`chart-funnel`）：ECharts funnel类型，5级从大到小，紫色渐变色系。
-     - 信号过滤TOP4横向柱状图（`chart-signal`）：琥珀渐变柱，数值标签在右侧。
-     - ⚠️ 所有图表必须使用 `renderer:"svg"` 且 `animation:false`，CSS变量引用主题色（`--accent` 等），图表容器 div 的 id 必须与 JS 中 `echarts.init` 的 id 一致，JS 代码内联在 `<script>` 标签中。
+  3. **数据可视化**（纯CSS/HTML，零JS依赖，使用 `chart-grid` 2×2网格布局，手机端离线即可完美渲染）：
+     - 策略分布分段条（`seg-bar`）：横条按比例分段，5色（A绿/B蓝/C紫/D黄/E粉），下方图例标注各策略名称、数量、百分比。
+     - 硬排除TOP5横向柱状条（`bar-row`）：水平柱状条，蓝紫渐变色系，数值标签在柱内。
+     - 筛选漏斗图（`funnel`）：CSS渐窄阶梯块，6级由宽到窄，紫色渐变色系。
+     - 各策略数量柱状图（`bar-row`）：水平柱状条，5色对应策略，数值标签在柱内。
+     - ⚠️ 所有图表使用纯CSS `div` + `flex` 实现，无任何 JS 依赖（不含 `<script>` 标签），图标使用 Unicode 字符，颜色使用 CSS 变量或硬编码十六进制值。
   4. **最终推荐标的表**（13列）：序号|策略|标的|代码|行业|涨跌幅|开盘价|收盘价|振幅|评分|置信度|进场|止损|止盈。策略用彩色badge，涨跌幅红涨绿跌，置信度★★★绿/★★黄/★红，标的名称+代码超链接到东方财富个股页，行背景色按策略着色。
   5. **策略说明表**：5大策略的条件+仓位对照表（A动量延续/B超跌反弹/C事件驱动/D资金埋伏/E回调企稳），含震荡市仓位百分比。
   6. **系统告警列表**：读取当天告警日志，按 WARN/INFO/ERROR 分级显示，左侧彩色标签，右侧告警内容，使用 `.alert-list` 样式。
   7. **报告尾部**：版本号+生成时间+规则来源，红色免责声明「⚠️ 仅供参考，不构成投资建议」。
-  - 参考模板：仓库中的 `ashare-screening-20260615/ashare-screening-20260615.html`（含完整CSS变量体系、7区域布局、4个ECharts图表JS代码）。
+  - 参考模板：仓库中的 `ashare-screening-20260615/ashare-screening-20260615.html`（含完整CSS变量体系、7区域布局、纯CSS可视化）。
 - **步骤24 告警日志摘要**：读取 `/workspace/系统告警.log` 当天记录，在对话中输出告警汇总（若当天无告警则输出「今日无异常」）。
 - 其余步骤的详细执行逻辑见正文各对应章节。
 
@@ -1305,7 +1301,7 @@ finally:
 | 文件 | 操作 |
 |------|------|
 | **短线标的_YYYYMMDD.xlsx** | 输出预测结果到该文件（唯一输出文件） |
-| **ashare-screening-YYYYMMDD/** | 输出自包含HTML报告（含ECharts可视化、筛选管道、告警日志） |
+| **ashare-screening-YYYYMMDD/** | 输出自包含HTML报告（纯CSS可视化、筛选管道、告警日志，零JS依赖） |
 | 推荐历史.json | safe_append_json追加推荐记录 + 清理7天推荐 + 清理90天holding+do_T；步骤4更新holding收盘价 |
 | 持仓跟踪.xlsx | 步骤4B同步持仓收盘价（仅更新当前价/市值/盈亏，不修改成本/持仓量） |
 | 策略调整记录.json | 只读version+params，不写入 |
