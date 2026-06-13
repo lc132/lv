@@ -1702,6 +1702,14 @@ def step18_news_screening(limited):
         c['score'] = c.get('score', 0) + news_bonus - min(news_deduction, 3)
         c['news_notes'] = news_notes if news_notes else ['通过(简化)']
         c['reason'] = (c.get('reason', '') + f"; 新闻{news_bonus - min(news_deduction, 3)}").strip('; ')
+        # 重新计算置信度（score可能被新闻修正）
+        s = math_ceil_for_confidence(c['score'])
+        if s >= 9:
+            c['confidence'] = '★★★'
+        elif s >= 6:
+            c['confidence'] = '★★'
+        else:
+            c['confidence'] = '★'
         passed.append(c)
 
     print(f"[步骤18] 新闻筛查: {len(limited)}->{len(passed)}")
@@ -1715,18 +1723,18 @@ def step19_insufficient_handling(passed):
     """推荐不足降级处理"""
     print(f"[步骤19] 推荐不足降级检查...")
     n = len(passed)
-    if n >= 3:
+    if n >= 5:
         result = passed
         print(f"[步骤19] 推荐充足({n}只)，全部+宽松")
-    elif n == 3:
+    elif n >= 3:
         result = passed  # 全部+中置信
-        print(f"[步骤19] 仅3只->全部+中置信")
+        print(f"[步骤19] {n}只->全部+中置信")
     elif n == 2:
         result = [c for c in passed if c.get('confidence', '') in ('★★★', '★★')]
-        print(f"[步骤19] 仅2只->仅>=中置信 → {len(result)}只")
+        print(f"[步骤19] 仅2只->仅>=中置信 -> {len(result)}只")
     elif n == 1:
         result = [c for c in passed if c.get('confidence', '') == '★★★']
-        print(f"[步骤19] 仅1只->仅高置信 → {len(result)}只")
+        print(f"[步骤19] 仅1只->仅高置信 -> {len(result)}只")
     else:
         result = []
         print(f"[步骤19] 无合适标的，标记空")
@@ -2766,13 +2774,16 @@ def main():
     holiday = step1_holiday_check()
     if holiday == "SKIP":
         print("节假日/周末，跳过筛选")
+        step28_weekly_review()
         return None
+
     long_holiday = (holiday == "LONG_HOLIDAY")
 
     # === 步骤2: 极端行情 ===
     market_status, sh_chg, market_type = step2_extreme_market()
     if market_status == "SKIP":
         print("极端行情，跳过筛选")
+        step28_weekly_review()
         return None
 
     # === 步骤3: 外围市场 ===
