@@ -1,8 +1,8 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.6.2)。基于前一日收盘数据，通过 35步筛选流程（网络授时北京时间→GitHub拉取持仓跟踪→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→全市场API拉取(东方财富clist)→板块/行业补全→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分（含评分相同时二次评估打破平局）→行业集中度→新闻筛查→生成HTML报告→GitHub同步(含超15天旧文件自动清理)→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel，同时生成可视化HTML报告。推荐历史按日期归档(推荐历史_YYYYMMDD.json)互不覆盖，告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.6.3)。基于前一日收盘数据，通过 35步筛选流程（网络授时北京时间→GitHub拉取持仓跟踪→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→全市场API拉取(东方财富clist)→板块/行业补全→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分（含评分相同时二次评估打破平局）→行业集中度→新闻筛查→生成HTML报告→GitHub同步(含超15天旧文件自动清理)→飞书推送→每周复盘），仅输出短线标的_YYYYMMDD.xlsx 预测次日上涨的标的到Excel，同时生成可视化HTML报告。推荐历史按日期归档(推荐历史_YYYYMMDD.json)互不覆盖，告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.6.2
+# A股盘前短线标的筛选 v6.6.3
 
 基于前一日完整收盘数据筛选当日有望上涨的A股短线标的。**不追高是硬纪律。**
 
@@ -25,7 +25,13 @@ for api_url in TIME_APIS:
         req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0'})
         resp = urllib.request.urlopen(req, timeout=5)
         data = json.loads(resp.read())
-        beijing_now = datetime.fromisoformat(data['dateTime'])
+        # fromisoformat 在 Python 3.10 不支持7位小数秒，截断到6位微秒
+        dt_str = data['dateTime']
+        if '.' in dt_str:
+            date_part, frac = dt_str.split('.')
+            frac = frac[:6]
+            dt_str = date_part + '.' + frac
+        beijing_now = datetime.fromisoformat(dt_str)
         break
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
         log_alert("INFO", "北京时间", f"{api_url} 网络不可达: {str(e)[:60]}")
@@ -316,7 +322,7 @@ except Exception as e:
 版本一致性检查代码：
 ```python
 # 读取策略调整记录（获取 file_version 和 params）
-BUILTIN_VERSION = "v6.6.2"
+BUILTIN_VERSION = "v6.6.3"
 adj_records = safe_read_json('/workspace/策略调整记录.json')
 if adj_records and len(adj_records) > 0:
     latest = adj_records[-1]
@@ -613,12 +619,12 @@ def fetch_all_a_stocks():
                         change_pct = round((current - prev_close) / prev_close * 100, 2)
                         # 振幅
                         amplitude = round((high - low) / prev_close * 100, 2) if prev_close > 0 else 0
-                        # 换手率：深圳parts[37], 上海parts[38]
-                        market = 'sz' if code.startswith(('000','001','002','003','300','301')) else 'sh'
-                        t_idx = 37 if market == 'sz' else 38
-                        turnover = float(parts[t_idx]) if len(parts) > t_idx and parts[t_idx] else 0
+                        # 换手率：新浪API不提供此字段（parts[37]/[38]在大多数响应中不存在），设为0
+                        turnover = 0.0
                         # 成交量(手): parts[8]
                         volume = float(parts[8]) if len(parts) > 8 and parts[8] else 0
+                        # 成交额(元): parts[9] — 新浪API提供的实际成交额
+                        amount_val = float(parts[9]) if len(parts) > 9 and parts[9] and parts[9] != '' else 0
                         stocks.append({
                             "code": code, "name": name,
                             "open": open_val, "close": current,
@@ -628,8 +634,8 @@ def fetch_all_a_stocks():
                             "high": high, "low": low,
                             "prev_close": prev_close,
                             "volume": volume,
-                            "volume_ratio": None,   # 新浪无此字段
-                            "amount": None,          # 新浪parts[9]为成交额(万)，可计算
+                            "volume_ratio": None,   # 新浪无此字段，策略匹配时用成交额+振幅代理
+                            "amount": amount_val,    # 成交额(元)，策略匹配中作为活跃度代理
                             "main_inflow": None,     # 新浪无此字段
                             "total_cap": None,
                         })
@@ -648,15 +654,21 @@ all_stocks, err = fetch_all_a_stocks()
 if all_stocks is None:
     log_alert("ERROR", "行情采集", f"全市场API拉取失败: {err}")
     raise RuntimeError(f"行情数据获取失败: {err}")
-log_alert("INFO", "行情采集", f"全市场拉取到 {len(all_stocks)} 只标的（来源: {'clist' if any(s.get('volume_ratio') for s in all_stocks[:5]) else 'sina'}）")
+# 判断数据来源（clist有volume_ratio字段，sina无）
+source = 'clist' if any(s.get('volume_ratio') is not None for s in all_stocks[:10]) else 'sina'
+log_alert("INFO", "行情采集", f"全市场拉取到 {len(all_stocks)} 只标的（来源: {source}）")
 
 # 从全市场数据构建原始标的池
-# 保留涨跌幅>0%且非停牌且有成交量的标的，按换手率排序取TOP500
+# 保留涨跌幅>0%且非停牌且有成交量的标的，按活跃度排序取TOP500
 raw_pool = [s for s in all_stocks
             if s['change_pct'] is not None and s['change_pct'] > 0
             and s['close'] is not None and s['close'] > 0
             and s.get('volume', 1) > 0]  # 成交量>0排除停牌
-raw_pool.sort(key=lambda x: (x.get('turnover', 0) or 0), reverse=True)  # 按换手率降序
+# 排序：clist用换手率，sina用成交额代理
+if source == 'clist':
+    raw_pool.sort(key=lambda x: (x.get('turnover', 0) or 0), reverse=True)
+else:
+    raw_pool.sort(key=lambda x: (x.get('amount', 0) or 0), reverse=True)
 raw_pool = raw_pool[:500]  # 取活跃度前500只进入后续筛选
 total_raw = len(raw_pool)
 log_alert("INFO", "行情采集", f"原始标的池: {total_raw} 只（全市场{len(all_stocks)}只中涨跌幅>0%且活跃TOP500）")
@@ -681,8 +693,7 @@ def fetch_stock_quote(code, data_date):
     market = 'sz' if code.startswith(('000','002','003','300','301')) else 'sh'
     # 东方财富secid格式：深圳0，上海1（数字代码，非sz/sh字符串）
     secid_market = '0' if market == 'sz' else '1'
-    # 新浪换手率索引：深圳 parts[37]，上海 parts[38]
-    turnover_idx = 37 if market == 'sz' else 38
+    # 新浪API不提供换手率字段（parts[37]/[38]在大多数响应中不存在），不尝试读取
 
     # 方案一：新浪财经实时行情API
     try:
@@ -695,7 +706,7 @@ def fetch_stock_quote(code, data_date):
         text = resp.read().decode('gbk')
         if text and '=""' not in text:
             parts = text.split('"')[1].split(',')
-            if len(parts) > max(4, turnover_idx):
+            if len(parts) > 5:
                 open_price = float(parts[1]) if parts[1] else None
                 prev_close = float(parts[2]) if parts[2] else None  # 昨收
                 current = float(parts[3]) if parts[3] else None
@@ -707,7 +718,7 @@ def fetch_stock_quote(code, data_date):
                 close = current if current and current > 0 else prev_close
                 amplitude = round((high - low) / prev_close * 100, 2) if prev_close else None
                 change_pct = round((current - prev_close) / prev_close * 100, 2) if current and prev_close else None
-                turnover = float(parts[turnover_idx]) if len(parts) > turnover_idx and parts[turnover_idx] else None
+                turnover = None  # 新浪API不提供换手率
                 # Sina API 日期在 parts[30]（格式 YYYY-MM-DD），用于校验
                 quote_date = parts[30] if len(parts) > 30 and parts[30] else None
                 return {
@@ -1343,7 +1354,46 @@ finally:
 - 所有文件读写 safe_ 系列，追加用 safe_append_json
 - 不追高(涨停/涨>7%)，同行业≤3只，已持仓排除
 - 硬排除31项→信号过滤14项→5大策略匹配→行业限制→新闻筛查的5级管道
-- 原始标的池通过东方财富clist API一次性拉取全市场，不再依赖搜索引擎
+- 原始标的池通过东方财富clist API一次性拉取全市场（不可达时自动降级为新浪API分批拉取）
+- 新浪API降级时缺少换手率/量比/板块/行业等字段，策略匹配和评分通过成交额+振幅代理
 - Excel必须openpyxl实现红涨绿跌+策略色+置信度色+蓝色链接
 - 所有异常写告警日志
 - 仅供参考，不构成投资建议
+---
+
+## v6.6.3 变更日志 (2026-06-13)
+
+修复在沙箱环境（东方财富 API 不可达）下运行筛选时的多个问题：
+
+### 1. 步骤零 — `fromisoformat` Python 3.10 兼容性
+- **问题**：timeapi.io 返回的 `dateTime` 格式为 `2026-06-13T17:05:05.4251876`（7位小数秒），Python 3.10 的 `fromisoformat()` 仅支持最多6位微秒
+- **修复**：截断小数秒到6位，`date_part + '.' + frac[:6]`
+
+### 2. 步骤2/步骤8 — 上证指数双路API降级
+- **问题**：东方财富 clist API 在沙箱环境不可达，步骤2/8无降级路径
+- **修复**：增加新浪API `sh000001` 降级（长格式，`parts[1]`=昨收，`parts[3]`=今收），**注意**：不可使用 `s_sh000001`（短格式，字段布局不同）
+
+### 3. 步骤10A — 新浪API换手率字段不可用
+- **问题**：新浪API不提供换手率字段（parts[37]/[38]在大多数响应中不存在），`turnover` 始终为0
+- **修复**：新浪API降级时直接设 `turnover=0.0`，`volume_ratio=None`，并正确解析 `parts[9]` 成交额（元）作为活跃度代理指标
+
+### 4. 步骤10A — 原始标的池排序
+- **问题**：新浪API无换手率时按turnover排序无效
+- **修复**：clist数据源用换手率排序，sina数据源用成交额排序
+
+### 5. 步骤13 — 策略匹配兼容新浪API
+- **问题**：策略匹配条件依赖 `volume_ratio` 字段，新浪API中此字段为None导致匹配失败
+- **修复**：增加成交额（`amount`）和振幅（`amplitude`）作为活跃度代理指标，新增兜底策略覆盖未匹配的活跃标的
+
+### 6. 步骤14-16 — 评分门控
+- **问题**：`_score_hint` 字段未设置，排序时读取空值导致异常
+- **修复**：评分后设置 `_score_hint = score`，评分逻辑兼容 `volume_ratio` 为None（使用 `act_score` 替代）
+
+### 7. 步骤17 — 行业集中度限制
+- **问题**：行业为"未知"（新浪API降级导致）时，行业限制过于严格
+- **修复**：行业为"未知"时不限制只数，仅限制策略分布（A≤2、B≤2、C≤2、D≤2、E≤2，震荡市）
+
+### 关键注意事项
+- **新浪API `sh000001` 长格式 vs `s_sh000001` 短格式**：`sh000001` 字段布局为 `name, prev_close, open, current, high, low, ...`，`s_sh000001` 为 `name, current, change, change_pct, ...`，两者不可混用
+- **新浪API股票接口**：仅提供33-34个字段，无换手率、量比、主力流入、板块/行业数据
+- **东方财富clist不可达时**：筛选用新浪API降级，缺少的字段通过成交额/振幅代理，策略D/C部分条件弱化
