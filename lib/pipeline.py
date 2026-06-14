@@ -635,3 +635,11 @@ def step9C_conversion_rate(ctx):
         ctx['position_plan'] = {'A': 5, 'B': 11, 'C': 7, 'D': 10, 'E': 4}
     else:
         ctx['position_plan'] = {'A': 0, 'B': 10, 'C': 5, 'D': 3, 'E': 2}
+    
+    # 保留 step8 特殊标志：极端涨>3%恢复A、人民币波动禁D
+    if ctx.get('_extreme_up_a_restore'):
+        ctx['position_plan']['A'] = 15
+        print(f"  兑现率联动后保留极端涨A=15%")
+    if ctx.get('pause_strategy_d'):
+        ctx['position_plan']['D'] = 0
+        print(f"  兑现率联动后保留策略D暂停")

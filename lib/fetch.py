@@ -129,7 +129,8 @@ def _infer_industry_from_name(name):
 def _batch_sector_lookup_clist(codes):
     """
     用东方财富 clist API 批量查询行业/板块。
-    单次请求 fields=f12,f14,f100,f102, pz=6000 → 理论上全市场行业数据。
+    codes 参数预留用于未来按需过滤，当前 clist 的 fs 过滤器仅支持市场级筛选
+    不支持按个股代码批量过滤，因此拉取全量行业数据（pz=6000）。
     如果API不可达，返回空dict让后续名称推断兜底。
     """
     sector_map = {}
@@ -209,7 +210,7 @@ def step10A_fetch_all_stocks(ctx):
                     "ut": "bd1d9ddb04089700cf9c27f6f7426281",
                     "fltt": "2", "invt": "2", "fid": "f6",
                     "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
-                    "fields": "f2,f3,f5,f6,f7,f8,f10,f12,f14,f15,f16,f17,f18,f20,f62,f100,f102",
+                    "fields": "f2,f3,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20,f62,f100,f102",
                     "_": str(int(time.time() * 1000))
                 }
                 try:
@@ -279,6 +280,7 @@ def step10A_fetch_all_stocks(ctx):
                             "prev_close": float(item.get('f18', 0)) if item.get('f18') not in (None, '-') else None,
                             "main_inflow": float(item.get('f62', 0)) if item.get('f62') not in (None, '-') else None,
                             "total_cap": float(item.get('f20', 0)) if item.get('f20') not in (None, '-') else None,
+                            "pe_ttm": float(item.get('f9', 0)) if item.get('f9') not in (None, '-') else None,
                             "sector": str(item.get('f102', '') or '').strip() or '未知',
                             "industry": str(item.get('f100', '') or '').strip() or '未知',
                         })
@@ -491,6 +493,7 @@ def step10B_sector_backfill(ctx):
             "low": s.get("low"),
             "prev_close": s.get("prev_close"),
             "total_cap": s.get("total_cap"),
+            "pe_ttm": s.get("pe_ttm"),
             "strategy": "",
             "reason": "",
             "score": 0,
