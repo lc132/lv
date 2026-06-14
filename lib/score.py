@@ -177,6 +177,11 @@ def step14_16_scoring(ctx):
             score += signal_bonus
             reasons.append(f"信号加分:{c.get('_signal_note','')}+{signal_bonus}")
         
+        # D策略假突破减分（SKILL §五.13: 上下影线比>2:1→减3分）
+        if strategy == 'D' and c.get('_d_fake_breakout'):
+            score -= 3
+            reasons.append("D假突破-3")
+        
         # L3 信号扣分
         l3_flags = c.get('L3_flags', [])
         if l3_flags:

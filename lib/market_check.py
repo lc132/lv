@@ -212,7 +212,7 @@ def step3_foreign_market(ctx):
     print("=" * 60)
     
     ctx['foreign_weak'] = False
-    ctx['pause_strategy_d'] = False
+    ctx['pause_strategy_e'] = False
     ctx['foreign_detail'] = {}
     
     # 1. 美股三大指数检查
@@ -266,12 +266,12 @@ def step3_foreign_market(ctx):
                 ctx['foreign_detail']['cny_vol'] = round(cny_chg, 2)
                 print(f"  人民币波动: {cny_chg:.2f}%")
                 if cny_chg > 0.5:
-                    ctx['pause_strategy_d'] = True
-                    print(f"  ⚠️ 人民币波动>{0.5}% → 暂停策略D")
+                    ctx['pause_strategy_e'] = True
+                    print(f"  ⚠️ 人民币波动>{0.5}% → 暂停策略E")
     except Exception:
         print(f"  人民币汇率数据不可得，跳过")
     
-    if not ctx['foreign_weak'] and not ctx['pause_strategy_d']:
+    if not ctx['foreign_weak'] and not ctx['pause_strategy_e']:
         print(f"  外围市场正常")
 
 # ============================================================

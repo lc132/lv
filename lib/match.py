@@ -153,8 +153,18 @@ def step13_strategy_match(ctx):
             strategies.append(('B', '超跌反弹(量价异动)', 0.8))
         
         if strategies:
-            # 按优先级排序: A>B>C>D>E
-            strategies.sort(key=lambda x: {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4}[x[0]])
+            # D策略假突破过滤（SKILL §五.13: 上下影线比>2:1→降置信减3分）
+            if any(s[0] == 'D' for s in strategies):
+                high = c.get('high', 0)
+                low = c.get('low', 0)
+                if high > 0 and low > 0 and close > 0 and open_p > 0:
+                    upper_shadow = high - max(close, open_p)
+                    lower_shadow = min(close, open_p) - low
+                    if upper_shadow > 0 and lower_shadow > 0 and upper_shadow > lower_shadow * 2:
+                        c['_d_fake_breakout'] = True
+            
+            # 按优先级排序: A>D>C>B>E（D回调企稳比B超跌反弹可靠性更高，SKILL §五.13）
+            strategies.sort(key=lambda x: {'A': 0, 'D': 1, 'C': 2, 'B': 3, 'E': 4}[x[0]])
             best = strategies[0]
             c['strategy'] = best[0]
             c['strategy_reason'] = best[1]
@@ -167,8 +177,8 @@ def step13_strategy_match(ctx):
         if s in strategy_counts:
             print(f"    {s}: {strategy_counts[s]}只")
     
-    # 策略匹配后临时按策略优先级排序（A>B>C>D>E），最终评分排序在步骤14-16完成
-    strategy_order = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4}
+    # 策略匹配后临时按策略优先级排序（A>D>C>B>E），最终评分排序在步骤14-16完成
+    strategy_order = {'A': 0, 'D': 1, 'C': 2, 'B': 3, 'E': 4}
     matched.sort(key=lambda x: (strategy_order.get(x.get('strategy', 'Z'), 99), -x.get('change_pct', 0)))
     
     ctx['candidates'] = matched

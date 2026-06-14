@@ -299,10 +299,10 @@ def step8_market_judgment(ctx):
         position_plan['A'] = 15
         print(f"  ⚠️ 极端涨>3%→临时恢复策略A仓位15%")
     
-    # 策略D被暂停（人民币波动>0.5%）
-    if ctx.get('pause_strategy_d'):
-        position_plan['D'] = 0
-        print(f"  ⚠️ 策略D暂停（人民币波动>0.5%）")
+    # 策略E被暂停（人民币波动>0.5%）
+    if ctx.get('pause_strategy_e'):
+        position_plan['E'] = 0
+        print(f"  ⚠️ 策略E暂停（人民币波动>0.5%）")
     
     # 长休弱市压制仓位（必须在财报季+5%之后执行，确保硬上限不被突破）
     if ctx.get('is_long_holiday'):
@@ -639,10 +639,10 @@ def step9C_conversion_rate(ctx):
     else:
         ctx['position_plan'] = {'A': 0, 'B': 10, 'C': 5, 'D': 3, 'E': 2}
     
-    # 保留 step8 特殊标志：极端涨>3%恢复A、人民币波动禁D
+    # 保留 step8 特殊标志：极端涨>3%恢复A、人民币波动禁E
     if ctx.get('_extreme_up_a_restore'):
         ctx['position_plan']['A'] = 15
         print(f"  兑现率联动后保留极端涨A=15%")
-    if ctx.get('pause_strategy_d'):
-        ctx['position_plan']['D'] = 0
-        print(f"  兑现率联动后保留策略D暂停")
+    if ctx.get('pause_strategy_e'):
+        ctx['position_plan']['E'] = 0
+        print(f"  兑现率联动后保留策略E暂停")
