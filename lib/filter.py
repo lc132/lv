@@ -57,6 +57,8 @@ def step11_hard_exclude(ctx):
     exclusion_stats = Counter()
     l2_skipped = 0
     l3_flagged = 0
+    l2_skip_log = set()
+    l3_skip_log = set()
     
     for c in candidates:
         code = c.get('code', '')
@@ -147,56 +149,56 @@ def step11_hard_exclude(ctx):
         # L2: 尽力执行规则（数据不可达→跳过，不排除）
         # ====================
         # 规则6: 退市整理期 → L2跳过
-        _log_skip(6, "退市整理期", 2)
+        l2_skip_log.add("规则6: 退市整理期(L2跳过-数据不可达)")
         l2_skipped += 1
         # 规则7: 连续亏损2年+最新季度营收同比降>10% → L2跳过
-        _log_skip(7, "连亏2年+营收降", 2)
+        l2_skip_log.add("规则7: 连亏2年+营收降(L2跳过-数据不可达)")
         l2_skipped += 1
         # 规则8: 上市<60日 → L2跳过（可通过clist上市日期实现，暂无）
-        _log_skip(8, "上市<60日", 2)
+        l2_skip_log.add("规则8: 上市<60日(L2跳过-数据不可达)")
         l2_skipped += 1
         # 规则9: 停牌→复牌<3日 → L2跳过
-        _log_skip(9, "停牌复牌<3日", 2)
+        l2_skip_log.add("规则9: 停牌复牌<3日(L2跳过-数据不可达)")
         l2_skipped += 1
         # 规则14: 7日内解禁>流通5% → L2跳过
-        _log_skip(14, "7日内解禁", 2)
+        l2_skip_log.add("规则14: 7日内解禁(L2跳过-数据不可达)")
         l2_skipped += 1
         # 规则15: 3日内分红除权 → L2跳过
-        _log_skip(15, "3日内分红除权", 2)
+        l2_skip_log.add("规则15: 3日内分红除权(L2跳过-数据不可达)")
         l2_skipped += 1
         # 规则16: 可转债强赎/转股>10% → L2跳过
-        _log_skip(16, "可转债强赎", 2)
+        l2_skip_log.add("规则16: 可转债强赎(L2跳过-数据不可达)")
         l2_skipped += 1
         # 规则17: 30日内研报下调≥2级 → L2跳过
-        _log_skip(17, "研报下调", 2)
+        l2_skip_log.add("规则17: 研报下调(L2跳过-数据不可达)")
         l2_skipped += 1
         # 规则18: 5日内大宗折价>5%且>5000万 → L2跳过
-        _log_skip(18, "大宗折价", 2)
+        l2_skip_log.add("规则18: 大宗折价(L2跳过-数据不可达)")
         l2_skipped += 1
         # 规则23: 质押>70%且距平仓线<20% → L2跳过
-        _log_skip(23, "高质押平仓风险", 2)
+        l2_skip_log.add("规则23: 高质押平仓风险(L2跳过-数据不可达)")
         l2_skipped += 1
         # 规则24: 30日内业绩修正(预增→预亏) → L2跳过
-        _log_skip(24, "业绩修正", 2)
+        l2_skip_log.add("规则24: 业绩修正(L2跳过-数据不可达)")
         l2_skipped += 1
         # 规则25: 30日内立案调查/行政处罚 → L2跳过
-        _log_skip(25, "立案调查", 2)
+        l2_skip_log.add("规则25: 立案调查(L2跳过-数据不可达)")
         l2_skipped += 1
         # 规则27: 龙虎榜机构席位净卖出>3000万 → L2跳过
-        _log_skip(27, "龙虎榜机构卖出", 2)
+        l2_skip_log.add("规则27: 龙虎榜机构卖出(L2跳过-数据不可达)")
         l2_skipped += 1
         # 规则29: 大股东减持计划公告<5日 → L2跳过
-        _log_skip(29, "大股东减持", 2)
+        l2_skip_log.add("规则29: 大股东减持(L2跳过-数据不可达)")
         l2_skipped += 1
         # 规则30: 商誉占净资产>50%且业绩承诺到期<6个月 → L2跳过
-        _log_skip(30, "商誉风险", 2)
+        l2_skip_log.add("规则30: 商誉风险(L2跳过-数据不可达)")
         l2_skipped += 1
         
         # ====================
         # L3: 降为信号规则（满足条件→标注⚠️不排除）
         # ====================
         # 规则19: 融券连续3日增>50% → L3跳过
-        _log_skip(19, "融券连增", 3)
+        l3_skip_log.add("规则19: 融券连增(L3跳过-数据不可达)")
         # 规则26: 当日主力净流出>1亿且占成交额>15%（clist有f62字段）
         if main_inflow is not None and amount > 0:
             try:
@@ -208,13 +210,18 @@ def step11_hard_exclude(ctx):
             except (ZeroDivisionError, TypeError):
                 pass
         else:
-            _log_skip(26, "主力净流出(无数据)", 3)
+            l3_skip_log.add("规则26: 主力净流出(L3跳过-数据不可达)")
         # 规则31: 行业级政策利空公告<5日 → L3跳过
-        _log_skip(31, "行业政策利空", 3)
+        l3_skip_log.add("规则31: 行业政策利空(L3跳过-数据不可达)")
         
         if l3_flags:
             c['L3_flags'] = l3_flags
         passed.append(c)
+    
+    for msg in sorted(l2_skip_log):
+        log_alert("INFO", "排除分级", f"[L2跳过] {msg}")
+    for msg in sorted(l3_skip_log):
+        log_alert("INFO", "排除分级", f"[L3跳过] {msg}")
     
     print(f"  硬排除: {len(excluded)} 只 → 通过: {len(passed)} 只")
     print(f"  L2跳过: {l2_skipped}规则次 | L3信号: {l3_flagged}只")

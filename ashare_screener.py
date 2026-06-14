@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的筛选 v6.6.17
+A股每日盘前短线标的筛选 v6.6.20
 严格按 SKILL.md 十五、完整执行步骤 逐步执行
 """
 # 从各个lib模块导入所有步骤函数
@@ -220,6 +220,11 @@ def main():
         
         # 步骤9C: 兑现率
         step9C_conversion_rate(ctx)
+        
+        # 步骤9C 暂停检查：连续低兑现率→跳过今日筛选
+        if ctx.get('skip'):
+            print("\n⛔ 连续低兑现率，今日暂停推荐")
+            return
         
         # 步骤10A: 全市场API拉取
         step10A_fetch_all_stocks(ctx)

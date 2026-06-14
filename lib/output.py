@@ -168,7 +168,7 @@ def step20B_html_report(ctx):
             <td style="color:{chg_color};font-weight:bold">{chg_sign}{chg:.2f}%</td>
             <td>{rec.get('open','')}</td>
             <td>{rec.get('close','')}</td>
-            <td>{rec.get('amplitude',''):.2f}%</td>
+            <td>{rec.get('amplitude',0):.2f}%</td>
             <td style="font-weight:bold">{rec.get('score',0)}</td>
             <td style="color:{conf_color};font-weight:bold">{conf}</td>
             <td>{rec.get('entry','')}</td>

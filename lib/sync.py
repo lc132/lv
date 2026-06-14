@@ -401,12 +401,13 @@ def step28_weekly_review(ctx):
                             total_recos += 1
                             # 尝试解析策略和涨幅
                             try:
-                                strategy_cell = parts[5] if len(parts) > 5 else ''
-                                chg_cell = parts[4] if len(parts) > 4 else ''
-                                # 策略可能在涨跌幅后面
-                                for s in ['A', 'B', 'C', 'D', 'E']:
-                                    if s in strategy_cell or any(s in p for p in parts):
-                                        strategy_dist[s] += 1
+                                strategy_cell = parts[1] if len(parts) > 1 else ''
+                                chg_cell = parts[5] if len(parts) > 5 else ''
+                                # 策略列：检查中文名称
+                                strategy_name_map = {'动量延续': 'A', '超跌反弹': 'B', '事件驱动': 'C', '回调企稳': 'D', '资金埋伏': 'E'}
+                                for cn_name, s_key in strategy_name_map.items():
+                                    if cn_name in strategy_cell:
+                                        strategy_dist[s_key] += 1
                                         break
                                 chg_str = chg_cell.replace('%', '').replace('+', '')
                                 try:

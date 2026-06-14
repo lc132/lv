@@ -108,6 +108,14 @@ def step14_16_scoring(ctx):
         strategy_base = {'A': 5, 'B': 4, 'C': 3, 'D': 2, 'E': 3}
         score = strategy_base.get(strategy, 3)
         
+        # 财报季调整：事件驱动权重×1.5，动量延续涨幅上限7%→8%
+        if is_earnings:
+            if strategy == 'C':
+                score = int(score * 1.5)
+                reasons.append("财报季:事件驱动权重×1.5")
+            if strategy == 'A':
+                reasons.append("财报季:动量涨幅上限7%→8%")
+        
         # 加分项
         # 板块TOP5
         if c.get('sector') in top_sectors:
@@ -163,11 +171,11 @@ def step14_16_scoring(ctx):
             score -= signal_deduction
             reasons.append(f"信号:{c.get('_signal_note','')}-{signal_deduction}")
         
-        # L3扣分
+        # L3 信号扣分
         l3_flags = c.get('L3_flags', [])
         if l3_flags:
             score -= 2
-            reasons.append("L3扣分-2")
+            reasons.append(f"L3风险扣2分({','.join(l3_flags)})")
         
         # ROE评分（基本面维度，数据可用时启用）
         roe = c.get('roe', None)

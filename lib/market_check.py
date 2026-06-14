@@ -140,6 +140,8 @@ def step2_extreme_market(ctx):
         elif sh_chg > 3:
             print(f"  ⚠️ 上证涨>3%，仓位降至30%仅动量延续")
             ctx['position'] = 30
+            ctx['_extreme_market_position'] = 30
+            ctx['_extreme_market'] = '强市(极端)'
             ctx['market_condition'] = '强市(极端)'
             # 若弱市策略A已关闭，临时启用A仓位15%
             ctx['_extreme_up_a_restore'] = True
@@ -276,22 +278,13 @@ def step3A_futures(ctx):
     
     ctx['futures_detail'] = results
     
-    # 任一期货跌>1% → 外围偏空，仓位降一档
+    # 任一期货跌>1% → 外围偏空，设置标志由步骤8大盘判断处理降档
     if bearish_count > 0:
         ctx['futures_bearish'] = True
-        print(f"  ⚠️ {bearish_count}只期货跌>1% → 外围偏空，仓位降一档")
-        
-        # 降档当前仓位（在步骤8大盘判断中会再被外围压制一次）
-        current_position = ctx.get('position', 55)
-        if ctx.get('market_condition') == '强市':
-            ctx['market_condition'] = '震荡'
-            ctx['position'] = 55
-        elif ctx.get('market_condition') == '震荡':
-            ctx['market_condition'] = '弱市'
-            ctx['position'] = 35
+        print(f"  ⚠️ {bearish_count}只期货跌>1% → 外围偏空，步骤8将降一档仓位")
     else:
         ctx['futures_bearish'] = False
         if all(v is None for v in results.values()):
-            print(f"  期货数据均不可得，跳过此检查，维持步骤3外围判断")
+            print(f"  期货数据均不可得，跳过此检查")
         else:
             print(f"  期货市场正常")

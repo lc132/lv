@@ -217,14 +217,11 @@ def step8_market_judgment(ctx):
     except Exception as e:
         print(f"  K线数据获取失败({str(e)[:40]})，使用涨跌幅简化判断")
     
-    sh_price = closes[-1] if closes else None
+    sh_price = closes[-1] if 'closes' in dir() and closes else None
     
     if ma5 and ma10 and ma20 and sh_price:
         # 三级判断：MA均线 + 涨跌比 + 成交量
         ma_bullish = ma5 > ma10 > ma20  # 均线多头排列
-        ma_above = sh_price > ma20 * 0.98  # 价格在MA20上方
-        ma_neutral = ma20 * 0.98 <= sh_price <= ma20 * 1.02  # 价格在MA20附近
-        
         vol_high = today_volume and avg_volume_20 and today_volume > avg_volume_20 * 1.2
         vol_low = today_volume and avg_volume_20 and today_volume < avg_volume_20 * 0.8
         breadth_strong = up_down_ratio and up_down_ratio > 2.0
@@ -253,6 +250,12 @@ def step8_market_judgment(ctx):
             market = '弱市'
             position = 35
     
+    # 步骤2极端行情保护：若步骤2已设极端仓位，步骤8不覆盖
+    if ctx.get('_extreme_market_position'):
+        position = ctx['_extreme_market_position']
+        market = ctx.get('_extreme_market', market)
+        print(f"  极端行情保护: 仓位锁定{position}%")
+    
     # 外围市场压制
     if ctx.get('foreign_weak'):
         if market == '强市':
@@ -262,6 +265,16 @@ def step8_market_judgment(ctx):
             market = '弱市'
             position = 35
         print(f"  外围偏空 → 降档至 {market}")
+    
+    # 期货偏空压制（步骤3A标志）
+    if ctx.get('futures_bearish'):
+        if market == '强市':
+            market = '震荡'
+            position = 55
+        elif market == '震荡':
+            market = '弱市'
+            position = 35
+        print(f"  期货偏空 → 降档至 {market}")
     
     ctx['market_condition'] = market
     ctx['position'] = position
@@ -457,6 +470,14 @@ def step9B_circuit_breaker(ctx):
         ctx['_circuit_breaker_today'] = True
     else:
         print(f"  未触发 (阈值{threshold}%)")
+    
+    # 回写断路器状态供次日连续检测
+    strategy_check = {
+        "type": "strategy_check",
+        "date": data_date,
+        "checks": {"circuit_breaker_triggered": triggered_today}
+    }
+    safe_append_json(f"{DATA_DIR}/推荐历史_{data_date.replace('-', '')}.json", strategy_check)
 
 def step9C_conversion_rate(ctx):
     print("\n" + "=" * 60)
@@ -586,3 +607,14 @@ def step9C_conversion_rate(ctx):
         ctx['position'] = 55  # 恢复默认仓位（步骤8大盘判断会再调整）
     else:
         ctx['conversion_rate_ok'] = True
+    
+    # 仓位变更后重新计算策略分配表
+    new_pos = ctx['position']
+    if new_pos >= 70:
+        ctx['position_plan'] = {'A': 37, 'B': 11, 'C': 11, 'D': 11, 'E': 6}
+    elif new_pos >= 50:
+        ctx['position_plan'] = {'A': 15, 'B': 12, 'C': 9, 'D': 12, 'E': 6}
+    elif new_pos >= 30:
+        ctx['position_plan'] = {'A': 5, 'B': 11, 'C': 7, 'D': 10, 'E': 4}
+    else:
+        ctx['position_plan'] = {'A': 0, 'B': 10, 'C': 5, 'D': 3, 'E': 2}
