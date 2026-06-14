@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的筛选 v6.6.16
+A股每日盘前短线标的筛选 v6.6.17
 严格按 SKILL.md 十五、完整执行步骤 逐步执行
 """
 import os, sys, json, time, urllib.request, urllib.error, subprocess, shutil, re
@@ -11,7 +11,7 @@ from collections import Counter
 # ============================================================
 # 全局配置
 # ============================================================
-BUILTIN_VERSION = "v6.6.16"
+BUILTIN_VERSION = "v6.6.17"
 DATA_DIR = "/workspace"
 TEMP_DIR = "/data/user/work"
 # GitHub Token 从外部文件读取（不入git，防止泄露）
@@ -1698,6 +1698,54 @@ def step13_strategy_match(ctx):
     ctx['passed_strategy'] = len(matched)
 
 # ============================================================
+
+# ============================================================
+# 评分相同时的二次评估（打破平局）
+# ============================================================
+def tie_break_sort(candidates):
+    """评分相同时按优势大小排序：量比→换手率→涨跌幅→板块热度→策略优先级"""
+    strategy_order = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4}
+    
+    def sort_key(rec):
+        score = rec.get('score', 0)
+        strategy = rec.get('strategy', 'Z')
+        strat_rank = strategy_order.get(strategy, 99)
+        
+        vol_ratio = rec.get('volume_ratio') or 0
+        vol_score = min(vol_ratio / 3.0, 1.0) if vol_ratio else 0
+        
+        turnover = rec.get('turnover') or 0
+        if turnover < 2:
+            t_score = 0.2
+        elif turnover <= 5:
+            t_score = 0.6
+        elif turnover <= 15:
+            t_score = 1.0
+        elif turnover <= 25:
+            t_score = 0.5
+        else:
+            t_score = 0.1
+        
+        change_pct = rec.get('change_pct') or 0
+        if strategy in ('A', 'E'):
+            c_score = max(0, 1.0 - abs(change_pct - 3) / 7.0)
+        elif strategy == 'B':
+            c_score = max(0, 1.0 - abs(change_pct + 5) / 5.0)
+        else:
+            c_score = max(0, 1.0 - abs(change_pct - 2) / 8.0)
+        
+        sector_rank = rec.get('sector_rank', 99)
+        s_score = max(0, 1.0 - sector_rank / 20.0)
+        
+        tie_score = (vol_score * 0.25 + t_score * 0.25 + c_score * 0.25
+                     + s_score * 0.15 + (1.0 - strat_rank / 10.0) * 0.10)
+        
+        return (-score, strat_rank, -tie_score)
+    
+    candidates.sort(key=sort_key)
+    return candidates
+
+
 # 步骤14-16: 评分门控 + 综合评分
 # ============================================================
 def step14_16_scoring(ctx):
@@ -1830,8 +1878,8 @@ def step14_16_scoring(ctx):
         c['take_profit'] = take_profit
         c['reason'] = '; '.join(reasons) if reasons else f"策略{strategy}匹配"
     
-    # 按评分排序
-    candidates.sort(key=lambda x: (-x['score'], x.get('strategy', 'Z')))
+    # 按评分排序（同分二次评估：量比→换手率→涨跌幅→板块热度→策略优先级）
+    candidates = tie_break_sort(candidates)
     
     ctx['candidates'] = candidates
 
@@ -1865,8 +1913,8 @@ def step17_industry_limit(ctx):
     limits = max_per_market.get(market, {'A': 2, 'B': 2, 'C': 2, 'D': 2, 'E': 2})
     max_total = sum(limits.values())
     
-    # 按评分排序（score字段已在步骤14-16中设置）
-    candidates.sort(key=lambda x: (-x.get('score', 0), x.get('strategy', 'Z')))
+    # 按评分排序（同分二次评估：量比→换手率→涨跌幅→板块热度→策略优先级）
+    candidates = tie_break_sort(candidates)
     
     # 按策略分组，每组取前N
     strategy_limited = []
