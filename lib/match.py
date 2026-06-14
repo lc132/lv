@@ -71,6 +71,10 @@ def step13_strategy_match(ctx):
             strategies.append(('A', '动量延续', 2))
         
         # 策略B: 超跌反弹 (跌幅-1%到-5%、活跃度中等、缩量特征)
+        # TODO: RSI/KDJ超卖(<20)验证（需K线历史API）
+        # TODO: 站上MA5确认（需K线历史API）
+        # TODO: MA20/MA60趋势底线检查（暂以成交量替代）
+        # TODO: 两日反弹确认(今日涨幅>昨日跌幅/2+量比>1.2)
         # Sina降级时用成交额+振幅代理缩量：成交额5千万~3亿+振幅≥2%→缩量特征
         # B需要缩量（低换手），Sina无换手率字段，以「成交额适中(非巨额)」代理
         if source == 'sina':
@@ -105,7 +109,18 @@ def step13_strategy_match(ctx):
         if main_inflow and main_inflow > 0 and 0 < change_pct < 2 and volume_ratio >= 0.8:
             strategies.append(('D', '回调企稳(主力流入)', 1))
         
+        # 策略D: 量价异动 (涨幅3-7%+放量+收盘>开盘+高活跃)
+        # TODO: 北向资金净流入>5000万验证（需北向数据API）
+        # TODO: 退出: 连续3日缩量→退出（需K线历史API）
+        # TODO: 加仓: 突破前高+放量→加仓（需K线/分时API）
+        if 3 <= change_pct <= 7 and is_active and volume_ratio > 1.0 and close > open_p:
+            strategies.append(('D', '量价异动', 1.5))
+        
         # 策略E: 资金埋伏 (温和涨幅1-3%+高活跃+收盘>开盘+有一定振幅)
+        # TODO: 20日新高确认（需K线历史API）
+        # TODO: MA20回调到位（需K线历史API）
+        # TODO: 连续缩量确认（需K线历史API）
+        # TODO: 站上MA5+放量验证（需K线历史API）
         if 1 <= change_pct <= 3 and is_active and close > open_p and amplitude >= 2:
             # 假突破过滤：如果收盘价接近当日最低价(收盘-最低)/最低价<0.5%，可能是假突破
             low = c.get('low', 0)

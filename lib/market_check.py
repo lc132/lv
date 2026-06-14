@@ -15,23 +15,78 @@ def step1_holiday_check(ctx):
     
     data_date = ctx['data_date']
     prediction_date = ctx['prediction_date']
+    beijing_weekday = ctx['beijing_weekday']
     
-    # 搜索中国股市交易日历
+    # 周末已在 step0 处理（data_date 已回滚到最近工作日），此处检查法定节假日
+    ctx['skip'] = False
+    ctx['is_weak_market'] = False
+    ctx['is_long_holiday'] = False
+    
     try:
-        # Check if data_date is a trading day - weekend data_date is already handled in step0
-        # data_date should always be a weekday (step0 already rolled back)
-        # Only check for actual holidays, not weekends
-        print(f"  data_date={data_date} (工作日)，正常筛选")
-        ctx['skip'] = False
-        ctx['is_weak_market'] = False
-        ctx['is_long_holiday'] = False
+        # 搜索中国股市交易日历
+        url = "https://push2.eastmoney.com/api/qt/kline/get"
+        params = {
+            "secid": "1.000001",
+            "fields1": "f1",
+            "fields2": "f51",
+            "klt": "101",
+            "fqt": "1",
+            "beg": data_date.replace('-', ''),
+            "end": data_date.replace('-', ''),
+            "lmt": "1",
+        }
+        import urllib.parse
+        req = urllib.request.Request(
+            f"{url}?{urllib.parse.urlencode(params)}",
+            headers={'User-Agent': 'Mozilla/5.0'}
+        )
+        resp = urllib.request.urlopen(req, timeout=5)
+        data = json.loads(resp.read())
+        klines = data.get('data', {}).get('klines', [])
         
+        if not klines or len(klines) == 0:
+            # data_date 无K线数据 → 节假日/停市
+            print(f"  ⚠️ {data_date} 无K线数据，判定为节假日→跳过筛选")
+            ctx['skip'] = True
+            log_alert("INFO", "节假日检查", f"{data_date}无K线数据，节假日跳过")
+            
+            # 检查是否为长休（≥3天无交易）
+            try:
+                dt = datetime.strptime(data_date, '%Y-%m-%d')
+                for check_days in [1, 2]:
+                    prev_dt = dt - timedelta(days=check_days)
+                    prev_str = prev_dt.strftime('%Y-%m-%d').replace('-', '')
+                    p = dict(params)
+                    p["beg"] = prev_str
+                    p["end"] = prev_str
+                    req2 = urllib.request.Request(
+                        f"{url}?{urllib.parse.urlencode(p)}",
+                        headers={'User-Agent': 'Mozilla/5.0'}
+                    )
+                    try:
+                        resp2 = urllib.request.urlopen(req2, timeout=3)
+                        data2 = json.loads(resp2.read())
+                        k2 = data2.get('data', {}).get('klines', [])
+                        if not k2:
+                            ctx['is_long_holiday'] = True
+                            ctx['is_weak_market'] = True
+                            print(f"  ⚠️ 长休≥3日→弱市+仓位≤30%+搜索预算+5")
+                            break
+                    except:
+                        break
+            except:
+                pass
+        else:
+            print(f"  data_date={data_date} K线确认: 交易日，正常筛选")
+            
     except Exception as e:
-        log_alert("WARNING", "节假日检查", f"搜索失败: {str(e)[:80]}")
-        print(f"  节假日检查跳过: {str(e)[:60]}")
-        ctx['skip'] = False
-        ctx['is_weak_market'] = False
-        ctx['is_long_holiday'] = False
+        # API不可达→降级：周末判断已在step0完成，非周末假定为交易日
+        log_alert("WARNING", "节假日检查", f"API不可达: {str(e)[:60]}")
+        if beijing_weekday >= 5:
+            ctx['skip'] = True
+            print(f"  周末(周{beijing_weekday+1})，跳过筛选")
+        else:
+            print(f"  API不可达，非周末假定为交易日，继续筛选")
 
 # ============================================================
 # 步骤2: 极端行情检查
@@ -86,6 +141,8 @@ def step2_extreme_market(ctx):
             print(f"  ⚠️ 上证涨>3%，仓位降至30%仅动量延续")
             ctx['position'] = 30
             ctx['market_condition'] = '强市(极端)'
+            # 若弱市策略A已关闭，临时启用A仓位15%
+            ctx['_extreme_up_a_restore'] = True
         else:
             ctx['market_condition'] = None
     else:

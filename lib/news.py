@@ -37,7 +37,8 @@ def step18_news_screening(ctx):
         
         try:
             # 东方财富个股新闻搜索 (快速接口)
-            url = f"https://search-api.eastmoney.com/search?pageIndex=1&pageSize=3&keyword={code}+{urllib.parse.quote(name)}&type=8193"
+            import urllib.parse
+            url = f"https://search-api.eastmoney.com/search?pageIndex=1&pageSize=5&keyword={urllib.parse.quote(code + ' ' + name)}&type=8193"
             req = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0',
                 'Referer': 'https://so.eastmoney.com/'
@@ -51,6 +52,28 @@ def step18_news_screening(ctx):
                 content = art.get('Content', '') or ''
                 text = title + content
                 
+                # 时间衰减权重：当日100%→2-3日70%→4-7日30%→>7日0%
+                pub_date = art.get('PubDate', '') or art.get('Date', '')
+                decay_weight = 1.0  # 默认当日
+                try:
+                    if pub_date:
+                        pub_dt = datetime.strptime(pub_date[:10], '%Y-%m-%d')
+                        data_dt = datetime.strptime(ctx['data_date'], '%Y-%m-%d')
+                        age = (data_dt - pub_dt).days
+                        if age <= 1:
+                            decay_weight = 1.0
+                        elif age <= 3:
+                            decay_weight = 0.7
+                        elif age <= 7:
+                            decay_weight = 0.3
+                        else:
+                            decay_weight = 0.0
+                except:
+                    pass
+                
+                if decay_weight == 0.0:
+                    continue
+                
                 # 检查风险关键词
                 for kw in risk_keywords:
                     if kw in text:
@@ -63,7 +86,6 @@ def step18_news_screening(ctx):
                         has_bonus = True
                         break
         except Exception:
-            # 搜索不可达，静默跳过
             pass
         
         # 风险标的：扣分但不排除（除非触发排除级关键词）

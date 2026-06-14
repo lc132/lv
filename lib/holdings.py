@@ -109,28 +109,43 @@ def step4A_do_T_eval(ctx):
         code = h.get('code', '?')
         name = h.get('name', '?')
         
-        feasibility = False
-        reason = ""
-        position_limit = 0
+        # Evaluate do T feasibility
+        # 简化：按浮亏比例判断 + 连续成功/失败跟踪
+        # 实际：需要下影/十字星/站MA5检测（K线历史数据目前不可达）
+        do_t_feasible = '观望'
+        pnl_ratio = abs(pnl_pct)
         
-        if pnl_pct > -5:
-            feasibility = "观望"
-            reason = "浮亏<5%或浮盈"
-            position_limit = 0
-        elif -10 <= pnl_pct <= -5:
-            feasibility = "谨慎"
-            reason = f"浮亏{pnl_pct:.1f}%，重点评估"
-            position_limit = 1/3
-        elif -15 <= pnl_pct < -10:
-            feasibility = "谨慎"
-            reason = f"浮亏{pnl_pct:.1f}%，谨慎评估"
-            position_limit = 1/4
+        if pnl_ratio < 1:
+            do_t_feasible = False  # 浮亏<1%，无需
+        elif pnl_ratio < 3:
+            # 检查波动率是否≥3%（做T空间）
+            amplitude = h.get('amplitude', 0)
+            if amplitude >= 3:
+                do_t_feasible = True
+            else:
+                do_t_feasible = '观望'  # 波动不足
+        elif 3 <= pnl_ratio < 6:
+            do_t_feasible = True
+            # 检查前一日是否放量跌（volume_ratio>1.2→谨慎）
+            vol_ratio = h.get('volume_ratio', 0)
+            if vol_ratio and vol_ratio > 1.5:
+                do_t_feasible = '谨慎'  # 放量跌→可能继续下行
+                log_alert("INFO", "做T评估", f"{code} {name} 放量跌(量比{vol_ratio})，做T评估降为谨慎")
         else:
-            feasibility = False
-            reason = f"浮亏{pnl_pct:.1f}%>15%，不做T"
-            position_limit = 0
+            do_t_feasible = '观望'  # 浮亏>6%，风险过大
         
-        print(f"  {code} {name}: {feasibility} - {reason}")
+        # 连续成功/失败计数跟踪
+        do_t_history = [r for r in all_history if r.get('type') == 'do_T' and r.get('code') == code]
+        recent_do_t = [r for r in do_t_history 
+                       if datetime.strptime(r.get('date', '2000-01-01'), '%Y-%m-%d') >= 
+                          (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=30))]
+        success_count = sum(1 for r in recent_do_t if r.get('result') == 'success')
+        fail_count = sum(1 for r in recent_do_t if r.get('result') == 'fail')
+        if fail_count >= 3 and success_count == 0:
+            do_t_feasible = False
+            log_alert("WARNING", "做T评估", f"{code} {name} 近30天做T连续{fail_count}次失败，暂停建议")
+        
+        print(f"  {code} {name}: {do_t_feasible} (浮亏{pnl_pct:.1f}%)")
         
         do_t_eval = {
             "type": "do_T_eval",
@@ -138,9 +153,9 @@ def step4A_do_T_eval(ctx):
             "name": name,
             "date": ctx['data_date'],
             "pnl_pct": pnl_pct,
-            "do_T_feasible": feasibility,
-            "reason": reason,
-            "position_limit": position_limit
+            "do_T_feasible": do_t_feasible,
+            "reason": f"浮亏{pnl_pct:.1f}%",
+            "position_limit": 0
         }
         do_t_evals.append(do_t_eval)
     

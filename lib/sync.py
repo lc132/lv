@@ -300,7 +300,14 @@ def step27_feishu_push(ctx):
                     "tag": "div",
                     "text": {
                         "tag": "lark_md",
-                        "content": f"📈 [**查看完整可视化报告（GitHub Pages）**]({pages_report})\n📁 [**报告列表首页**]({pages_home})"
+                        "content": f"📈 [**查看完整可视化报告（GitHub Pages）**]({pages_report})"
+                    }
+                },
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"📁 [**报告列表首页**]({pages_home})"
                     }
                 },
                 {"tag": "note", "elements": [{"tag": "plain_text", "content": "⚠️ 仅供参考，不构成投资建议"}]}
@@ -369,30 +376,71 @@ def step28_weekly_review(ctx):
         md_files.sort()
         print(f"  拉取到 {len(md_files)} 个推荐文件: {', '.join(md_files[-7:])}")
         
-        # 汇总统计
+        # 汇总统计：推荐胜率、平均涨跌、策略分布
         total_recos = 0
+        win_count = 0
+        strategy_dist = Counter()
+        all_changes = []
+        
         for md_file in md_files:
             filepath = os.path.join(temp_dir, md_file)
             try:
                 with open(filepath, 'r', encoding='utf-8') as f:
                     content = f.read()
-                # 统计表格行数
-                table_rows = sum(1 for line in content.split('\n')
-                               if line.strip().startswith('| ') and line.split('|')[1].strip().isdigit())
-                total_recos += table_rows
+                # 解析MD表格中的标的和涨幅
+                lines = content.split('\n')
+                in_table = False
+                for line in lines:
+                    stripped = line.strip()
+                    if stripped.startswith('| 代码 ') or stripped.startswith('| 序号 '):
+                        in_table = True
+                        continue
+                    if in_table and stripped.startswith('| '):
+                        parts = [p.strip() for p in stripped.split('|') if p.strip()]
+                        if len(parts) >= 6:
+                            total_recos += 1
+                            # 尝试解析策略和涨幅
+                            try:
+                                strategy_cell = parts[5] if len(parts) > 5 else ''
+                                chg_cell = parts[4] if len(parts) > 4 else ''
+                                # 策略可能在涨跌幅后面
+                                for s in ['A', 'B', 'C', 'D', 'E']:
+                                    if s in strategy_cell or any(s in p for p in parts):
+                                        strategy_dist[s] += 1
+                                        break
+                                chg_str = chg_cell.replace('%', '').replace('+', '')
+                                try:
+                                    chg_val = float(chg_str)
+                                    all_changes.append(chg_val)
+                                    if chg_val > 2:
+                                        win_count += 1
+                                except ValueError:
+                                    pass
+                            except:
+                                pass
+                    elif in_table and not stripped.startswith('| '):
+                        in_table = False
             except Exception:
                 continue
+        
+        avg_chg = round(sum(all_changes) / len(all_changes), 2) if all_changes else 0
+        win_rate = round(win_count / total_recos * 100, 1) if total_recos > 0 else 0
         
         weekly_review = {
             "type": "weekly_review",
             "date": ctx['beijing_date'],
             "week_files": len(md_files),
             "total_recos": total_recos,
+            "win_rate": win_rate,
+            "avg_change": avg_chg,
+            "strategy_dist": dict(strategy_dist),
         }
         safe_append_json(f"{DATA_DIR}/推荐历史_{ctx['beijing_date'].replace('-', '')}.json", weekly_review)
         
         print(f"  本周汇总: {len(md_files)}个推荐日, {total_recos}只标的")
-        log_alert("INFO", "每周复盘", f"本周{len(md_files)}个推荐日, {total_recos}只标的")
+        print(f"  兑现率(>2%): {win_rate}% | 平均涨跌: {avg_chg:+.2f}%")
+        print(f"  策略分布: {dict(strategy_dist)}")
+        log_alert("INFO", "每周复盘", f"本周{len(md_files)}日{total_recos}只, 胜率{win_rate}%, 均涨{avg_chg:+.2f}%")
         
     except Exception as e:
         log_alert("WARNING", "每周复盘", f"拉取失败: {str(e)[:100]}")

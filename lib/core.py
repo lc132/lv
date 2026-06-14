@@ -44,7 +44,7 @@ DEFAULT_PARAMS = {
     "win_rate_drop_threshold": 10, "limit_down_threshold": 100,
     "max_adjust_params": 3, "confidence_position_enabled": True,
     "max_holding_days": 5, "circuit_breaker_threshold_pct": 3.0,
-    "strategy_concentration_pct": 80, "do_t_success_reset_count": 3,
+    "strategy_concentration_pct": 60, "do_t_success_reset_count": 3,
     "conversion_rate_window_days": 10, "conversion_rate_threshold": 0.3,
     "conversion_rate_restore": 0.6, "conversion_rate_consecutive_days": 3,
     "data_tier_l2_skip_on_unavailable": True,

@@ -188,13 +188,32 @@ def step8_market_judgment(ctx):
                 print(f"  MA5={ma5} MA10={ma10} MA20={ma20}")
                 print(f"  今日成交量: {today_volume:.0f}  |  20日均量: {avg_volume_20:.0f}")
                 
-                # 涨跌比（从涨跌数估算）
-                if sh_chg > 0:
-                    up_down_ratio = 1.5
-                elif sh_chg < 0:
-                    up_down_ratio = 0.67
-                else:
-                    up_down_ratio = 1.0
+                # 涨跌比 — 尝试从东方财富获取实际涨跌家数
+                try:
+                    updown_url = "https://push2.eastmoney.com/api/qt/stock/get"
+                    updown_params = {
+                        "secid": "1.000001",
+                        "fields": "f170,f171,f172"
+                    }
+                    up_req = urllib.request.Request(
+                        f"{updown_url}?{urllib.parse.urlencode(updown_params)}",
+                        headers={'User-Agent': 'Mozilla/5.0'}
+                    )
+                    up_resp = urllib.request.urlopen(up_req, timeout=3)
+                    up_data = json.loads(up_resp.read()).get('data', {})
+                    up_count = up_data.get('f171', 0)
+                    down_count = up_data.get('f172', 0)
+                    if up_count and down_count and down_count > 0:
+                        up_down_ratio = round(up_count / down_count, 2)
+                        print(f"  涨跌家数: ↑{up_count} ↓{down_count} 比={up_down_ratio}")
+                except Exception:
+                    if sh_chg > 0:
+                        up_down_ratio = 1.5
+                    elif sh_chg < 0:
+                        up_down_ratio = 0.67
+                    else:
+                        up_down_ratio = 1.0
+                    print(f"  涨跌比(估算): {up_down_ratio}")
     except Exception as e:
         print(f"  K线数据获取失败({str(e)[:40]})，使用涨跌幅简化判断")
     
@@ -261,11 +280,21 @@ def step8_market_judgment(ctx):
     # 弱市策略A关闭
     if market == '弱市':
         position_plan['A'] = 0
+    # 极端涨>3%→临时恢复策略A（15%仓位）
+    if ctx.get('_extreme_up_a_restore'):
+        position_plan['A'] = 15
+        print(f"  ⚠️ 极端涨>3%→临时恢复策略A仓位15%")
     
     # 策略D被暂停（人民币波动>0.5%）
     if ctx.get('pause_strategy_d'):
         position_plan['D'] = 0
         print(f"  ⚠️ 策略D暂停（人民币波动>0.5%）")
+    
+    # 长休弱市压制仓位
+    if ctx.get('is_long_holiday'):
+        position = min(position, 30)
+        ctx['position'] = position
+        print(f"  长休≥3日→仓位压至{position}%")
     
     ctx['position_plan'] = position_plan
     print(f"  市场环境: {market} → 总仓位{position}% → A:{position_plan['A']}% B:{position_plan['B']}% C:{position_plan['C']}% D:{position_plan['D']}% E:{position_plan['E']}%")
@@ -297,13 +326,22 @@ def step9_sector_rotation(ctx):
         
         if data.get('data') and data['data'].get('diff'):
             top_sectors = []
-            for item in data['data']['diff'][:5]:
+            inflow_sectors = []
+            outflow_sectors = []
+            for item in data['data']['diff'][:10]:
                 name = item.get('f14', '')
                 inflow = item.get('f62', 0)
                 if name:
-                    top_sectors.append(name)
-            print(f"  资金流入TOP5: {', '.join(top_sectors)}")
-            ctx['top_sectors'] = top_sectors
+                    if len(inflow_sectors) < 5:
+                        inflow_sectors.append(name)
+                    if len(outflow_sectors) < 5 and inflow < 0:
+                        outflow_sectors.append(name)
+            top_sectors = inflow_sectors[:5]
+            ctx['inflow_sectors'] = inflow_sectors
+            ctx['outflow_sectors'] = outflow_sectors
+            print(f"  资金流入TOP5: {', '.join(inflow_sectors[:5])}")
+            if outflow_sectors:
+                print(f"  资金流出TOP5(回避): {', '.join(outflow_sectors[:5])}")
         else:
             ctx['top_sectors'] = []
             print("  板块数据获取失败")
@@ -316,30 +354,67 @@ def step9_sector_rotation(ctx):
 # ============================================================
 def step9A_max_holding(ctx):
     print("\n" + "=" * 60)
-    print("步骤9A: 最大持仓天数检查")
+    print("步骤9A: 最大持仓天数检查 + 退出规则")
     print("=" * 60)
     max_days = ctx['params']['max_holding_days']
     data_date = ctx['data_date']
+    all_history = ctx.get('all_history', [])
     holdings = ctx.get('holdings', [])
     
     exit_list = []
+    
     for h in holdings:
+        code = h.get('code', '')
+        name = h.get('name', '?')
         start_date = h.get('start_date', '')
+        cost = h.get('cost', 0)
+        current = h.get('current', 0)
+        pnl_pct = h.get('pnl_pct', 0)
+        days = 0
+        
         if start_date:
             try:
                 days = (datetime.strptime(data_date, '%Y-%m-%d') - datetime.strptime(start_date, '%Y-%m-%d')).days
-                if days >= max_days:
-                    exit_list.append(f"{h.get('code')} {h.get('name')} 持仓{days}天≥{max_days}天")
             except:
                 pass
+        
+        # T+5 硬止损：持仓≥5天且跌幅>5%
+        if days >= max_days and pnl_pct < -5:
+            exit_list.append((code, name, f"T+{days}止损>5% → 无条件退出", pnl_pct))
+            continue
+        
+        # T+max_days 超期退出
+        if days >= max_days:
+            exit_list.append((code, name, f"持仓{days}天≥{max_days}天 → 超期退出", pnl_pct))
+            continue
+        
+        # T+3 横盘退出：持仓≥3天且累计涨幅<2%
+        if days >= 3 and abs(pnl_pct) < 2:
+            exit_list.append((code, name, f"T+{days}横盘不作为(涨幅{pnl_pct:.1f}%<2%) → 主动退出", pnl_pct))
+            continue
+        
+        # T+1 日内止损：跌幅>7%
+        if days >= 1 and pnl_pct < -7:
+            exit_list.append((code, name, f"T+{days}日内止损(跌幅{pnl_pct:.1f}%>7%) → 极端行情保护", pnl_pct))
+            continue
     
     if exit_list:
-        print(f"  超期持仓: {len(exit_list)} 只")
-        for e in exit_list:
-            print(f"    {e}")
+        print(f"  触发退出规则: {len(exit_list)} 只")
+        for code, name, reason, pnl in exit_list:
+            print(f"    ⚠️ {code} {name}: {reason}")
+            # 追加 type="exit" 记录
+            exit_rec = {
+                "type": "exit",
+                "code": code,
+                "name": name,
+                "date": ctx['data_date'],
+                "exit_reason": reason,
+                "pnl_pct": pnl,
+            }
+            safe_append_json(f"{DATA_DIR}/推荐历史_{ctx['beijing_date'].replace('-', '')}.json", exit_rec)
     else:
-        print(f"  无超期持仓 (阈值{max_days}天)")
-    ctx['exit_list'] = exit_list
+        print(f"  无触发退出规则 (阈值{max_days}天)")
+    ctx['exit_list'] = [(c, n, r) for c, n, r, _ in exit_list]
 
 def step9B_circuit_breaker(ctx):
     print("\n" + "=" * 60)
@@ -348,18 +423,38 @@ def step9B_circuit_breaker(ctx):
     
     threshold = ctx['params']['circuit_breaker_threshold_pct']
     holdings = ctx.get('holdings', [])
+    all_history = ctx.get('all_history', [])
+    data_date = ctx['data_date']
     
-    triggered = False
+    triggered_today = False
     for h in holdings:
         pnl_pct = h.get('pnl_pct', 0)
         if pnl_pct is not None and pnl_pct < -threshold:
             msg = f"{h.get('code')} {h.get('name')} 当日亏损{pnl_pct:.1f}% > {threshold}%"
             print(f"  ⚠️ {msg}")
-            triggered = True
+            triggered_today = True
     
-    if triggered:
-        print(f"  触发回撤断路器 → 次交易日仓位降至50%")
-        ctx['position'] = int(ctx.get('position', 55) * 0.5)
+    if triggered_today:
+        # 检查昨日是否也触发
+        yesterday = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
+        yesterday_triggered = False
+        for r in all_history:
+            if r.get('type') == 'strategy_check' and r.get('date') == yesterday:
+                checks = r.get('checks', {})
+                if checks.get('circuit_breaker_triggered'):
+                    yesterday_triggered = True
+                    break
+        
+        if yesterday_triggered:
+            print(f"  连续2日触发 → 次交易日仓位降至30%")
+            ctx['position'] = 30
+            log_alert("WARNING", "回撤断路器", f"连续2日触发({threshold}%)，仓位降至30%")
+        else:
+            print(f"  首次触发 → 次交易日持仓降至50%" if ctx['position'] > 50 else f"  触发回撤断路器")
+            ctx['position'] = int(ctx.get('position', 55) * 0.5)
+        
+        # 记录触发状态
+        ctx['_circuit_breaker_today'] = True
     else:
         print(f"  未触发 (阈值{threshold}%)")
 
