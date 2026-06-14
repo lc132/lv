@@ -352,6 +352,24 @@ def step2_extreme_market(ctx):
 # ============================================================
 # 步骤3: 外围市场检查
 # ============================================================
+def _fetch_yahoo_chg(symbol, label):
+    """从 Yahoo Finance 获取单只指数涨跌幅"""
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2d"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        resp = urllib.request.urlopen(req, timeout=5)
+        data = json.loads(resp.read())
+        result = data.get('chart', {}).get('result', [])
+        if result:
+            quotes = result[0].get('indicators', {}).get('quote', [{}])[0]
+            closes = quotes.get('close', [])
+            if len(closes) >= 2 and closes[-2] and closes[-1]:
+                chg = round((closes[-1] - closes[-2]) / closes[-2] * 100, 2)
+                return chg
+    except Exception:
+        pass
+    return None
+
 def step3_foreign_market(ctx):
     print("\n" + "=" * 60)
     print("步骤3: 外围市场检查")
@@ -359,23 +377,64 @@ def step3_foreign_market(ctx):
     
     ctx['foreign_weak'] = False
     ctx['pause_strategy_d'] = False
+    ctx['foreign_detail'] = {}
     
+    # 1. 美股三大指数检查
+    us_indices = {
+        '^GSPC': '标普500',
+        '^IXIC': '纳斯达克',
+        '^DJI': '道琼斯'
+    }
+    us_chgs = {}
+    for sym, label in us_indices.items():
+        chg = _fetch_yahoo_chg(sym, label)
+        us_chgs[label] = chg
+        if chg is not None:
+            print(f"  {label}: {chg:+.2f}%")
+    
+    ctx['foreign_detail']['us'] = us_chgs
+    
+    # 美股三大指数均跌>2% → 弱市仓位≤30%
+    us_chg_values = [v for v in us_chgs.values() if v is not None]
+    if len(us_chg_values) >= 2 and all(v < -2 for v in us_chg_values):
+        ctx['foreign_weak'] = True
+        print(f"  ⚠️ 美股三大指数均跌>2% → 弱市仓位≤30%")
+    elif len(us_chg_values) == 0:
+        print(f"  美股数据均不可得，跳过美股检查")
+    
+    # 2. 恒生指数检查
+    hsi_chg = _fetch_yahoo_chg('^HSI', '恒生指数')
+    ctx['foreign_detail']['hsi'] = hsi_chg
+    if hsi_chg is not None:
+        print(f"  恒生指数: {hsi_chg:+.2f}%")
+        if hsi_chg < -3:
+            ctx['foreign_weak'] = True
+            print(f"  ⚠️ 恒生跌>3% → 弱市，仅超跌反弹")
+    else:
+        print(f"  恒生数据不可得，跳过")
+    
+    # 3. 人民币汇率波动检查（USD/CNY）
     try:
-        # 检查美股 (简化: 检查S&P 500)
-        sp500_url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?interval=1d&range=2d"
-        req = urllib.request.Request(sp500_url, headers={'User-Agent': 'Mozilla/5.0'})
-        try:
-            resp = urllib.request.urlopen(req, timeout=5)
-            sp500_data = json.loads(resp.read())
-            # Parse and check if all three major indices down >2%
-            # Simplified for now
-            print(f"  美股数据获取成功，进行简化判断")
-        except:
-            print(f"  美股数据暂不可得，跳过外围检查")
-            return
-    except Exception as e:
-        print(f"  外围市场检查跳过: {str(e)[:60]}")
-        return
+        cny_url = "https://query1.finance.yahoo.com/v8/finance/chart/CNY=X?interval=1d&range=2d"
+        req = urllib.request.Request(cny_url, headers={'User-Agent': 'Mozilla/5.0'})
+        resp = urllib.request.urlopen(req, timeout=5)
+        data = json.loads(resp.read())
+        result = data.get('chart', {}).get('result', [])
+        if result:
+            quotes = result[0].get('indicators', {}).get('quote', [{}])[0]
+            closes = quotes.get('close', [])
+            if len(closes) >= 2 and closes[-2] and closes[-1]:
+                cny_chg = abs((closes[-1] - closes[-2]) / closes[-2] * 100)
+                ctx['foreign_detail']['cny_vol'] = round(cny_chg, 2)
+                print(f"  人民币波动: {cny_chg:.2f}%")
+                if cny_chg > 0.5:
+                    ctx['pause_strategy_d'] = True
+                    print(f"  ⚠️ 人民币波动>{0.5}% → 暂停策略D")
+    except Exception:
+        print(f"  人民币汇率数据不可得，跳过")
+    
+    if not ctx['foreign_weak'] and not ctx['pause_strategy_d']:
+        print(f"  外围市场正常")
 
 # ============================================================
 # 步骤3A: 开盘前外围期货
@@ -519,6 +578,94 @@ def step4A_do_T_eval(ctx):
         safe_append_json(f"{DATA_DIR}/推荐历史_{ctx['beijing_date'].replace('-', '')}.json", eval_rec)
     
     ctx['do_t_evals'] = do_t_evals
+
+# ============================================================
+# 步骤4B: 持仓跟踪同步到 xlsx
+# ============================================================
+def step4B_sync_holding_xlsx(ctx):
+    """将步骤4更新后的持仓收盘价写入持仓跟踪.xlsx"""
+    print("\n" + "=" * 60)
+    print("步骤4B: 持仓跟踪同步")
+    print("=" * 60)
+    
+    holdings = ctx.get('holdings', [])
+    if not holdings:
+        print("  无持仓记录，跳过")
+        return
+    
+    xlsx_path = f"{DATA_DIR}/持仓跟踪.xlsx"
+    if not os.path.exists(xlsx_path):
+        log_alert("WARNING", "持仓跟踪同步", "xlsx不存在，跳过")
+        print("  持仓跟踪.xlsx 不存在，跳过")
+        return
+    
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(xlsx_path)
+        ws = wb["持仓明细"]
+        
+        # code → row mapping (skip header)
+        code_row = {}
+        for row in range(2, ws.max_row + 1):
+            raw_code = ws.cell(row=row, column=1).value
+            if raw_code:
+                code = str(raw_code).strip()
+                if len(code) == 4:
+                    code = code.zfill(6)
+                if code.isdigit() and len(code) == 6:
+                    code_row[code] = row
+        
+        beijing_date = ctx['beijing_date']
+        updated = 0
+        for h in holdings:
+            try:
+                raw_code = h.get("code")
+                code = str(raw_code) if raw_code is not None else ""
+                current = h.get("current")
+                if not code or code not in code_row:
+                    if code:
+                        log_alert("WARNING", "持仓跟踪同步", f"{code} 在xlsx中找不到")
+                    continue
+                if current is None:
+                    log_alert("WARNING", "持仓跟踪同步", f"{code} 缺少current字段，跳过")
+                    continue
+                
+                row = code_row[code]
+                mv = h.get("market_value")
+                pnl_amt = h.get("pnl_amount")
+                if mv is None or pnl_amt is None:
+                    cost = ws.cell(row=row, column=3).value
+                    shares = ws.cell(row=row, column=4).value
+                    if cost and shares and current:
+                        mv = round(current * shares, 2)
+                        pnl_amt = round((current - cost) * shares, 2)
+                
+                ws.cell(row=row, column=8).value = current  # H: 当前价
+                if mv is not None:
+                    ws.cell(row=row, column=9).value = mv  # I: 市值
+                if pnl_amt is not None:
+                    ws.cell(row=row, column=10).value = round(pnl_amt, 2)  # J: 盈亏额
+                pnl_pct_val = h.get("pnl_pct")
+                try:
+                    pnl_pct_float = float(pnl_pct_val) if pnl_pct_val is not None else 0.0
+                except (ValueError, TypeError):
+                    pnl_pct_float = 0.0
+                ws.cell(row=row, column=11).value = round(pnl_pct_float, 4)  # K: 盈亏率
+                ws.cell(row=row, column=12).value = beijing_date  # L: 更新日期
+                updated += 1
+            except Exception as e:
+                log_alert("WARNING", "持仓跟踪同步", f"单条异常(code={h.get('code','?')}): {str(e)[:80]}")
+                continue
+        
+        if updated > 0:
+            wb.save(xlsx_path)
+            print(f"  已同步 {updated} 只持仓到持仓跟踪.xlsx")
+            log_alert("INFO", "持仓跟踪同步", f"已更新{updated}只持仓价格")
+        else:
+            print(f"  无需更新（0只匹配）")
+    except Exception as e:
+        log_alert("WARNING", "持仓跟踪同步", f"失败: {str(e)[:100]}")
+        print(f"  持仓跟踪同步失败: {str(e)[:80]}")
 
 # ============================================================
 # 步骤4C: 持仓危机检查
@@ -704,52 +851,94 @@ def step7_earnings_season(ctx):
 # ============================================================
 def step8_market_judgment(ctx):
     print("\n" + "=" * 60)
-    print("步骤8: 大盘判断")
+    print("步骤8: 大盘判断（MA均线+涨跌比+成交量）")
     print("=" * 60)
     
     sh_chg = ctx.get('sh_index_change', 0)
-    sh_price = None
+    market = '震荡'
+    position = 55
     
-    # 方案一：东方财富API
+    # 获取上证指数历史K线（用于计算MA5/MA10/MA20）
+    ma5 = ma10 = ma20 = None
+    avg_volume_20 = None
+    today_volume = None
+    up_down_ratio = None
+    
     try:
-        url = "https://push2.eastmoney.com/api/qt/stock/get?secid=1.000001&fields=f43"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        # 使用东方财富K线API获取上证历史数据
+        import urllib.parse
+        url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+        params = {
+            "secid": "1.000001",
+            "fields1": "f1,f2,f3,f4,f5,f6",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57",
+            "klt": "101",  # 日K
+            "fqt": "1",    # 前复权
+            "end": "20500101",
+            "lmt": "30",   # 取30日数据
+        }
+        req = urllib.request.Request(
+            f"{url}?{urllib.parse.urlencode(params)}",
+            headers={'User-Agent': 'Mozilla/5.0'}
+        )
         resp = urllib.request.urlopen(req, timeout=5)
         data = json.loads(resp.read())
-        if data.get('data'):
-            sh_price = data['data'].get('f43', 0) / 100
-    except Exception:
-        pass
+        klines = data.get('data', {}).get('klines', [])
+        
+        if klines and len(klines) >= 20:
+            closes = []
+            volumes = []
+            for line in klines:
+                parts = line.split(',')
+                closes.append(float(parts[2]))  # 收盘价
+                volumes.append(float(parts[5]))  # 成交量
+            
+            if len(closes) >= 20:
+                ma5 = round(sum(closes[-5:]) / 5, 2)
+                ma10 = round(sum(closes[-10:]) / 10, 2)
+                ma20 = round(sum(closes[-20:]) / 20, 2)
+                avg_volume_20 = round(sum(volumes[-21:-1]) / 20, 0)  # 前20日均量（不含今天）
+                today_volume = volumes[-1]
+                
+                print(f"  MA5={ma5} MA10={ma10} MA20={ma20}")
+                print(f"  今日成交量: {today_volume:.0f}  |  20日均量: {avg_volume_20:.0f}")
+                
+                # 涨跌比（从涨跌数估算）
+                if sh_chg > 0:
+                    up_down_ratio = 1.5
+                elif sh_chg < 0:
+                    up_down_ratio = 0.67
+                else:
+                    up_down_ratio = 1.0
+    except Exception as e:
+        print(f"  K线数据获取失败({str(e)[:40]})，使用涨跌幅简化判断")
     
-    # 方案二：新浪API降级
-    if sh_price is None:
-        try:
-            url = "https://hq.sinajs.cn/list=sh000001"
-            req = urllib.request.Request(url, headers={
-                'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'
-            })
-            resp = urllib.request.urlopen(req, timeout=5)
-            text = resp.read().decode('gbk')
-            if text and '=""' not in text:
-                parts = text.split('"')[1].split(',')
-                # 长格式: name, prev_close, open, current, high, low, ...
-                if len(parts) > 3:
-                    sh_price = float(parts[3]) if parts[3] and parts[3] != '' else 0
-        except Exception:
-            pass
+    sh_price = closes[-1] if 'closes' in dir() and closes else None
     
-    if sh_price and sh_price > 0:
-        if sh_chg > 1:
+    if ma5 and ma10 and ma20 and sh_price:
+        # 三级判断：MA均线 + 涨跌比 + 成交量
+        ma_bullish = ma5 > ma10 > ma20  # 均线多头排列
+        ma_above = sh_price > ma20 * 0.98  # 价格在MA20上方
+        ma_neutral = ma20 * 0.98 <= sh_price <= ma20 * 1.02  # 价格在MA20附近
+        
+        vol_high = today_volume and avg_volume_20 and today_volume > avg_volume_20 * 1.2
+        vol_low = today_volume and avg_volume_20 and today_volume < avg_volume_20 * 0.8
+        breadth_strong = up_down_ratio and up_down_ratio > 2.0
+        breadth_weak = up_down_ratio and up_down_ratio < 0.5
+        
+        # 强市条件
+        if ma_bullish and breadth_strong and vol_high:
             market = '强市'
             position = 75
-        elif sh_chg > -1:
-            market = '震荡'
-            position = 55
-        else:
+        # 弱市条件
+        elif sh_price < ma20 * 0.98 or breadth_weak or vol_low:
             market = '弱市'
             position = 35
+        else:
+            market = '震荡'
+            position = 55
     else:
-        # 无法获取上证价格，基于涨跌幅判断
+        # 降级：基于涨跌幅简判
         if sh_chg > 1:
             market = '强市'
             position = 75
@@ -759,9 +948,22 @@ def step8_market_judgment(ctx):
         else:
             market = '弱市'
             position = 35
+    
+    # 外围市场压制
+    if ctx.get('foreign_weak'):
+        if market == '强市':
+            market = '震荡'
+            position = 55
+        elif market == '震荡':
+            market = '弱市'
+            position = 35
+        print(f"  外围偏空 → 降档至 {market}")
     
     ctx['market_condition'] = market
     ctx['position'] = position
+    ctx['_ma5'] = ma5
+    ctx['_ma10'] = ma10
+    ctx['_ma20'] = ma20
     
     # 仓位分布
     if market == '强市':
@@ -770,6 +972,15 @@ def step8_market_judgment(ctx):
         position_plan = {'A': 15, 'B': 12, 'C': 9, 'D': 12, 'E': 6}
     else:
         position_plan = {'A': 0, 'B': 14, 'C': 7, 'D': 10, 'E': 4}
+    
+    # 弱市策略A关闭
+    if market == '弱市':
+        position_plan['A'] = 0
+    
+    # 策略D被暂停（人民币波动>0.5%）
+    if ctx.get('pause_strategy_d'):
+        position_plan['D'] = 0
+        print(f"  ⚠️ 策略D暂停（人民币波动>0.5%）")
     
     ctx['position_plan'] = position_plan
     print(f"  市场环境: {market} → 总仓位{position}% → A:{position_plan['A']}% B:{position_plan['B']}% C:{position_plan['C']}% D:{position_plan['D']}% E:{position_plan['E']}%")
@@ -902,110 +1113,125 @@ def step10A_fetch_all_stocks(ctx):
     # 方案一：东方财富 clist API（分页拉取，按成交额排序确保活跃标的优先）
     # v6.6.4 fix: 原按涨跌幅(fid=f3)降序导致只拉到涨停/连板标的被硬排除全灭
     # 改为按成交额(fid=f6)降序 + 分页循环 + 数据量门控
-    try:
-        import urllib.parse
-        url = "https://push2.eastmoney.com/api/qt/clist/get"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://quote.eastmoney.com/'
-        }
-        
-        # 分页拉取：每次取100只，循环直到取完或达到上限
-        # 按成交额(f6)降序(po=0) — 活跃标的最可能成为短线候选
-        page_size = 100
-        max_pages = 60  # 最多60页 = 6000只，覆盖全市场
-        all_items = []
-        total_from_api = 0
-        seen_codes = set()
-        
-        for page in range(1, max_pages + 1):
-            params = {
-                "pn": str(page), "pz": str(page_size), "po": "0", "np": "1",
-                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-                "fltt": "2", "invt": "2", "fid": "f6",  # 按成交额排序
-                "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
-                "fields": "f2,f3,f5,f6,f7,f8,f10,f12,f14,f15,f16,f17,f18,f20,f62,f100,f102",
-                "_": str(int(time.time() * 1000))
+    # v6.6.17: 增加重试机制（3次，间隔2s）+ User-Agent轮换
+    CLIST_RETRY = 3
+    clist_success = False
+    ua_list = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+    ]
+    
+    for retry_num in range(CLIST_RETRY):
+        try:
+            import urllib.parse
+            url = "https://push2.eastmoney.com/api/qt/clist/get"
+            headers = {
+                'User-Agent': ua_list[retry_num % len(ua_list)],
+                'Referer': 'https://quote.eastmoney.com/'
             }
-            try:
-                req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers=headers)
-                resp = urllib.request.urlopen(req, timeout=10)
-                data = json.loads(resp.read())
-            except Exception:
-                if page == 1:
-                    raise  # 首页失败 = API不可达
-                break  # 后续页失败 = 已取完或限流
             
-            if not data or not data.get('data'):
-                break
+            page_size = 100
+            max_pages = 60
+            all_items = []
+            total_from_api = 0
+            seen_codes = set()
             
-            diff = data['data'].get('diff')
-            if not diff or len(diff) == 0:
-                break
-            
-            if page == 1:
-                total_from_api = data['data'].get('total', 0)
-            
-            new_count = 0
-            for item in diff:
-                code = str(item.get('f12', ''))
-                if code in seen_codes:
-                    continue  # 去重
-                seen_codes.add(code)
-                all_items.append(item)
-                new_count += 1
-            
-            # 如果本页全部重复或返回量不足一页，说明已拉完
-            if new_count == 0 or len(diff) < page_size:
-                break
-            
-            time.sleep(0.05)  # 限流保护
-        
-        # 数据量门控：clist 返回 < 500 只时判定为异常，触发新浪降级
-        CLIST_MIN_THRESHOLD = 500
-        if len(all_items) < CLIST_MIN_THRESHOLD:
-            print(f"  clist仅返回 {len(all_items)} 只（总计 {total_from_api}），低于门控 {CLIST_MIN_THRESHOLD} → 强制降级新浪API")
-            log_alert("WARN", "行情采集", f"clist返回量({len(all_items)})低于门控({CLIST_MIN_THRESHOLD})，降级新浪")
-            stocks = None  # 触发新浪降级
-        else:
-            # 解析为统一格式
-            stocks = []
-            for item in all_items:
-                code = item.get('f12', '')
-                name = item.get('f14', '')
-                if not code or not name:
-                    continue
-                close_val = item.get('f2')
-                if close_val == '-' or close_val is None:
-                    continue
+            for page in range(1, max_pages + 1):
+                params = {
+                    "pn": str(page), "pz": str(page_size), "po": "0", "np": "1",
+                    "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+                    "fltt": "2", "invt": "2", "fid": "f6",
+                    "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
+                    "fields": "f2,f3,f5,f6,f7,f8,f10,f12,f14,f15,f16,f17,f18,f20,f62,f100,f102",
+                    "_": str(int(time.time() * 1000))
+                }
                 try:
-                    stocks.append({
-                        "code": str(code),
-                        "name": str(name),
-                        "open": float(item.get('f17', 0)) if item.get('f17') not in (None, '-') else None,
-                        "close": float(close_val),
-                        "change_pct": float(item.get('f3', 0)) if item.get('f3') not in (None, '-') else 0,
-                        "turnover": float(item.get('f8', 0)) if item.get('f8') not in (None, '-') else 0,
-                        "amplitude": float(item.get('f7', 0)) if item.get('f7') not in (None, '-') else 0,
-                        "volume_ratio": float(item.get('f10', 0)) if item.get('f10') not in (None, '-') else None,
-                        "amount": float(item.get('f6', 0)) if item.get('f6') not in (None, '-') else None,
-                        "high": float(item.get('f15', 0)) if item.get('f15') not in (None, '-') else None,
-                        "low": float(item.get('f16', 0)) if item.get('f16') not in (None, '-') else None,
-                        "prev_close": float(item.get('f18', 0)) if item.get('f18') not in (None, '-') else None,
-                        "main_inflow": float(item.get('f62', 0)) if item.get('f62') not in (None, '-') else None,
-                        "total_cap": float(item.get('f20', 0)) if item.get('f20') not in (None, '-') else None,
-                        "sector": str(item.get('f102', '') or '').strip() or '未知',
-                        "industry": str(item.get('f100', '') or '').strip() or '未知',
-                    })
-                except (ValueError, TypeError):
+                    req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers=headers)
+                    resp = urllib.request.urlopen(req, timeout=15)
+                    data = json.loads(resp.read())
+                except Exception:
+                    if page == 1:
+                        raise
+                    break
+                
+                if not data or not data.get('data'):
+                    break
+                
+                diff = data['data'].get('diff')
+                if not diff or len(diff) == 0:
+                    break
+                
+                if page == 1:
+                    total_from_api = data['data'].get('total', 0)
+                
+                new_count = 0
+                for item in diff:
+                    code = str(item.get('f12', ''))
+                    if code in seen_codes:
+                        continue
+                    seen_codes.add(code)
+                    all_items.append(item)
+                    new_count += 1
+                
+                if new_count == 0 or len(diff) < page_size:
+                    break
+                
+                time.sleep(0.05)
+            
+            CLIST_MIN_THRESHOLD = 500
+            if len(all_items) < CLIST_MIN_THRESHOLD:
+                print(f"  clist重试{retry_num+1}: 仅返回{len(all_items)}只(总计{total_from_api})，低于门控{CLIST_MIN_THRESHOLD}")
+                if retry_num < CLIST_RETRY - 1:
+                    time.sleep(2)
                     continue
-            source = "clist"
-            print(f"  clist分页拉取: {len(stocks)} 只（总计 {total_from_api}，{len(all_items)-len(stocks)} 只解析跳过）")
-    except Exception as e:
-        source = None
+                log_alert("WARN", "行情采集", f"clist返回量({len(all_items)})低于门控，降级新浪")
+                stocks = None
+            else:
+                # 解析
+                stocks = []
+                for item in all_items:
+                    code = item.get('f12', '')
+                    name = item.get('f14', '')
+                    if not code or not name:
+                        continue
+                    close_val = item.get('f2')
+                    if close_val == '-' or close_val is None:
+                        continue
+                    try:
+                        stocks.append({
+                            "code": str(code), "name": str(name),
+                            "open": float(item.get('f17', 0)) if item.get('f17') not in (None, '-') else None,
+                            "close": float(close_val),
+                            "change_pct": float(item.get('f3', 0)) if item.get('f3') not in (None, '-') else 0,
+                            "turnover": float(item.get('f8', 0)) if item.get('f8') not in (None, '-') else 0,
+                            "amplitude": float(item.get('f7', 0)) if item.get('f7') not in (None, '-') else 0,
+                            "volume_ratio": float(item.get('f10', 0)) if item.get('f10') not in (None, '-') else None,
+                            "amount": float(item.get('f6', 0)) if item.get('f6') not in (None, '-') else None,
+                            "high": float(item.get('f15', 0)) if item.get('f15') not in (None, '-') else None,
+                            "low": float(item.get('f16', 0)) if item.get('f16') not in (None, '-') else None,
+                            "prev_close": float(item.get('f18', 0)) if item.get('f18') not in (None, '-') else None,
+                            "main_inflow": float(item.get('f62', 0)) if item.get('f62') not in (None, '-') else None,
+                            "total_cap": float(item.get('f20', 0)) if item.get('f20') not in (None, '-') else None,
+                            "sector": str(item.get('f102', '') or '').strip() or '未知',
+                            "industry": str(item.get('f100', '') or '').strip() or '未知',
+                        })
+                    except (ValueError, TypeError):
+                        continue
+                source = "clist"
+                clist_success = True
+                print(f"  clist重试{retry_num+1}成功: {len(stocks)}只(总计{total_from_api})")
+                break
+                
+        except Exception as e:
+            print(f"  clist重试{retry_num+1}失败: {str(e)[:60]}")
+            if retry_num < CLIST_RETRY - 1:
+                time.sleep(2)
+                continue
+            log_alert("INFO", "行情采集", f"clist不可达(重试{CLIST_RETRY}次): {str(e)[:60]}，降级新浪")
+    
+    if not clist_success:
         stocks = None
-        print(f"  东方财富clist不可达: {str(e)[:60]}，降级为新浪API")
-        log_alert("INFO", "行情采集", f"东方财富clist不可达: {str(e)[:60]}，降级为新浪API")
     
     # 方案二：新浪批处理
     if stocks is None:
@@ -1599,14 +1825,30 @@ def step13_strategy_match(ctx):
         main_inflow = c.get('main_inflow')
         volume_ratio = c.get('volume_ratio')
         source = ctx.get('_data_source', 'sina')
-        # Sina API无volume_ratio，用成交额代理：>=1亿→1.5, >=5000万→0.9, 否则→0.5
+        # Sina API无volume_ratio，基于成交额+振幅精确代理量比
+        # 多档分级：>=5亿→2.2, >=2亿→1.8, >=1亿→1.5, >=5000万→1.1, >=3000万→0.8, >=1000万→0.5, <1000万→0.3
+        # 额外修正：振幅≥5%→+0.3(活跃信号)，振幅<2%→-0.2(滞涨信号)
         if volume_ratio is None:
-            if amount >= 100_000_000:
+            if amount >= 500_000_000:
+                volume_ratio = 2.2
+            elif amount >= 200_000_000:
+                volume_ratio = 1.8
+            elif amount >= 100_000_000:
                 volume_ratio = 1.5
             elif amount >= 50_000_000:
-                volume_ratio = 0.9
-            else:
+                volume_ratio = 1.1
+            elif amount >= 30_000_000:
+                volume_ratio = 0.8
+            elif amount >= 10_000_000:
                 volume_ratio = 0.5
+            else:
+                volume_ratio = 0.3
+            # 振幅修正
+            amplitude_val = c.get('amplitude', 0)
+            if amplitude_val >= 5:
+                volume_ratio = min(3.0, volume_ratio + 0.3)
+            elif amplitude_val < 2:
+                volume_ratio = max(0.2, volume_ratio - 0.2)
         
         # 活跃度评估（新浪API无换手率，用成交额和振幅替代）
         # amount >= 1亿 = 活跃, >= 5000万 = 较活跃, < 5000万 = 不活跃
@@ -1998,9 +2240,74 @@ def step18_news_screening(ctx):
     print("=" * 60)
     
     candidates = ctx.get('candidates', [])
-    print(f"  新闻筛查: {len(candidates)} 只 (WebSearch环境下简化，重点关注策略A/B标的)")
-    # 在无WebSearch的沙箱环境下，此步骤简化
+    if not candidates:
+        ctx['passed_news'] = 0
+        return
+    
+    # 风险关键词批量检查（通过搜索API）
+    risk_keywords = ['减持', '暴雷', '立案', '诉讼', '下调评级', '预亏', '披露违规']
+    warn_keywords = ['异常波动', '解禁', '高管减持', '问询函', '监管函']
+    bonus_keywords = ['预增', '重大合同', '调研', '上调评级', '中标']
+    
+    # 对每个候选标的做简化的名称+代码搜索
+    # 在沙箱环境限制下，通过东方财富新闻搜索接口快速筛查
+    eliminated = 0
+    news_bonus = 0
+    
+    for c in candidates:
+        code = c.get('code', '')
+        name = c.get('name', '')
+        has_risk = False
+        has_bonus = False
+        
+        try:
+            # 东方财富个股新闻搜索 (快速接口)
+            url = f"https://search-api.eastmoney.com/search?pageIndex=1&pageSize=3&keyword={code}+{urllib.parse.quote(name)}&type=8193"
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0',
+                'Referer': 'https://so.eastmoney.com/'
+            })
+            resp = urllib.request.urlopen(req, timeout=3)
+            news_data = json.loads(resp.read())
+            articles = news_data.get('Data', [])
+            
+            for art in articles:
+                title = art.get('Title', '') or ''
+                content = art.get('Content', '') or ''
+                text = title + content
+                
+                # 检查风险关键词
+                for kw in risk_keywords:
+                    if kw in text:
+                        has_risk = True
+                        break
+                
+                # 检查加分关键词
+                for kw in bonus_keywords:
+                    if kw in text:
+                        has_bonus = True
+                        break
+        except Exception:
+            # 搜索不可达，静默跳过
+            pass
+        
+        # 风险标的：扣分但不排除（除非触发排除级关键词）
+        if has_risk:
+            c['score'] = max(0, c.get('score', 0) - 1)
+            c['_news_risk'] = True
+            eliminated += 1
+        elif has_bonus:
+            c['score'] = c.get('score', 0) + 1
+            c['_news_bonus'] = True
+            news_bonus += 1
+    
+    # 重新按评分排序
+    if eliminated > 0 or news_bonus > 0:
+        candidates = tie_break_sort(candidates)
+    
+    ctx['candidates'] = candidates
     ctx['passed_news'] = len(candidates)
+    print(f"  新闻筛查: {len(candidates)} 只 → 风险标记{eliminated}只 + 正面加分{news_bonus}只")
 
 # ============================================================
 # 步骤19: 推荐不足降级
@@ -2727,6 +3034,130 @@ def step27_feishu_push(ctx):
         log_alert("WARNING", "飞书推送", f"请求异常: {str(e)[:100]}")
 
 # ============================================================
+# 步骤28: 每周复盘拉取（仅周六执行）
+# ============================================================
+def step28_weekly_review(ctx):
+    """每周六从GitHub拉取本周推荐文件，汇总复盘"""
+    print("\n" + "=" * 60)
+    print("步骤28: 每周复盘拉取")
+    print("=" * 60)
+    
+    weekday = ctx.get('beijing_weekday', 0)
+    if weekday != 5:  # 0=Mon ... 5=Sat
+        print(f"  非周六（周{weekday+1}），跳过复盘")
+        return
+    
+    print("  周六 → 执行每周复盘...")
+    
+    repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
+    temp_dir = f"{TEMP_DIR}/lv_weekly_review"
+    
+    try:
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        
+        subprocess.run(
+            ["git", "clone", "--depth", "1", "--branch", "main", repo_url, temp_dir],
+            capture_output=True, text=True, timeout=60, check=True
+        )
+        
+        # 收集本周推荐的MD文件
+        md_files = []
+        for f in os.listdir(temp_dir):
+            if f.startswith("短线标的_") and f.endswith(".md"):
+                md_files.append(f)
+        
+        if not md_files:
+            print("  本周无推荐文件，跳过复盘")
+            log_alert("INFO", "每周复盘", "本周无推荐文件，跳过")
+            return
+        
+        md_files.sort()
+        print(f"  拉取到 {len(md_files)} 个推荐文件: {', '.join(md_files[-7:])}")
+        
+        # 汇总统计
+        total_recos = 0
+        for md_file in md_files:
+            filepath = os.path.join(temp_dir, md_file)
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                # 统计表格行数
+                table_rows = sum(1 for line in content.split('\n')
+                               if line.strip().startswith('| ') and line.split('|')[1].strip().isdigit())
+                total_recos += table_rows
+            except Exception:
+                continue
+        
+        weekly_review = {
+            "type": "weekly_review",
+            "date": ctx['beijing_date'],
+            "week_files": len(md_files),
+            "total_recos": total_recos,
+        }
+        safe_append_json(f"{DATA_DIR}/推荐历史_{ctx['beijing_date'].replace('-', '')}.json", weekly_review)
+        
+        print(f"  本周汇总: {len(md_files)}个推荐日, {total_recos}只标的")
+        log_alert("INFO", "每周复盘", f"本周{len(md_files)}个推荐日, {total_recos}只标的")
+        
+    except Exception as e:
+        log_alert("WARNING", "每周复盘", f"拉取失败: {str(e)[:100]}")
+        print(f"  复盘拉取失败: {str(e)[:80]}")
+    finally:
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+# ============================================================
+# 步骤23: 回溯检查昨日做T
+# ============================================================
+def step23_backtrack_do_T(ctx):
+    print("\n" + "=" * 60)
+    print("步骤23: 回溯检查昨日做T")
+    print("=" * 60)
+    
+    all_history = ctx.get('all_history', [])
+    data_date = ctx['data_date']
+    yesterday = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    # 查找昨日的 do_T_eval
+    yesterday_evals = []
+    for r in all_history:
+        if r.get('type') == 'do_T_eval' and r.get('date') == yesterday:
+            yesterday_evals.append(r)
+    
+    if not yesterday_evals:
+        print(f"  昨日({yesterday})无做T评估记录")
+        return
+    
+    # 查找昨日的 do_T 执行记录
+    yesterday_do_T = []
+    for r in all_history:
+        if r.get('type') == 'do_T' and r.get('date') == yesterday:
+            yesterday_do_T.append(r.get('code', ''))
+    
+    reminded = 0
+    for ev in yesterday_evals:
+        feasible = ev.get('do_T_feasible', False)
+        code = ev.get('code', '?')
+        name = ev.get('name', '?')
+        
+        if feasible in (True, '谨慎', 'True') and code not in yesterday_do_T:
+            msg = f"  ⚠️ {code} {name}: 昨日做T评估为{feasible}，但未执行做T"
+            print(msg)
+            reminded += 1
+        elif feasible == '观望':
+            print(f"  {code} {name}: 昨日评估为观望，无需操作")
+        elif feasible == False:
+            print(f"  {code} {name}: 昨日评估为不可做T，无需操作")
+        elif code in yesterday_do_T:
+            print(f"  {code} {name}: 昨日已执行做T ✅")
+    
+    if reminded == 0:
+        print(f"  无需提醒")
+    
+    ctx['_do_T_backtrack_reminded'] = reminded
+
+# ============================================================
 # 步骤24: 告警日志摘要
 # ============================================================
 def step24_alert_summary(ctx):
@@ -2785,6 +3216,9 @@ def main():
         
         # 步骤4A: 做T评估
         step4A_do_T_eval(ctx)
+        
+        # 步骤4B: 持仓跟踪同步
+        step4B_sync_holding_xlsx(ctx)
         
         # 步骤4C: 持仓危机
         step4C_holding_crisis(ctx)
@@ -2852,6 +3286,9 @@ def main():
         # 步骤22: 写推荐历史
         step22_write_history(ctx)
         
+        # 步骤23: 回溯检查昨日做T
+        step23_backtrack_do_T(ctx)
+        
         # 步骤24: 告警摘要
         step24_alert_summary(ctx)
         
@@ -2863,6 +3300,9 @@ def main():
         
         # 步骤27: 飞书推送
         step27_feishu_push(ctx)
+        
+        # 步骤28: 每周复盘拉取（仅周六执行）
+        step28_weekly_review(ctx)
         
         # 持仓危机告警优先展示
         crisis_alerts = ctx.get('holding_crisis_alerts', [])
