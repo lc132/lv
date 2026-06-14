@@ -10,7 +10,7 @@ from lib.core import *
 # ============================================================
 def tie_break_sort(candidates):
     """评分相同时按优势大小排序：量比→换手率→涨跌幅→板块热度→策略优先级"""
-    strategy_order = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4}
+    strategy_order = {'A': 0, 'D': 1, 'C': 2, 'B': 3, 'E': 4}
     
     def sort_key(rec):
         score = rec.get('score', 0)
@@ -81,7 +81,7 @@ def step14_16_scoring(ctx):
                     # 同一策略多个标的 → 无冲突（评分阶段解决）
                     pass
         # E与A/B冲突已在步骤13通过排序解决，标记日志
-        print(f"  步骤15: 策略冲突处理已生效（A>B>C>D>E优先级，E与A冲突→A优先，E与B冲突→E优先）")
+        print(f"  步骤15: 策略冲突处理已生效（A>D>C>B>E优先级，E与A冲突→A优先，E与B冲突→E优先）")
     
     for c in candidates:
         reasons = []
@@ -275,20 +275,36 @@ def step17_industry_limit(ctx):
     strategy_concentration_pct = ctx.get('params', {}).get('strategy_concentration_pct', 60)
     
     # 根据市场环境确定各策略推荐上限
+    # 从 position_plan 推导各策略数量上限（高分配→多候选，确保仓位分配与实际选股联动）
     # Sina降级时数据质量差，各策略上限+1以补偿信号失真
     is_sina_fallback = ctx.get('_data_source', '') == 'sina'
-    max_per_market = {
-        '强市': {'A': 3, 'B': 2, 'C': 2, 'D': 2, 'E': 2},
-        '震荡': {'A': 3, 'B': 2, 'C': 2, 'D': 3, 'E': 3},
-        '弱市': {'A': 0, 'B': 3, 'C': 1, 'D': 2, 'E': 1},
-    }
-    if is_sina_fallback:
+    if position_plan and any(position_plan.values()):
+        plan_total = sum(position_plan.values())
+        base_total = {'强市': 10, '震荡': 8, '弱市': 5}.get(market, 8)
+        if is_sina_fallback:
+            base_total = {'强市': 14, '震荡': 12, '弱市': 8}.get(market, 12)
+        limits = {}
+        for s in ['A', 'B', 'C', 'D', 'E']:
+            ratio = position_plan.get(s, 0) / plan_total if plan_total > 0 else 0.2
+            limits[s] = max(0, int(base_total * ratio + 0.5))
+        # 确保每策略至少1个名额（除非分配为0）
+        for s in ['A', 'B', 'C', 'D', 'E']:
+            if position_plan.get(s, 0) > 0 and limits[s] == 0:
+                limits[s] = 1
+    else:
+        # 回退：硬编码上限（position_plan不可用时）
         max_per_market = {
-            '强市': {'A': 4, 'B': 4, 'C': 3, 'D': 4, 'E': 3},
-            '震荡': {'A': 5, 'B': 4, 'C': 3, 'D': 5, 'E': 5},
-            '弱市': {'A': 0, 'B': 5, 'C': 2, 'D': 3, 'E': 3},
+            '强市': {'A': 3, 'B': 2, 'C': 2, 'D': 2, 'E': 2},
+            '震荡': {'A': 3, 'B': 2, 'C': 2, 'D': 3, 'E': 3},
+            '弱市': {'A': 0, 'B': 3, 'C': 1, 'D': 2, 'E': 1},
         }
-    limits = max_per_market.get(market, {'A': 2, 'B': 2, 'C': 2, 'D': 2, 'E': 2})
+        if is_sina_fallback:
+            max_per_market = {
+                '强市': {'A': 4, 'B': 4, 'C': 3, 'D': 4, 'E': 3},
+                '震荡': {'A': 5, 'B': 4, 'C': 3, 'D': 5, 'E': 5},
+                '弱市': {'A': 0, 'B': 5, 'C': 2, 'D': 3, 'E': 3},
+            }
+        limits = max_per_market.get(market, {'A': 2, 'B': 2, 'C': 2, 'D': 2, 'E': 2})
     max_total = sum(limits.values())
     
     # 按评分排序（同分二次评估）
