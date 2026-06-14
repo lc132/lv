@@ -107,11 +107,21 @@ def step13_strategy_match(ctx):
         
         # 策略E: 资金埋伏 (温和涨幅1-3%+高活跃+收盘>开盘+有一定振幅)
         if 1 <= change_pct <= 3 and is_active and close > open_p and amplitude >= 2:
-            strategies.append(('E', '资金埋伏', 1))
+            # 假突破过滤：如果收盘价接近当日最低价(收盘-最低)/最低价<0.5%，可能是假突破
+            low = c.get('low', 0)
+            if low > 0 and (close - low) / low < 0.005:
+                pass  # 假突破，跳过
+            else:
+                strategies.append(('E', '资金埋伏', 1))
         
         # 策略E: 强势资金 (涨幅3-5%+高活跃+收盘>开盘+高振幅)
         if 3 < change_pct <= 5 and is_active and close > open_p and amplitude >= 3:
-            strategies.append(('E', '强势资金', 1.5))
+            high = c.get('high', 0)
+            if high > 0 and (high - close) / high < 0.01:
+                # 收盘接近高点→强趋势，加分
+                strategies.append(('E', '强势资金(趋势确认)', 2))
+            else:
+                strategies.append(('E', '强势资金', 1.5))
         
         # 兜底策略：涨幅适中+活跃→A
         if not strategies and 2 < change_pct <= 5 and is_active and close > open_p:

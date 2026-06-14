@@ -371,15 +371,123 @@ def step9C_conversion_rate(ctx):
     all_history = ctx.get('all_history', [])
     window_days = ctx['params']['conversion_rate_window_days']
     threshold = ctx['params']['conversion_rate_threshold']
+    restore_threshold = ctx['params']['conversion_rate_restore']
+    consecutive_days = ctx['params']['conversion_rate_consecutive_days']
     
     # 冷启动保护
     recos = [r for r in all_history if r.get('type') == 'recommendation']
     if len(recos) < 10:
         print(f"  推荐记录不足10条({len(recos)}条)，跳过兑现率检查")
+        ctx['conversion_rate_ok'] = True
         return
     
-    # 统计最近N个交易日的兑现率
-    # 简化：检查最近推荐记录中的T+1表现
-    print(f"  兑现率检查: 窗口{window_days}天 阈值{threshold*100}%")
-    # 简化处理
-    ctx['conversion_rate_ok'] = True
+    # 统计最近window_days个交易日的T+1兑现率
+    # 兑现定义: T+1收盘涨幅>2%
+    data_dt = datetime.strptime(ctx['data_date'], '%Y-%m-%d')
+    window_start = data_dt - timedelta(days=window_days)
+    
+    # 按日期分组推荐记录
+    recos_by_date = {}
+    for r in recos:
+        r_date_str = r.get('date', '')
+        if not r_date_str:
+            continue
+        try:
+            r_date = datetime.strptime(r_date_str, '%Y-%m-%d')
+        except ValueError:
+            continue
+        if r_date < window_start or r_date >= data_dt:
+            continue
+        if r_date_str not in recos_by_date:
+            recos_by_date[r_date_str] = []
+        recos_by_date[r_date_str].append(r)
+    
+    # 检查每笔推荐的 T+1 兑现情况（通过查找次日同一code的收盘价变化）
+    total_checked = 0
+    total_converted = 0
+    daily_rates = {}
+    
+    for r_date_str, day_recos in recos_by_date.items():
+        r_dt = datetime.strptime(r_date_str, '%Y-%m-%d')
+        t1_date_str = (r_dt + timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        day_checked = 0
+        day_converted = 0
+        
+        for rec in day_recos:
+            code = rec.get('code', '')
+            entry_price = rec.get('close') or rec.get('entry')
+            if not entry_price or entry_price <= 0:
+                continue
+            
+            # 搜索T+1日同一code的行情记录
+            t1_found = False
+            for r2 in all_history:
+                if r2.get('type') == 'recommendation' and r2.get('date') == t1_date_str and r2.get('code') == code:
+                    t1_close = r2.get('close') or r2.get('entry')
+                    if t1_close and t1_close > 0:
+                        t1_chg = (t1_close - entry_price) / entry_price * 100
+                        day_checked += 1
+                        if t1_chg > 2:
+                            day_converted += 1
+                        t1_found = True
+                        break
+            # 如果T+1有holding记录也检查
+            if not t1_found:
+                for r2 in all_history:
+                    if r2.get('type') == 'holding' and r2.get('code') == code:
+                        # 检查update_date是否在T+1附近
+                        upd = r2.get('update_date', '')
+                        if upd == t1_date_str:
+                            t1_current = r2.get('current')
+                            if t1_current and t1_current > 0:
+                                t1_chg = (t1_current - entry_price) / entry_price * 100
+                                day_checked += 1
+                                if t1_chg > 2:
+                                    day_converted += 1
+                                break
+        
+        if day_checked > 0:
+            daily_rates[r_date_str] = day_converted / day_checked
+            total_checked += day_checked
+            total_converted += day_converted
+    
+    if total_checked == 0:
+        print(f"  无有效T+1数据，跳过兑现率检查")
+        ctx['conversion_rate_ok'] = True
+        return
+    
+    overall_rate = total_converted / total_checked
+    print(f"  兑现率: {total_converted}/{total_checked} = {overall_rate*100:.1f}% (阈值{threshold*100}%)")
+    ctx['conversion_rate_value'] = round(overall_rate, 3)
+    
+    # 检查连续低兑现率
+    sorted_dates = sorted(daily_rates.keys())
+    consecutive_low = 0
+    for d in reversed(sorted_dates):
+        if daily_rates[d] < threshold:
+            consecutive_low += 1
+        else:
+            break
+    
+    if overall_rate < threshold:
+        print(f"  ⚠️ 兑现率{overall_rate*100:.1f}% < {threshold*100}% → 降一档仓位")
+        current_pos = ctx.get('position', 55)
+        if current_pos >= 70:
+            ctx['position'] = 55
+        elif current_pos >= 50:
+            ctx['position'] = 35
+        else:
+            ctx['position'] = 20
+        ctx['conversion_rate_ok'] = False
+        
+        if consecutive_low >= consecutive_days:
+            print(f"  ⚠️ 连续{consecutive_low}天兑现率<{threshold*100}% → 暂停推荐1天")
+            ctx['skip'] = True
+            log_alert("WARNING", "兑现率闭环", f"连续{consecutive_low}天低兑现率，暂停推荐")
+    elif overall_rate >= restore_threshold:
+        print(f"  兑现率{overall_rate*100:.1f}% ≥ {restore_threshold*100}% → 仓位恢复至正常档位")
+        ctx['conversion_rate_ok'] = True
+        ctx['position'] = 55  # 恢复默认仓位（步骤8大盘判断会再调整）
+    else:
+        ctx['conversion_rate_ok'] = True

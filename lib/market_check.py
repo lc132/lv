@@ -187,6 +187,54 @@ def step3A_futures(ctx):
     print("\n" + "=" * 60)
     print("步骤3A: 开盘前外围期货检查")
     print("=" * 60)
-    # 期货数据关注，简化处理
-    print("  期货数据暂不可得，跳过此检查，维持步骤3外围判断")
-    ctx['futures_bearish'] = False
+    
+    # 检查美股期货（标普/纳指/道指期货）实时行情
+    # Yahoo Finance 期货代码: ES=F(标普), NQ=F(纳指), YM=F(道指)
+    futures = {
+        'ES=F': '标普500期货',
+        'NQ=F': '纳斯达克期货',
+        'YM=F': '道琼斯期货'
+    }
+    bearish_count = 0
+    results = {}
+    
+    for sym, label in futures.items():
+        try:
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=2d"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            resp = urllib.request.urlopen(req, timeout=5)
+            data = json.loads(resp.read())
+            result = data.get('chart', {}).get('result', [])
+            if result:
+                quotes = result[0].get('indicators', {}).get('quote', [{}])[0]
+                closes = quotes.get('close', [])
+                if len(closes) >= 2 and closes[-2] and closes[-1]:
+                    chg = round((closes[-1] - closes[-2]) / closes[-2] * 100, 2)
+                    results[label] = chg
+                    print(f"  {label}: {chg:+.2f}%")
+                    if chg < -1:
+                        bearish_count += 1
+        except Exception:
+            results[label] = None
+    
+    ctx['futures_detail'] = results
+    
+    # 任一期货跌>1% → 外围偏空，仓位降一档
+    if bearish_count > 0:
+        ctx['futures_bearish'] = True
+        print(f"  ⚠️ {bearish_count}只期货跌>1% → 外围偏空，仓位降一档")
+        
+        # 降档当前仓位（在步骤8大盘判断中会再被外围压制一次）
+        current_position = ctx.get('position', 55)
+        if ctx.get('market_condition') == '强市':
+            ctx['market_condition'] = '震荡'
+            ctx['position'] = 55
+        elif ctx.get('market_condition') == '震荡':
+            ctx['market_condition'] = '弱市'
+            ctx['position'] = 35
+    else:
+        ctx['futures_bearish'] = False
+        if all(v is None for v in results.values()):
+            print(f"  期货数据均不可得，跳过此检查，维持步骤3外围判断")
+        else:
+            print(f"  期货市场正常")

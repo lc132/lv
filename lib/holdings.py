@@ -61,9 +61,23 @@ def step4_holdings_sync(ctx):
             log_alert("WARNING", "持仓行情同步", f"{code} 搜索失败: {str(e)[:60]}")
             continue
     
-    # 更新回推荐历史文件
+    # 更新回推荐历史文件（按日期分文件，找到含该holding的文件更新）
     if updated > 0:
-        # 更新持有记录
+        # 将更新后的holding记录写回对应日期的推荐历史文件
+        data_yyyymmdd = ctx['data_date'].replace('-', '')
+        hist_path = f"{DATA_DIR}/推荐历史_{data_yyyymmdd}.json"
+        existing = safe_read_json(hist_path) or []
+        
+        for r in existing:
+            if r.get('type') == 'holding':
+                for h in holdings:
+                    if h.get('code') == r.get('code'):
+                        for k in ['current', 'prev_close', 'pnl_pct', 'pnl_amount', 'market_value', 'update_date']:
+                            if k in h:
+                                r[k] = h[k]
+        
+        safe_write_json(hist_path, existing)
+        # 同时更新all_history
         for r in all_history:
             if r.get('type') == 'holding':
                 for h in holdings:
@@ -71,7 +85,6 @@ def step4_holdings_sync(ctx):
                         for k in ['current', 'prev_close', 'pnl_pct', 'pnl_amount', 'market_value', 'update_date']:
                             if k in h:
                                 r[k] = h[k]
-        write_history_to_date_files(all_history, ctx['beijing_date'])
         print(f"  已更新 {updated} 只持仓价格")
     
     ctx['holdings'] = holdings

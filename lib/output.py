@@ -295,7 +295,7 @@ td {{ padding:8px; text-align:center; border-bottom:1px solid #e0e0e0; white-spa
 <!-- 1. 报告头部 -->
 <div class="header">
     <h1>📊 A股短线标的筛选报告</h1>
-    <div style="font-size:14px;opacity:0.9">v6.6.3 | 数据来源: {data_date}</div>
+    <div style="font-size:14px;opacity:0.9">{BUILTIN_VERSION} | 数据来源: {data_date}</div>
     <div class="meta-row">
         <div class="meta-card"><div class="label">预测日期</div><div class="value">{prediction_date}</div></div>
         <div class="meta-card"><div class="label">数据日期</div><div class="value">{data_date}</div></div>
@@ -365,8 +365,8 @@ td {{ padding:8px; text-align:center; border-bottom:1px solid #e0e0e0; white-spa
 
 <!-- 7. 报告尾部 -->
 <div class="footer">
-    <div>A股盘前短线标的筛选 v6.6.3 | 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
-    <div>规则来源: SKILL.md v6.6.3 | GitHub: lc132/lv</div>
+    <div>A股盘前短线标的筛选 {BUILTIN_VERSION} | 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
+    <div>规则来源: SKILL.md {BUILTIN_VERSION} | GitHub: lc132/lv</div>
     <div class="disclaimer">⚠️ 仅供参考，不构成投资建议</div>
 </div>
 

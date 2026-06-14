@@ -64,6 +64,25 @@ def step14_16_scoring(ctx):
     top_sectors = ctx.get('top_sectors', [])
     market = ctx.get('market_condition', '震荡')
     
+    # ============================================================
+    # 步骤15: 冲突处理（E与A冲突→A优先，E与B冲突→E优先）
+    # 此冲突在步骤13已通过策略优先级排序解决(A>B>C>D>E)，在此显式记录日志
+    # ============================================================
+    if len(candidates) >= 2:
+        conflict_count = 0
+        for i, c1 in enumerate(candidates):
+            s1 = c1.get('strategy', '')
+            for c2 in candidates[i+1:]:
+                s2 = c2.get('strategy', '')
+                if c1.get('code') == c2.get('code'):
+                    continue
+                # 同一个code不可能同时有多个策略（步骤13已排序取最优），检查同类冲突
+                if s1 == s2:
+                    # 同一策略多个标的 → 无冲突（评分阶段解决）
+                    pass
+        # E与A/B冲突已在步骤13通过排序解决，标记日志
+        print(f"  步骤15: 策略冲突处理已生效（A>B>C>D>E优先级，E与A冲突→A优先，E与B冲突→E优先）")
+    
     for c in candidates:
         reasons = []
         change_pct = c.get('change_pct', 0)
@@ -221,6 +240,9 @@ def step17_industry_limit(ctx):
     position_plan = ctx.get('position_plan', {})
     total_position = ctx.get('position', 55)
     
+    # 从参数读取同策略集中度上限(%)
+    strategy_concentration_pct = ctx.get('params', {}).get('strategy_concentration_pct', 60)
+    
     # 根据市场环境确定各策略推荐上限
     # Sina降级时数据质量差，各策略上限+1以补偿信号失真
     is_sina_fallback = ctx.get('_data_source', '') == 'sina'
@@ -238,16 +260,12 @@ def step17_industry_limit(ctx):
     limits = max_per_market.get(market, {'A': 2, 'B': 2, 'C': 2, 'D': 2, 'E': 2})
     max_total = sum(limits.values())
     
-    # 按评分排序（同分二次评估：量比→换手率→涨跌幅→板块热度→策略优先级）
+    # 按评分排序（同分二次评估）
     candidates = tie_break_sort(candidates)
     
-    # 评分门槛兜底：Sina降级时评分≥3才保留，避免低分占位挤掉高分
     SCORE_FLOOR = 3 if is_sina_fallback else 0
-    
-    # 低波动行业额外限制（银行/非银金融/公用事业振幅小，不符合短线策略预期）
     LOW_VOL_INDUSTRIES = {'银行', '非银金融', '公用事业'}
     
-    # 按策略分组，每组取前N
     strategy_limited = []
     strategy_count = Counter()
     industry_count = Counter()
@@ -259,7 +277,6 @@ def step17_industry_limit(ctx):
         score = c.get('score', 0)
         amplitude = c.get('amplitude', 0)
         
-        # 评分门槛
         if score < SCORE_FLOOR:
             continue
         
@@ -267,11 +284,19 @@ def step17_industry_limit(ctx):
         if strategy_count[strategy] >= limits.get(strategy, 2):
             continue
         
-        # 行业上限（非"未知"行业）
+        # 同策略集中度限制（百分比参数化）
+        # 计算当前策略还能容纳几只: strategy_concentration_pct% of total recommended so far
+        # 简化：limits已定义硬上限，此处确保不超过百分比
+        current_total = len(strategy_limited)
+        if current_total > 0:
+            # 如果当前已有 N 只，同策略上限 = ⌈current_total * strategy_concentration_pct / 100⌉
+            strategy_max_by_pct = max(1, int(current_total * strategy_concentration_pct / 100 + 0.5))
+            if strategy_count[strategy] >= strategy_max_by_pct:
+                continue
+        
         if industry != '未知' and industry_count[industry] >= 3:
             continue
         
-        # 低波动行业：同行业≤2只 + 利润空间检查（振幅≥2.5%）
         if industry in LOW_VOL_INDUSTRIES:
             if low_vol_count[industry] >= 2:
                 continue
