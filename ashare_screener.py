@@ -1622,17 +1622,22 @@ def step13_strategy_match(ctx):
             strategies.append(('A', '动量延续', 2))
         
         # 策略B: 超跌反弹 (跌幅-1%到-5%、活跃度中等、缩量特征)
-        # Sina降级时用振幅+成交额代理换手率：振幅≥2%且成交额≥5000万→符合
-        b_amp_ok = (turnover <= 0 and amplitude >= 2 and is_moderate) if source == 'sina' else (amplitude >= 2)
-        if -5 <= change_pct <= -1 and is_moderate and b_amp_ok:
+        # Sina降级时用成交额+振幅代理缩量：成交额5千万~3亿+振幅≥2%→缩量特征
+        # B需要缩量（低换手），Sina无换手率字段，以「成交额适中(非巨额)」代理
+        if source == 'sina':
+            b_ok = (-5 <= change_pct <= -1 and is_moderate and amplitude >= 2 
+                    and 50_000_000 <= amount <= 300_000_000)
+        else:
+            b_ok = (-5 <= change_pct <= -1 and is_moderate and amplitude >= 2)
+        if b_ok:
             strategies.append(('B', '超跌反弹', 1.5))
         
         # 策略B: 更深超跌
         if -7 <= change_pct < -5 and is_moderate:
             strategies.append(('B', '深度超跌反弹', 1))
         
-        # 策略B增强：下跌缩量（成交额<1亿但振幅>3%→恐慌性抛售后的企稳信号）
-        if source == 'sina' and -7 <= change_pct <= -2 and amount < 100_000_000 and amplitude >= 3 and is_moderate:
+        # 策略B增强：下跌缩量（成交额1千万~1亿+振幅≥3%→恐慌抛售后缩量企稳）
+        if source == 'sina' and -7 <= change_pct <= -2 and 10_000_000 <= amount <= 100_000_000 and amplitude >= 3:
             strategies.append(('B', '超跌缩量企稳', 1.2))
         
         # 策略C: 事件驱动
@@ -1843,6 +1848,25 @@ def step14_16_scoring(ctx):
             score -= 2
             reasons.append("L3扣分-2")
         
+        # ROE评分（基本面维度，数据可用时启用）
+        roe = c.get('roe', None)
+        if roe is not None:
+            if roe > 15:
+                score += 2
+                reasons.append(f"ROE高+2({roe:.1f}%)")
+            elif roe >= 5:
+                score += 1
+                reasons.append(f"ROE中+1({roe:.1f}%)")
+            elif roe < 0:
+                score -= 1
+                reasons.append(f"ROE负-1({roe:.1f}%)")
+        
+        # 经营现金流（数据可用时启用）
+        cash_flow = c.get('cash_flow_positive', None)
+        if cash_flow is True:
+            score += 1
+            reasons.append("现金流正+1")
+        
         # 确保分数不为负
         score = max(0, score)
         
@@ -1905,9 +1929,9 @@ def step17_industry_limit(ctx):
     }
     if is_sina_fallback:
         max_per_market = {
-            '强市': {'A': 4, 'B': 3, 'C': 3, 'D': 3, 'E': 3},
-            '震荡': {'A': 4, 'B': 3, 'C': 3, 'D': 4, 'E': 4},
-            '弱市': {'A': 0, 'B': 4, 'C': 2, 'D': 3, 'E': 2},
+            '强市': {'A': 4, 'B': 4, 'C': 3, 'D': 4, 'E': 3},
+            '震荡': {'A': 5, 'B': 4, 'C': 3, 'D': 5, 'E': 5},
+            '弱市': {'A': 0, 'B': 5, 'C': 2, 'D': 3, 'E': 3},
         }
     limits = max_per_market.get(market, {'A': 2, 'B': 2, 'C': 2, 'D': 2, 'E': 2})
     max_total = sum(limits.values())
@@ -1915,14 +1939,27 @@ def step17_industry_limit(ctx):
     # 按评分排序（同分二次评估：量比→换手率→涨跌幅→板块热度→策略优先级）
     candidates = tie_break_sort(candidates)
     
+    # 评分门槛兜底：Sina降级时评分≥3才保留，避免低分占位挤掉高分
+    SCORE_FLOOR = 3 if is_sina_fallback else 0
+    
+    # 低波动行业额外限制（银行/非银金融/公用事业振幅小，不符合短线策略预期）
+    LOW_VOL_INDUSTRIES = {'银行', '非银金融', '公用事业'}
+    
     # 按策略分组，每组取前N
     strategy_limited = []
     strategy_count = Counter()
     industry_count = Counter()
+    low_vol_count = Counter()
     
     for c in candidates:
         strategy = c.get('strategy', '')
         industry = c.get('industry', '未知')
+        score = c.get('score', 0)
+        amplitude = c.get('amplitude', 0)
+        
+        # 评分门槛
+        if score < SCORE_FLOOR:
+            continue
         
         # 策略上限
         if strategy_count[strategy] >= limits.get(strategy, 2):
@@ -1932,12 +1969,21 @@ def step17_industry_limit(ctx):
         if industry != '未知' and industry_count[industry] >= 3:
             continue
         
+        # 低波动行业：同行业≤2只 + 利润空间检查（振幅≥2.5%）
+        if industry in LOW_VOL_INDUSTRIES:
+            if low_vol_count[industry] >= 2:
+                continue
+            if amplitude < 2.5:
+                continue
+            low_vol_count[industry] += 1
+        
         strategy_count[strategy] += 1
         if industry != '未知':
             industry_count[industry] += 1
         strategy_limited.append(c)
     
-    print(f"  行业+策略限制: {len(candidates)}→{len(strategy_limited)} 只{'（Sina降级放宽）' if is_sina_fallback else ''}")
+    droplo = ' +低波动过滤' if any(low_vol_count.values()) else ''
+    print(f"  行业+策略限制: {len(candidates)}→{len(strategy_limited)} 只{'（Sina降级放宽）' if is_sina_fallback else ''}{droplo}")
     print(f"    A≤{limits['A']}:{strategy_count['A']} B≤{limits['B']}:{strategy_count['B']} C≤{limits['C']}:{strategy_count['C']} D≤{limits['D']}:{strategy_count['D']} E≤{limits['E']}:{strategy_count['E']}")
     
     ctx['candidates'] = strategy_limited
