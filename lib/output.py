@@ -185,6 +185,25 @@ def step20B_html_report(ctx):
         if pct > 0:
             seg_bars += f'<div style="flex:{pct};background:{strategy_colors[s]};height:24px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:bold">{s}:{cnt}</div>'
     
+    # 硬排除TOP5 柱状图
+    exclusion_stats = ctx.get('exclusion_stats', Counter())
+    exclude_bars = ""
+    if exclusion_stats:
+        max_exclude = max(exclusion_stats.values()) or 1
+        for reason, count in exclusion_stats.most_common(5):
+            pct = count / max_exclude * 100
+            exclude_bars += f'<div style="margin:4px 0;display:flex;align-items:center;gap:8px"><span style="font-size:11px;min-width:120px;text-align:right;color:#666">{reason}</span><div style="flex:1;background:#e0e0e0;border-radius:4px;height:20px"><div style="width:{pct}%;background:linear-gradient(90deg,#7B1FA2,#1565C0);height:20px;border-radius:4px;display:flex;align-items:center;justify-content:flex-end;padding-right:6px"><span style="font-size:11px;color:#fff;font-weight:bold">{count}</span></div></div></div>'
+    
+    # 各策略数量柱状图
+    strategy_count_bars = ""
+    if strategy_counts:
+        max_s = max(strategy_counts.values()) or 1
+        for s in ['A', 'B', 'C', 'D', 'E']:
+            cnt = strategy_counts.get(s, 0)
+            if cnt > 0:
+                pct = cnt / max_s * 100
+                strategy_count_bars += f'<div style="margin:4px 0;display:flex;align-items:center;gap:8px"><span style="font-size:11px;min-width:20px;text-align:center;font-weight:bold;color:{strategy_colors[s]}">{s}</span><div style="flex:1;background:#e0e0e0;border-radius:4px;height:20px"><div style="width:{pct}%;background:{strategy_colors[s]};height:20px;border-radius:4px;display:flex;align-items:center;justify-content:flex-end;padding-right:6px"><span style="font-size:11px;color:#fff;font-weight:bold">{cnt}</span></div></div></div>'
+    
     # 漏斗数据
     funnel_steps = [
         ("原始标的池", ctx.get('total_raw', 0)),
@@ -328,6 +347,14 @@ td {{ padding:8px; text-align:center; border-bottom:1px solid #e0e0e0; white-spa
             <h3>最终推荐 ({len(candidates)}只)</h3>
             <div style="font-size:48px;text-align:center;color:#1a237e;font-weight:bold;padding:20px;">{len(candidates)}</div>
             <div style="text-align:center;color:#888;font-size:13px">预测日期: {prediction_date}</div>
+        </div>
+        <div class="chart-card">
+            <h3>硬排除 TOP5</h3>
+            {exclude_bars if exclude_bars else '<div style="color:#999;font-size:13px;text-align:center;padding:20px">无排除记录</div>'}
+        </div>
+        <div class="chart-card">
+            <h3>各策略数量</h3>
+            {strategy_count_bars if strategy_count_bars else '<div style="color:#999;font-size:13px;text-align:center;padding:20px">无策略数据</div>'}
         </div>
     </div>
 </div>

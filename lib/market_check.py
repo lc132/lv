@@ -70,7 +70,11 @@ def step1_holiday_check(ctx):
                         if not k2:
                             ctx['is_long_holiday'] = True
                             ctx['is_weak_market'] = True
-                            print(f"  ⚠️ 长休≥3日→弱市+仓位≤30%+搜索预算+5")
+                            # 搜索预算+5（SKILL §步骤1: 长休≥3日→搜索预算+5）
+                            params = ctx.get('params', {})
+                            params['search_budget'] = params.get('search_budget', 25) + 5
+                            ctx['params'] = params
+                            print(f"  ⚠️ 长休≥3日→弱市+仓位≤30%+搜索预算+5({params['search_budget']})")
                             break
                     except:
                         break
@@ -147,6 +151,35 @@ def step2_extreme_market(ctx):
             ctx['_extreme_up_a_restore'] = True
         else:
             ctx['market_condition'] = None
+        
+        # 跌停数阈值检查（SKILL §步骤2: 跌停>threshold→跳过）
+        limit_down_threshold = ctx.get('params', {}).get('limit_down_threshold', 100)
+        try:
+            import urllib.parse
+            ld_url = "https://push2.eastmoney.com/api/qt/clist/get"
+            ld_params = {
+                "pn": "1", "pz": "1", "po": "0", "np": "1",
+                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+                "fltt": "2", "invt": "2", "fid": "f3",
+                "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
+                "fields": "f12",
+                "_": str(int(time.time() * 1000))
+            }
+            ld_req = urllib.request.Request(
+                f"{ld_url}?{urllib.parse.urlencode(ld_params)}",
+                headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://quote.eastmoney.com/'}
+            )
+            ld_resp = urllib.request.urlopen(ld_req, timeout=5)
+            ld_data = json.loads(ld_resp.read())
+            limit_down_count = ld_data.get('data', {}).get('total', 0) if ld_data.get('data') else 0
+            print(f"  跌停家数: {limit_down_count} (阈值{limit_down_threshold})")
+            if limit_down_count > limit_down_threshold:
+                print(f"  ⚠️ 跌停{limit_down_count}>{limit_down_threshold}，跳过筛选")
+                ctx['skip'] = True
+                log_alert("WARNING", "极端行情", f"跌停{limit_down_count}只>{limit_down_threshold}，跳过筛选")
+                return
+        except Exception:
+            log_alert("INFO", "极端行情", "跌停计数API不可达，跳过跌停阈值检查")
     else:
         log_alert("WARNING", "极端行情", "上证指数双路API均不可达")
         print(f"  上证指数数据获取失败（双路均失败），继续")
@@ -203,7 +236,9 @@ def step3_foreign_market(ctx):
         ctx['foreign_weak'] = True
         print(f"  ⚠️ 美股三大指数均跌>2% → 弱市仓位≤30%")
     elif len(us_chg_values) == 0:
-        print(f"  美股数据均不可得，跳过美股检查")
+        # 美股假期检测：所有数据均为None→可能美股休市，跳过美股检查
+        print(f"  美股数据均不可得，可能美股休市，跳过美股检查")
+        log_alert("INFO", "外围市场", "美股数据不可得，可能美股休市，跳过美股检查")
     
     # 2. 恒生指数检查
     hsi_chg = _fetch_yahoo_chg('^HSI', '恒生指数')

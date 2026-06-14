@@ -58,7 +58,8 @@ def step4_holdings_sync(ctx):
                         updated += 1
                         print(f"  {code} {h.get('name','?')}: {old_current}→{current} (涨跌{h.get('pnl_pct',0)}%)")
         except Exception as e:
-            log_alert("WARNING", "持仓行情同步", f"{code} 搜索失败: {str(e)[:60]}")
+            log_alert("WARNING", "持仓行情同步", f"{code} 搜索失败: {str(e)[:60]}，保留旧数据")
+            # 保留旧current和prev_close不变
             continue
     
     # 更新回推荐历史文件（按日期分文件，找到含该holding的文件更新）
@@ -99,6 +100,10 @@ def step4A_do_T_eval(ctx):
     print("=" * 60)
     
     holdings = ctx.get('holdings', [])
+    all_history = ctx.get('all_history', [])
+    data_date = ctx['data_date']
+    do_t_reset_count = ctx.get('params', {}).get('do_t_success_reset_count', 3)
+    
     if not holdings:
         print("  无持仓，跳过做T评估")
         return
@@ -109,43 +114,60 @@ def step4A_do_T_eval(ctx):
         code = h.get('code', '?')
         name = h.get('name', '?')
         
-        # Evaluate do T feasibility
-        # 简化：按浮亏比例判断 + 连续成功/失败跟踪
-        # 实际：需要下影/十字星/站MA5检测（K线历史数据目前不可达）
+        # Evaluate do T feasibility — SKILL §九 做T评估仓位阶梯
+        # 浮亏<5%或浮盈→观望 | 5-10%(含10%)→重点评估≤1/3 | 10-15%(含15%)→谨慎≤1/4 | >15%→不做T
         do_t_feasible = '观望'
+        position_limit = 0
         pnl_ratio = abs(pnl_pct)
         
-        if pnl_ratio < 1:
-            do_t_feasible = False  # 浮亏<1%，无需
-        elif pnl_ratio < 3:
-            # 检查波动率是否≥3%（做T空间）
+        if pnl_pct >= 0 or pnl_ratio < 5:
+            do_t_feasible = False  # 浮盈或浮亏<5%，无需做T
+            position_limit = 0
+        elif 5 <= pnl_ratio <= 10:
+            # 重点评估：仓位≤总持仓1/3
+            position_limit = 1  # 1/3
             amplitude = h.get('amplitude', 0)
             if amplitude >= 3:
                 do_t_feasible = True
             else:
                 do_t_feasible = '观望'  # 波动不足
-        elif 3 <= pnl_ratio < 6:
-            do_t_feasible = True
-            # 检查前一日是否放量跌（volume_ratio>1.2→谨慎）
-            vol_ratio = h.get('volume_ratio', 0)
-            if vol_ratio and vol_ratio > 1.5:
-                do_t_feasible = '谨慎'  # 放量跌→可能继续下行
-                log_alert("INFO", "做T评估", f"{code} {name} 放量跌(量比{vol_ratio})，做T评估降为谨慎")
+        elif 10 < pnl_ratio <= 15:
+            # 谨慎评估：仓位≤总持仓1/4
+            position_limit = 2  # 1/4
+            amplitude = h.get('amplitude', 0)
+            if amplitude >= 3:
+                do_t_feasible = '谨慎'
+                # 检查前一日是否放量跌
+                vol_ratio = h.get('volume_ratio', 0)
+                if vol_ratio and vol_ratio > 1.5:
+                    do_t_feasible = '谨慎'  # 放量跌→可能继续下行
+                    log_alert("INFO", "做T评估", f"{code} {name} 放量跌(量比{vol_ratio})，做T评估降为谨慎")
+            else:
+                do_t_feasible = '观望'
         else:
-            do_t_feasible = '观望'  # 浮亏>6%，风险过大
+            do_t_feasible = False  # 浮亏>15%，不做T
+            position_limit = 0
         
-        # 连续成功/失败计数跟踪
+        # 连续成功/失败计数跟踪（SKILL §九: 累计成功≥do_t_success_reset_count次→重置失败计数器）
         do_t_history = [r for r in all_history if r.get('type') == 'do_T' and r.get('code') == code]
         recent_do_t = [r for r in do_t_history 
                        if datetime.strptime(r.get('date', '2000-01-01'), '%Y-%m-%d') >= 
                           (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=30))]
         success_count = sum(1 for r in recent_do_t if r.get('result') == 'success')
         fail_count = sum(1 for r in recent_do_t if r.get('result') == 'fail')
-        if fail_count >= 3 and success_count == 0:
-            do_t_feasible = False
-            log_alert("WARNING", "做T评估", f"{code} {name} 近30天做T连续{fail_count}次失败，暂停建议")
         
-        print(f"  {code} {name}: {do_t_feasible} (浮亏{pnl_pct:.1f}%)")
+        # 累计成功≥reset_count次→重置失败计数器
+        effective_fail_count = fail_count
+        if do_t_feasible in (True, '谨慎') and success_count >= do_t_reset_count:
+            effective_fail_count = 0
+            log_alert("INFO", "做T评估", f"{code} {name} 累计成功{success_count}次≥{do_t_reset_count}，重置失败计数器")
+        
+        if effective_fail_count >= 3 and success_count < do_t_reset_count:
+            do_t_feasible = False
+            position_limit = 0
+            log_alert("WARNING", "做T评估", f"{code} {name} 近30天做T连续{effective_fail_count}次失败，暂停建议")
+        
+        print(f"  {code} {name}: {do_t_feasible} (浮亏{pnl_pct:.1f}%,仓位限制{position_limit})")
         
         do_t_eval = {
             "type": "do_T_eval",
@@ -155,7 +177,7 @@ def step4A_do_T_eval(ctx):
             "pnl_pct": pnl_pct,
             "do_T_feasible": do_t_feasible,
             "reason": f"浮亏{pnl_pct:.1f}%",
-            "position_limit": 0
+            "position_limit": position_limit
         }
         do_t_evals.append(do_t_eval)
     

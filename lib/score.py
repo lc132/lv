@@ -233,6 +233,18 @@ def step14_16_scoring(ctx):
     # 按评分排序（同分二次评估：量比→换手率→涨跌幅→板块热度→策略优先级）
     candidates = tie_break_sort(candidates)
     
+    # 置信度-仓位联动（SKILL §七: confidence_position_enabled=true→按置信度分配仓位权重）
+    if ctx.get('params', {}).get('confidence_position_enabled', True):
+        for c in candidates:
+            conf = c.get('confidence', '★')
+            if conf == '★★★':
+                c['_position_weight'] = 1.2  # 仓位上限
+            elif conf == '★★':
+                c['_position_weight'] = 1.0  # 仓位中值
+            else:
+                c['_position_weight'] = 0.8  # 仓位下限
+        log_alert("INFO", "评分", f"置信度-仓位联动已启用")
+    
     ctx['candidates'] = candidates
 
 # ============================================================
@@ -313,6 +325,9 @@ def step17_industry_limit(ctx):
             low_vol_count[industry] += 1
         
         strategy_count[strategy] += 1
+        # 创业板强市仓位减半：双倍计数（SKILL §一规则21: 仓位减半）
+        if c.get('_gem_half_position'):
+            strategy_count[strategy] += 1  # 占用双倍名额
         if industry != '未知':
             industry_count[industry] += 1
         strategy_limited.append(c)

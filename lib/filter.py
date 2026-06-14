@@ -130,6 +130,8 @@ def step11_hard_exclude(ctx):
             if ctx.get('market_condition') != '强市':
                 reason = "创业板非强市(规则21)"
                 skip = True
+            # 通过：强市中的创业板，标记仓位减半（SKILL §一规则21: 仓位减半）
+            # 标记由步骤17行业限制消费
         # 规则22: 跌停
         elif change_pct < -9.5:
             reason = "跌停(规则22)"
@@ -216,6 +218,9 @@ def step11_hard_exclude(ctx):
         
         if l3_flags:
             c['L3_flags'] = l3_flags
+        # 创业板强市通过：标记仓位减半
+        if code.startswith(('300', '301')):
+            c['_gem_half_position'] = True
         passed.append(c)
     
     for msg in sorted(l2_skip_log):

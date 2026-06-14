@@ -127,6 +127,7 @@ def step7_earnings_season(ctx):
     is_earnings = month in [1, 3, 4, 8, 10]
     ctx['is_earnings_season'] = is_earnings
     if is_earnings:
+        ctx['_earnings_bonus'] = True  # 由步骤8消费：仓位+5%
         print(f"  {month}月是财报季 → 事件驱动权重×1.5 + 仓位+5% + 动量延续涨幅上限7%→8%")
     else:
         print(f"  {month}月非财报季")
@@ -309,6 +310,12 @@ def step8_market_judgment(ctx):
         ctx['position'] = position
         print(f"  长休≥3日→仓位压至{position}%")
     
+    # 财报季仓位+5%（SKILL §步骤7: 1/3/4/8/10月→仓位+5%）
+    if ctx.get('_earnings_bonus'):
+        position = min(position + 5, 80)
+        ctx['position'] = position
+        print(f"  财报季→仓位+5%至{position}%")
+    
     ctx['position_plan'] = position_plan
     print(f"  市场环境: {market} → 总仓位{position}% → A:{position_plan['A']}% B:{position_plan['B']}% C:{position_plan['C']}% D:{position_plan['D']}% E:{position_plan['E']}%")
 
@@ -350,6 +357,7 @@ def step9_sector_rotation(ctx):
                     if len(outflow_sectors) < 5 and inflow < 0:
                         outflow_sectors.append(name)
             top_sectors = inflow_sectors[:5]
+            ctx['top_sectors'] = top_sectors
             ctx['inflow_sectors'] = inflow_sectors
             ctx['outflow_sectors'] = outflow_sectors
             print(f"  资金流入TOP5: {', '.join(inflow_sectors[:5])}")
@@ -406,10 +414,14 @@ def step9A_max_holding(ctx):
             exit_list.append((code, name, f"T+{days}横盘不作为(涨幅{pnl_pct:.1f}%<2%) → 主动退出", pnl_pct))
             continue
         
-        # T+1 日内止损：跌幅>7%
-        if days >= 1 and pnl_pct < -7:
-            exit_list.append((code, name, f"T+{days}日内止损(跌幅{pnl_pct:.1f}%>7%) → 极端行情保护", pnl_pct))
-            continue
+        # T+1 日内止损：当日跌幅>7%（SKILL §九.A: T+1日盘中跌幅>7%→日内止损）
+        if days >= 1:
+            prev_close = h.get('prev_close')
+            if prev_close and prev_close > 0 and current > 0:
+                daily_drop = (current - prev_close) / prev_close * 100
+                if daily_drop < -7:
+                    exit_list.append((code, name, f"T+{days}日内止损(当日跌{daily_drop:.1f}%>7%) → 极端行情保护", pnl_pct))
+                    continue
     
     if exit_list:
         print(f"  触发退出规则: {len(exit_list)} 只")
@@ -441,9 +453,14 @@ def step9B_circuit_breaker(ctx):
     
     triggered_today = False
     for h in holdings:
-        pnl_pct = h.get('pnl_pct', 0)
-        if pnl_pct is not None and pnl_pct < -threshold:
-            msg = f"{h.get('code')} {h.get('name')} 当日亏损{pnl_pct:.1f}% > {threshold}%"
+        # 当日跌幅 = (current - prev_close) / prev_close（SKILL §九.B: 任一持仓当日亏损>threshold%）
+        current = h.get('current', 0)
+        prev_close = h.get('prev_close')
+        daily_drop = 0
+        if prev_close and prev_close > 0 and current > 0:
+            daily_drop = (current - prev_close) / prev_close * 100
+        if daily_drop < -threshold:
+            msg = f"{h.get('code')} {h.get('name')} 当日跌{daily_drop:.1f}% > {threshold}%"
             print(f"  ⚠️ {msg}")
             triggered_today = True
     

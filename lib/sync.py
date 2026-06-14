@@ -133,6 +133,30 @@ def step26_github_sync(ctx):
             capture_output=True, text=True, timeout=30, check=True
         )
         
+        # 校验筛选条件xlsx版本（SKILL §十三.A: 推送前检查版本一致性）
+        local_xlsx = f"{DATA_DIR}/A股短线选股筛选条件.xlsx"
+        if os.path.exists(local_xlsx):
+            try:
+                from openpyxl import load_workbook
+                wb = load_workbook(local_xlsx, read_only=True)
+                # 尝试从第一Sheet A1读取版本号
+                xlsx_version = None
+                if wb.sheetnames:
+                    ws = wb[wb.sheetnames[0]]
+                    a1_val = ws.cell(row=1, column=1).value
+                    if a1_val and 'v' in str(a1_val).lower():
+                        xlsx_version = str(a1_val).strip()
+                wb.close()
+                file_version = ctx.get('file_version', '')
+                if xlsx_version and file_version and xlsx_version != file_version:
+                    log_alert("INFO", "GitHub同步", f"筛选条件xlsx版本({xlsx_version})≠代码版本({file_version})，同步更新")
+                    shutil.copy(local_xlsx, os.path.join(repo_dir, "A股短线选股筛选条件.xlsx"))
+                    print(f"  筛选条件xlsx版本不一致({xlsx_version}≠{file_version})，已同步更新")
+            except Exception:
+                log_alert("INFO", "GitHub同步", "筛选条件xlsx版本检查跳过（文件不可读）")
+        else:
+            log_alert("INFO", "GitHub同步", "筛选条件xlsx不存在，跳过版本检查")
+        
         # 清理超15天旧文件
         cutoff_date = datetime.now() - timedelta(days=15)
         for f in os.listdir(repo_dir):
