@@ -1643,30 +1643,29 @@ def step13_strategy_match(ctx):
         if not is_earnings and 1 <= change_pct <= 4 and is_active and amplitude >= 4 and amount >= 200_000_000:
             strategies.append(('C', '事件驱动(放量异动)', 1))
         
-        # 策略D: 回调企稳突破 (温和涨幅1-3%+高活跃+收盘>开盘+有一定振幅)
-        # D(回调企稳)信号强于E(资金埋伏)，因此D排在E前（A>B>C>D>E自然顺序）
-        if 1 <= change_pct <= 3 and is_active and close > open_p and amplitude >= 2:
-            strategies.append(('D', '回调企稳突破', 1))
-        
-        # 策略D: 强势突破 (涨幅3-5%+高活跃+收盘>开盘+高振幅)
-        if 3 < change_pct <= 5 and is_active and close > open_p and amplitude >= 3:
-            strategies.append(('D', '强势突破', 1.5))
-        
-        # 策略E: 资金埋伏 (极温和涨幅0-1.5%+中等活跃+收盘>开盘+量比>0.8)
+        # 策略D: 回调企稳 (极温和涨幅0-1.5%+中等活跃+收盘>开盘+量比>0.8)
         if 0 < change_pct <= 1.5 and is_moderate and close > open_p and volume_ratio >= 0.8:
-            strategies.append(('E', '资金埋伏', 0.5))
+            strategies.append(('D', '回调企稳', 0.5))
         
-        # 策略E增强: 主力流入信号+量比>0.8
+        # 策略D增强: 主力流入信号+量比>0.8
         if main_inflow and main_inflow > 0 and 0 < change_pct < 2 and volume_ratio >= 0.8:
-            strategies.append(('E', '资金埋伏(主力流入)', 1))
+            strategies.append(('D', '回调企稳(主力流入)', 1))
+        
+        # 策略E: 资金埋伏 (温和涨幅1-3%+高活跃+收盘>开盘+有一定振幅)
+        if 1 <= change_pct <= 3 and is_active and close > open_p and amplitude >= 2:
+            strategies.append(('E', '资金埋伏', 1))
+        
+        # 策略E: 强势资金 (涨幅3-5%+高活跃+收盘>开盘+高振幅)
+        if 3 < change_pct <= 5 and is_active and close > open_p and amplitude >= 3:
+            strategies.append(('E', '强势资金', 1.5))
         
         # 兜底策略：涨幅适中+活跃→A
         if not strategies and 2 < change_pct <= 5 and is_active and close > open_p:
             strategies.append(('A', '动量延续(活跃)', 1))
         
-        # 兜底：极温和+活跃→E
+        # 兜底：极温和+活跃→D
         if not strategies and 0 < change_pct <= 2 and is_active and close > open_p and volume_ratio >= 0.8:
-            strategies.append(('E', '资金埋伏(活跃)', 0.5))
+            strategies.append(('D', '回调企稳(活跃)', 0.5))
         
         if not strategies and -3 <= change_pct < 0 and is_moderate:
             strategies.append(('B', '超跌反弹(弱势)', 0.5))
@@ -1675,7 +1674,7 @@ def step13_strategy_match(ctx):
             strategies.append(('B', '超跌反弹(量价异动)', 0.8))
         
         if strategies:
-            # 按优先级排序: A>B>C>D>E（D回调企稳>E资金埋伏，自然顺序即可）
+            # 按优先级排序: A>B>C>D>E
             strategies.sort(key=lambda x: {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4}[x[0]])
             best = strategies[0]
             c['strategy'] = best[0]
@@ -1727,7 +1726,7 @@ def tie_break_sort(candidates):
             t_score = 0.1
         
         change_pct = rec.get('change_pct') or 0
-        if strategy in ('A', 'E'):
+        if strategy in ('A', 'D'):
             c_score = max(0, 1.0 - abs(change_pct - 3) / 7.0)
         elif strategy == 'B':
             c_score = max(0, 1.0 - abs(change_pct + 5) / 5.0)
@@ -1780,7 +1779,7 @@ def step14_16_scoring(ctx):
             act_score = 0
         
         # 基础分：策略基准
-        strategy_base = {'A': 5, 'B': 4, 'C': 3, 'D': 3, 'E': 2}
+        strategy_base = {'A': 5, 'B': 4, 'C': 3, 'D': 2, 'E': 3}
         score = strategy_base.get(strategy, 3)
         
         # 加分项
@@ -1799,12 +1798,12 @@ def step14_16_scoring(ctx):
         elif strategy == 'B' and -5 <= change_pct <= -2:
             score += 2
             reasons.append("超跌充分+2")
-        elif strategy == 'D' and 1 <= change_pct <= 2.5:
+        elif strategy == 'D' and 0.5 <= change_pct <= 1.5:
             score += 1
-            reasons.append("温和突破+1")
-        elif strategy == 'E' and 0.5 <= change_pct <= 1.5:
+            reasons.append("温和企稳+1")
+        elif strategy == 'E' and 1 <= change_pct <= 2.5:
             score += 1
-            reasons.append("温和涨幅+1")
+            reasons.append("温和推升+1")
         
         # 量比/活跃度
         if volume_ratio is not None and 1.5 <= volume_ratio <= 2.5:
@@ -1863,7 +1862,7 @@ def step14_16_scoring(ctx):
         elif strategy == 'B':
             stop_loss = round(close * 0.95, 2)
             take_profit = round(close * 1.06, 2)
-        elif strategy == 'D':
+        elif strategy == 'E':
             stop_loss = round(close * 0.95, 2)
             take_profit = round(close * 1.05, 2)
         else:
