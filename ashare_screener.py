@@ -11,7 +11,7 @@ from collections import Counter
 # ============================================================
 # 全局配置
 # ============================================================
-BUILTIN_VERSION = "v6.6.13"
+BUILTIN_VERSION = "v6.6.14"
 DATA_DIR = "/workspace"
 TEMP_DIR = "/data/user/work"
 # GitHub Token 从外部文件读取（不入git，防止泄露）
@@ -634,12 +634,15 @@ def step6_file_init(ctx):
         if history_version != BUILTIN_VERSION:
             print(f"  版本变更: 推荐历史{history_version} → 当前代码{BUILTIN_VERSION}，以代码为准")
             log_alert("INFO", "版本检查", f"推荐历史版本{history_version}≠当前代码{BUILTIN_VERSION}，以代码为准")
+            ctx['_version_changed'] = True
         else:
             print(f"  版本一致: {BUILTIN_VERSION}")
             log_alert("INFO", "版本检查", f"版本一致{BUILTIN_VERSION}")
+            ctx['_version_changed'] = False
     
     # 首次运行或版本变更→追加strategy_check（使用当前代码版本）
     if last_check is None or (last_check.get('version', '') != BUILTIN_VERSION):
+        ctx['_version_changed'] = True
         strategy_check = {
             "type": "strategy_check",
             "version": BUILTIN_VERSION,
@@ -2467,6 +2470,14 @@ def step26_github_sync(ctx):
         local_index = f"{DATA_DIR}/index.html"
         if os.path.exists(local_index):
             shutil.copy(local_index, os.path.join(repo_dir, "index.html"))
+        
+        # 版本变更时同步推送策略调整记录
+        if ctx.get('_version_changed'):
+            local_adjust = f"{DATA_DIR}/策略调整记录.json"
+            if os.path.exists(local_adjust):
+                shutil.copy(local_adjust, os.path.join(repo_dir, "策略调整记录.json"))
+                print(f"  版本变更 → 同步策略调整记录")
+                log_alert("INFO", "GitHub同步", f"版本变更，同步策略调整记录")
         
         # Git操作
         subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True)
