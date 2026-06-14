@@ -124,7 +124,7 @@ def step13_strategy_match(ctx):
         if 1 <= change_pct <= 3 and is_active and close > open_p and amplitude >= 2:
             # 假突破过滤：如果收盘价接近当日最低价(收盘-最低)/最低价<0.5%，可能是假突破
             low = c.get('low', 0)
-            if low > 0 and (close - low) / low < 0.005:
+            if low > 0 and close > 0 and (close - low) / close < 0.002 and amplitude < 1.5:
                 pass  # 假突破，跳过
             else:
                 strategies.append(('E', '资金埋伏', 1))

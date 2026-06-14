@@ -204,7 +204,7 @@ def step8_market_judgment(ctx):
                     up_data = json.loads(up_resp.read()).get('data', {})
                     up_count = up_data.get('f171', 0)
                     down_count = up_data.get('f172', 0)
-                    if up_count and down_count and down_count > 0:
+                    if up_count is not None and down_count is not None and down_count > 0:
                         up_down_ratio = round(up_count / down_count, 2)
                         print(f"  涨跌家数: ↑{up_count} ↓{down_count} 比={up_down_ratio}")
                 except Exception:

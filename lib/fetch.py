@@ -373,6 +373,7 @@ def step10A_fetch_all_stocks(ctx):
                                 "amount": amount_val,
                                 "main_inflow": None,
                                 "total_cap": None,
+                                "pe_ttm": None,
                             })
                         except (ValueError, IndexError):
                             continue
