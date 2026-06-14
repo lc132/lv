@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的筛选 v6.6.5
+A股每日盘前短线标的筛选 v6.6.15
 严格按 SKILL.md 十五、完整执行步骤 逐步执行
 """
 import os, sys, json, time, urllib.request, urllib.error, subprocess, shutil, re
@@ -11,7 +11,7 @@ from collections import Counter
 # ============================================================
 # 全局配置
 # ============================================================
-BUILTIN_VERSION = "v6.6.14"
+BUILTIN_VERSION = "v6.6.15"
 DATA_DIR = "/workspace"
 TEMP_DIR = "/data/user/work"
 # GitHub Token 从外部文件读取（不入git，防止泄露）
@@ -2425,9 +2425,9 @@ def step26_github_sync(ctx):
                         print(f"  清理旧文件: {f}")
                 except:
                     pass
-            if (f.startswith("短线标的_") and (f.endswith(".md") or f.endswith(".xlsx"))):
+            if (f.startswith("短线标的_") and f.endswith(".md")):
                 try:
-                    date_str = f.replace("短线标的_", "").replace(".md", "").replace(".xlsx", "").replace("-", "")
+                    date_str = f.replace("短线标的_", "").replace(".md", "").replace("-", "")
                     f_date = datetime.strptime(date_str, '%Y%m%d')
                     if f_date < cutoff_date:
                         os.remove(os.path.join(repo_dir, f))
