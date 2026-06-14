@@ -215,6 +215,14 @@ def step26_github_sync(ctx):
         if os.path.exists(local_index):
             shutil.copy(local_index, os.path.join(repo_dir, "index.html"))
         
+        # 推送 SKILL.md 规则文件（保持仓库版本与当前运行版本一致）
+        local_skill = f"{DATA_DIR}/SKILL.md"
+        if not os.path.exists(local_skill):
+            local_skill = "/workspace/SKILL.md"
+        if os.path.exists(local_skill):
+            shutil.copy(local_skill, os.path.join(repo_dir, "SKILL.md"))
+            print(f"  已同步 SKILL.md 规则文件")
+        
         # 版本变更时同步推送策略调整记录
         if ctx.get('_version_changed'):
             local_adjust = f"{DATA_DIR}/策略调整记录.json"

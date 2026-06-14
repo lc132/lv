@@ -622,6 +622,10 @@ def step9C_conversion_rate(ctx):
         print(f"  兑现率{overall_rate*100:.1f}% ≥ {restore_threshold*100}% → 仓位恢复至正常档位")
         ctx['conversion_rate_ok'] = True
         ctx['position'] = 55  # 恢复默认仓位（步骤8大盘判断会再调整）
+        # 财报季+5%重新应用（SKILL §步骤7: 1/3/4/8/10月→仓位+5%）
+        if ctx.get('_earnings_bonus'):
+            ctx['position'] = min(ctx['position'] + 5, 80)
+            print(f"  兑现率恢复后重新应用财报季+5%→{ctx['position']}%")
     else:
         ctx['conversion_rate_ok'] = True
     

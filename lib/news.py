@@ -101,6 +101,15 @@ def step18_news_screening(ctx):
     # 重新按评分排序
     if eliminated > 0 or news_bonus > 0:
         candidates = tie_break_sort(candidates)
+        # 重新计算置信度（SKILL §六: 评分变更后置信度需同步刷新）
+        for c in candidates:
+            s = c.get('score', 0)
+            if s >= 9:
+                c['confidence'] = "★★★"
+            elif s >= 6:
+                c['confidence'] = "★★"
+            else:
+                c['confidence'] = "★"
     
     ctx['candidates'] = candidates
     ctx['passed_news'] = len(candidates)
