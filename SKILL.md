@@ -1,8 +1,8 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.6.15)。基于前一日收盘数据，通过 35步筛选流程（网络授时北京时间→GitHub拉取持仓跟踪→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→全市场API拉取(东方财富clist)→板块/行业补全→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分（含评分相同时二次评估打破平局）→行业集中度→新闻筛查→生成HTML报告→GitHub同步(含超15天旧文件自动清理)→飞书推送→每周复盘），输出短线标的_YYYYMMDD.md 预测次日上涨的标的为Markdown格式，同时生成可视化HTML报告。推荐历史按日期归档(推荐历史_YYYYMMDD.json)互不覆盖，告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.6.16)。基于前一日收盘数据，通过 35步筛选流程（网络授时北京时间→GitHub拉取持仓跟踪→节假日检查→极端行情→外围市场→持仓同步→做T评估→持仓跟踪同步→持仓危机检查→全市场API拉取(东方财富clist)→板块/行业补全→31项硬排除(L1/L2/L3三级可达性)→14项信号过滤→五大策略评分（含评分相同时二次评估打破平局）→行业集中度→新闻筛查→生成HTML报告→GitHub同步(含超15天旧文件自动清理)→飞书推送→每周复盘），输出短线标的_YYYYMMDD.md 预测次日上涨的标的为Markdown格式，同时生成可视化HTML报告。推荐历史按日期归档(推荐历史_YYYYMMDD.json)互不覆盖，告警日志仅在自动化中写。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.6.15
+# A股盘前短线标的筛选 v6.6.16
 
 基于前一日完整收盘数据筛选当日有望上涨的A股短线标的。**不追高是硬纪律。**
 
@@ -288,27 +288,35 @@ def check_holding_crisis(holdings):
 # data_date 由步骤0定义（beijing_date的值），如 "2026-06-12"
 try:
     from datetime import datetime, timedelta
-    history = safe_read_json('/workspace/推荐历史.json')
+    # 逐日期文件独立清理
+    total_cleaned = 0
+    for f in sorted(os.listdir('/workspace')):
+        if not (f.startswith('推荐历史_') and f.endswith('.json')):
+            continue
+        history = safe_read_json(f'/workspace/{{f}}')
     cutoff_7d_dt = datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=7)
     cutoff_90d_dt = datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=90)
     cutoff_7d = cutoff_7d_dt.strftime('%Y-%m-%d')
     cutoff_90d = cutoff_90d_dt.strftime('%Y-%m-%d')
-    new_history = []
-    for r in history:
+        new_records = []
+        for r in history:
         t = r.get('type', '')
         if t in ('weekly_review', 'strategy_check', 'do_T_eval', 'do_T'):
-            new_history.append(r)  # 永久保留（do_T 由主对话管理，不在此处清理）
+                new_records.append(r)
         elif t in ('holding',):
             d = r.get('update_date', '')
             if d >= cutoff_90d:
-                new_history.append(r)  # 90天内保留
+                    new_records.append(r)
         elif t == 'recommendation':
             d = r.get('date', '')
             if d >= cutoff_7d:
-                new_history.append(r)  # 7天内保留
+                    new_records.append(r)
     if len(new_history) < len(history):
-        safe_write_json('/workspace/推荐历史.json', new_history)
-        log_alert("INFO", "清理", f"已清理{len(history)-len(new_history)}条过期记录")
+        if len(new_records) < len(history):
+            safe_write_json(f'/workspace/{{f}}', new_records)
+            total_cleaned += len(history) - len(new_records)
+    if total_cleaned > 0:
+        log_alert("INFO", "清理", f"已清理{total_cleaned}条过期记录")
     else:
         log_alert("INFO", "清理", "无需清理")
 except Exception as e:
@@ -972,7 +980,7 @@ if os.path.exists(md_path):
 
 推送前先检查 `/workspace/A股短线选股筛选条件.xlsx` 版本是否与当前 `file_version` 一致，不一致则先更新后再推送。
 
-⚠️ **不上传推荐历史.json**（含持仓隐私）。上传筛选结果 Markdown、HTML报告和筛选条件表格。
+上传筛选结果 Markdown、HTML报告和筛选条件表格。推荐历史按日期归档到 `推荐历史_YYYYMMDD.json`。
 
 **执行逻辑**（失败仅 log_alert WARNING，不影响主流程）：
 ```python
@@ -1231,13 +1239,13 @@ finally:
 - **步骤24 告警日志摘要**：读取 `/workspace/系统告警.log` 当天记录，在对话中输出告警汇总（若当天无告警则输出「今日无异常」）。
 - 其余步骤的详细执行逻辑见正文各对应章节。
 
-## 十六、持久化文件说明（除短线标的文件外，本技能可读写推荐历史.json/持仓跟踪.xlsx/系统告警.log/筛选条件.xlsx；策略调整记录.json只读；绩效统计/周度复盘等由主对话管理）
+## 十六、持久化文件说明（除短线标的文件外，本技能可读写推荐历史_YYYYMMDD.json/持仓跟踪.xlsx/系统告警.log/筛选条件.xlsx；策略调整记录.json只读；绩效统计/周度复盘等由主对话管理）
 
 | 文件 | 操作 |
 |------|------|
 | **短线标的_YYYYMMDD.md** | 输出预测结果到该文件（唯一输出文件） |
 | **ashare-screening-YYYYMMDD/** | 输出自包含HTML报告（纯CSS可视化、筛选管道、告警日志，零JS依赖） |
-| 推荐历史.json | safe_append_json追加推荐记录 + 清理7天推荐 + 清理90天holding+do_T；步骤4更新holding收盘价 |
+| 推荐历史_YYYYMMDD.json | 按日期独立归档；步骤4更新holding收盘价写入对应日期文件；步骤5逐文件独立清理 |
 | 持仓跟踪.xlsx | 步骤4B同步持仓收盘价（仅更新当前价/市值/盈亏，不修改成本/持仓量） |
 | 策略调整记录.json | 只读version+params，不写入 |
 | 系统告警.log | 所有异常写入告警日志 |

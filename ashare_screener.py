@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的筛选 v6.6.15
+A股每日盘前短线标的筛选 v6.6.16
 严格按 SKILL.md 十五、完整执行步骤 逐步执行
 """
 import os, sys, json, time, urllib.request, urllib.error, subprocess, shutil, re
@@ -11,7 +11,7 @@ from collections import Counter
 # ============================================================
 # 全局配置
 # ============================================================
-BUILTIN_VERSION = "v6.6.15"
+BUILTIN_VERSION = "v6.6.16"
 DATA_DIR = "/workspace"
 TEMP_DIR = "/data/user/work"
 # GitHub Token 从外部文件读取（不入git，防止泄露）
@@ -103,12 +103,27 @@ def read_all_history():
         if f.startswith("推荐历史_") and f.endswith(".json"):
             records = safe_read_json(os.path.join(DATA_DIR, f))
             all_history.extend(records)
-    # Also read the main one
-    main_path = f"{DATA_DIR}/推荐历史.json"
-    if os.path.exists(main_path):
-        records = safe_read_json(main_path)
-        all_history.extend(records)
     return all_history
+
+def write_history_to_date_files(all_history, default_date):
+    """将 all_history 按记录的 date/update_date 分组写入对应日期的归档文件"""
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for r in all_history:
+        t = r.get('type', '')
+        if t == 'holding':
+            d = r.get('update_date', default_date)
+        elif t in ('recommendation', 'strategy_check', 'weekly_review', 'do_T', 'do_T_eval'):
+            d = r.get('date', default_date)
+        else:
+            d = default_date
+        if d:
+            d_compact = d.replace('-', '')
+        else:
+            d_compact = default_date.replace('-', '')
+        groups[d_compact].append(r)
+    for d_compact, records in groups.items():
+        safe_write_json(f"{DATA_DIR}/推荐历史_{d_compact}.json", records)
 
 # ============================================================
 # 步骤0: 获取北京时间
@@ -439,7 +454,7 @@ def step4_holdings_sync(ctx):
                         for k in ['current', 'prev_close', 'pnl_pct', 'pnl_amount', 'market_value', 'update_date']:
                             if k in h:
                                 r[k] = h[k]
-        safe_write_json(f"{DATA_DIR}/推荐历史.json", all_history)
+        write_history_to_date_files(all_history, ctx['beijing_date'])
         print(f"  已更新 {updated} 只持仓价格")
     
     ctx['holdings'] = holdings
@@ -501,7 +516,7 @@ def step4A_do_T_eval(ctx):
     
     # 追加到推荐历史
     for eval_rec in do_t_evals:
-        safe_append_json(f"{DATA_DIR}/推荐历史.json", eval_rec)
+        safe_append_json(f"{DATA_DIR}/推荐历史_{ctx['beijing_date'].replace('-', '')}.json", eval_rec)
     
     ctx['do_t_evals'] = do_t_evals
 
@@ -563,11 +578,10 @@ def step4C_holding_crisis(ctx):
 # ============================================================
 def step5_clean_history(ctx):
     print("\n" + "=" * 60)
-    print("步骤5: 推荐历史清理")
+    print("步骤5: 推荐历史清理（逐日期文件独立清理）")
     print("=" * 60)
     
     data_date = ctx['data_date']
-    all_history = ctx.get('all_history', [])
     
     try:
         cutoff_7d_dt = datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=7)
@@ -575,29 +589,41 @@ def step5_clean_history(ctx):
         cutoff_7d = cutoff_7d_dt.strftime('%Y-%m-%d')
         cutoff_90d = cutoff_90d_dt.strftime('%Y-%m-%d')
         
-        new_history = []
-        for r in all_history:
-            t = r.get('type', '')
-            if t in ('weekly_review', 'strategy_check', 'do_T_eval', 'do_T'):
-                new_history.append(r)
-            elif t == 'holding':
-                d = r.get('update_date', '')
-                if d >= cutoff_90d:
-                    new_history.append(r)
-            elif t == 'recommendation':
-                d = r.get('date', '')
-                if d >= cutoff_7d:
-                    new_history.append(r)
-        
-        if len(new_history) < len(all_history):
-            safe_write_json(f"{DATA_DIR}/推荐历史.json", new_history)
-            print(f"  已清理 {len(all_history)-len(new_history)} 条过期记录")
-            log_alert("INFO", "清理", f"已清理{len(all_history)-len(new_history)}条过期记录")
+        total_cleaned = 0
+        for f in sorted(os.listdir(DATA_DIR)):
+            if not (f.startswith("推荐历史_") and f.endswith(".json")):
+                continue
+            filepath = os.path.join(DATA_DIR, f)
+            records = safe_read_json(filepath)
+            if not records:
+                continue
+            new_records = []
+            for r in records:
+                t = r.get('type', '')
+                if t in ('weekly_review', 'strategy_check', 'do_T_eval', 'do_T'):
+                    new_records.append(r)
+                elif t == 'holding':
+                    d = r.get('update_date', '')
+                    if d >= cutoff_90d:
+                        new_records.append(r)
+                elif t == 'recommendation':
+                    d = r.get('date', '')
+                    if d >= cutoff_7d:
+                        new_records.append(r)
+                else:
+                    new_records.append(r)
+            if len(new_records) < len(records):
+                safe_write_json(filepath, new_records)
+                total_cleaned += len(records) - len(new_records)
+        if total_cleaned > 0:
+            print(f"  已清理 {total_cleaned} 条过期记录")
+            log_alert("INFO", "清理", f"已清理{total_cleaned}条过期记录")
         else:
             print("  无需清理")
             log_alert("INFO", "清理", "无需清理")
         
-        ctx['all_history'] = new_history
+        # Re-read all_history after cleanup
+        ctx['all_history'] = read_all_history()
     except Exception as e:
         log_alert("WARNING", "清理", f"清理失败: {str(e)[:80]}")
         print(f"  清理失败: {str(e)[:60]}")
@@ -650,7 +676,7 @@ def step6_file_init(ctx):
             "date": ctx['beijing_date'],
             "checks": {}
         }
-        safe_append_json(f"{DATA_DIR}/推荐历史.json", strategy_check)
+        safe_append_json(f"{DATA_DIR}/推荐历史_{ctx['beijing_date'].replace('-', '')}.json", strategy_check)
         print(f"  已追加 strategy_check ({BUILTIN_VERSION})")
         log_alert("INFO", "策略检查", f"首次运行/版本变更，追加strategy_check {BUILTIN_VERSION}")
     
