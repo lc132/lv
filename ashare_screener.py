@@ -11,7 +11,7 @@ from collections import Counter
 # ============================================================
 # 全局配置
 # ============================================================
-BUILTIN_VERSION = "v6.6.12"
+BUILTIN_VERSION = "v6.6.13"
 DATA_DIR = "/workspace"
 TEMP_DIR = "/data/user/work"
 # GitHub Token 从外部文件读取（不入git，防止泄露）
@@ -621,7 +621,7 @@ def step6_file_init(ctx):
     else:
         file_version = BUILTIN_VERSION
     
-    # 版本一致性检查
+    # 版本一致性检查：比对历史记录版本 vs 当前代码版本
     all_history = ctx.get('all_history', [])
     last_check = None
     for r in reversed(all_history):
@@ -630,26 +630,26 @@ def step6_file_init(ctx):
             break
     
     if last_check:
-        current_version = last_check.get('version', 'unknown')
-        if current_version != file_version:
-            print(f"  版本不一致: 推荐历史{current_version}≠策略调整{file_version}，以策略调整为准")
-            log_alert("INFO", "版本检查", f"推荐历史版本{current_version}≠策略调整版本{file_version}，以策略调整为准")
+        history_version = last_check.get('version', 'unknown')
+        if history_version != BUILTIN_VERSION:
+            print(f"  版本变更: 推荐历史{history_version} → 当前代码{BUILTIN_VERSION}，以代码为准")
+            log_alert("INFO", "版本检查", f"推荐历史版本{history_version}≠当前代码{BUILTIN_VERSION}，以代码为准")
         else:
-            print(f"  版本一致: {file_version}")
-            log_alert("INFO", "版本检查", f"版本一致{file_version}")
+            print(f"  版本一致: {BUILTIN_VERSION}")
+            log_alert("INFO", "版本检查", f"版本一致{BUILTIN_VERSION}")
     
-    # 首次运行或版本变更→追加strategy_check
-    if last_check is None or (last_check.get('version', '') != file_version):
+    # 首次运行或版本变更→追加strategy_check（使用当前代码版本）
+    if last_check is None or (last_check.get('version', '') != BUILTIN_VERSION):
         strategy_check = {
             "type": "strategy_check",
-            "version": file_version,
+            "version": BUILTIN_VERSION,
             "params": params,
             "date": ctx['beijing_date'],
             "checks": {}
         }
         safe_append_json(f"{DATA_DIR}/推荐历史.json", strategy_check)
-        print(f"  已追加 strategy_check ({file_version})")
-        log_alert("INFO", "策略检查", f"首次运行/版本变更，追加strategy_check {file_version}")
+        print(f"  已追加 strategy_check ({BUILTIN_VERSION})")
+        log_alert("INFO", "策略检查", f"首次运行/版本变更，追加strategy_check {BUILTIN_VERSION}")
     
     ctx['file_version'] = file_version
     ctx['params'] = params
