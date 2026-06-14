@@ -272,6 +272,13 @@ def step12_signal_filter(ctx):
             if gap > 0.03 and body_ratio < 0.98:
                 reason = "假动量(高开低走)"
                 drop = True
+            # 规则1附加: 盘中最高涨>5%且收<开×1.01→诱多排除（SKILL §二.1）
+            high = c.get('high', 0)
+            if not drop and high > 0 and prev_close > 0 and open_p > 0:
+                high_chg = high / prev_close - 1
+                if high_chg > 0.05 and close < open_p * 1.01:
+                    reason = "假动量(诱多排除)"
+                    drop = True
         
         # 规则2: 缩量涨停 - 涨幅>5%但量<5日均×0.5（volume_ratio<0.5代理）
         if not drop and change_pct > 5 and volume_ratio > 0 and volume_ratio < 0.5:

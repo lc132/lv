@@ -304,14 +304,13 @@ def step8_market_judgment(ctx):
         position_plan['D'] = 0
         print(f"  ⚠️ 策略D暂停（人民币波动>0.5%）")
     
-    # 长休弱市压制仓位
+    # 长休弱市压制仓位（必须在财报季+5%之后执行，确保硬上限不被突破）
     if ctx.get('is_long_holiday'):
         position = min(position, 30)
         ctx['position'] = position
-        print(f"  长休≥3日→仓位压至{position}%")
-    
-    # 财报季仓位+5%（SKILL §步骤7: 1/3/4/8/10月→仓位+5%）
-    if ctx.get('_earnings_bonus'):
+        print(f"  长休≥3日→仓位压至{position}%（跳过财报季+5%）")
+    elif ctx.get('_earnings_bonus'):
+        # 财报季仓位+5%（SKILL §步骤7: 1/3/4/8/10月→仓位+5%）
         position = min(position + 5, 80)
         ctx['position'] = position
         print(f"  财报季→仓位+5%至{position}%")

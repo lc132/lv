@@ -171,6 +171,12 @@ def step14_16_scoring(ctx):
             score -= signal_deduction
             reasons.append(f"信号:{c.get('_signal_note','')}-{signal_deduction}")
         
+        # 信号加分（SKILL §二.13: 连板后首阴+1分）
+        signal_bonus = c.get('_signal_bonus', 0)
+        if signal_bonus > 0:
+            score += signal_bonus
+            reasons.append(f"信号加分:{c.get('_signal_note','')}+{signal_bonus}")
+        
         # L3 信号扣分
         l3_flags = c.get('L3_flags', [])
         if l3_flags:

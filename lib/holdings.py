@@ -57,6 +57,12 @@ def step4_holdings_sync(ctx):
                             h['market_value'] = round(current * shares, 2)
                         updated += 1
                         print(f"  {code} {h.get('name','?')}: {old_current}→{current} (涨跌{h.get('pnl_pct',0)}%)")
+            else:
+                # 空行情（新浪返回'=""'）：保留旧prev_close，确保step4C跌停检测可用
+                old_prev = h.get('prev_close')
+                if old_prev is None:
+                    h['prev_close'] = 0  # 标记为0使step4C知道有数据但不可用
+                log_alert("INFO", "持仓行情同步", f"{code} 行情为空，保留旧prev_close")
         except Exception as e:
             log_alert("WARNING", "持仓行情同步", f"{code} 搜索失败: {str(e)[:60]}，保留旧数据")
             # 保留旧current和prev_close不变
@@ -294,8 +300,8 @@ def step4C_holding_crisis(ctx):
         prev_close = h.get('prev_close')
         pnl_pct = h.get('pnl_pct', 0)
         
-        # 跌停检查
-        if prev_close is not None and current > 0 and prev_close > 0:
+        # 跌停检查（仅当prev_close有效时）
+        if prev_close is not None and prev_close > 0 and current > 0:
             daily_chg = (current - prev_close) / prev_close * 100
             if daily_chg < -9.5:
                 msg = f"⚠️ {code} {name} 当日跌停({daily_chg:.1f}%)！成本{cost} 现价{current} 浮亏{pnl_pct}%"
