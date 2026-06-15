@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的筛选 v6.6.24
+A股每日盘前短线标的筛选 v6.6.25
 完整35步执行流程 - 单文件统一版本
 """
 import json, os, sys, time, urllib.request, urllib.parse, urllib.error, subprocess, shutil
@@ -15,7 +15,7 @@ STATE = {
     'beijing_now': None, 'beijing_date': None, 'beijing_hour': None, 'beijing_weekday': None,
     'data_date': None, 'prediction_date': None, 'pred_yyyymmdd': None,
     'market_condition': '震荡', 'suggested_position': 50,
-    'file_version': 'v6.6.24', 'params': {},
+    'file_version': 'v6.6.25', 'params': {},
     'source': None, 'all_stocks': [], 'candidates': [],
     'holdings_list': [], 'crisis_alerts': [], 'sector_flow': {},
     'excluded_11': [], 'passed_11': [], 'excluded_12': [], 'passed_12': [],
@@ -24,7 +24,7 @@ STATE = {
     'n13_pass': 0, 'n17_pass': 0, 'n18_pass': 0, 'final_count': 0,
 }
 
-BUILTIN_VERSION = "v6.6.24"
+BUILTIN_VERSION = "v6.6.25"
 
 # ============================================================
 # Core Functions
@@ -68,6 +68,97 @@ def read_all_history():
     except Exception as e:
         log_alert("WARNING", "历史读取", f"读取推荐历史失败: {str(e)[:80]}")
     return history
+
+# ============================================================
+# Data Source Monitor (v6.6.25)
+# ============================================================
+MONITOR_FILE = "/workspace/数据源监控.json"
+MAX_CONSECUTIVE_FAILURES = 10
+
+def ds_monitor_load():
+    """Load data source monitor state from disk."""
+    default = {"clist_success": 0, "clist_consecutive_failures": 0, "total_runs": 0,
+               "last_source": None, "last_downgrade_date": None, "downgrade_reason": "",
+               "first_failure_date": None, "history": []}
+    try:
+        if not os.path.exists(MONITOR_FILE):
+            return default
+        with open(MONITOR_FILE, 'r') as f:
+            data = json.load(f)
+        for k in default:
+            if k not in data:
+                data[k] = default[k]
+        return data
+    except:
+        return default
+
+def ds_monitor_save(monitor):
+    """Save data source monitor state to disk."""
+    try:
+        with open(MONITOR_FILE, 'w') as f:
+            json.dump(monitor, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log_alert("WARNING", "监控", f"保存失败: {str(e)[:60]}")
+
+def ds_monitor_record_success(source, stock_count):
+    """Record a successful data source pull."""
+    monitor = ds_monitor_load()
+    monitor['total_runs'] += 1
+    monitor['last_source'] = source
+    monitor['last_downgrade_date'] = None
+    monitor['downgrade_reason'] = ""
+    # Reset consecutive failures if source is clist
+    if source == 'clist':
+        monitor['clist_success'] += 1
+        old_failures = monitor.get('clist_consecutive_failures', 0)
+        monitor['clist_consecutive_failures'] = 0
+        monitor['first_failure_date'] = None
+        if old_failures >= MAX_CONSECUTIVE_FAILURES:
+            log_alert("INFO", "监控", f"clist已恢复！此前连续{old_failures}次失败后本次成功")
+    # Append to history (keep last 30 entries)
+    monitor['history'].append({"date": STATE.get('data_date', ''), "source": source,
+                                "count": stock_count, "success": True})
+    if len(monitor['history']) > 30:
+        monitor['history'] = monitor['history'][-30:]
+    ds_monitor_save(monitor)
+
+def ds_monitor_record_failure(reason):
+    """Record a clist failure, triggering downgrade tracking."""
+    monitor = ds_monitor_load()
+    monitor['total_runs'] += 1
+    monitor['downgrade_reason'] = reason
+
+    # Track consecutive clist failures
+    old = monitor.get('clist_consecutive_failures', 0)
+    monitor['clist_consecutive_failures'] = old + 1
+    if monitor.get('first_failure_date') is None:
+        monitor['first_failure_date'] = STATE.get('data_date', '')
+    monitor['last_downgrade_date'] = STATE.get('data_date', '')
+
+    consecutive = monitor['clist_consecutive_failures']
+    if consecutive == 1:
+        log_alert("WARNING", "监控", f"clist第1次不可达，降级原因: {reason}")
+    elif consecutive >= MAX_CONSECUTIVE_FAILURES:
+        # User-directed alert
+        alert_msg = (
+            f"⚠️⚠️⚠️ 东方财富clist数据源已连续{consecutive}次不可达！\n"
+            f"首次失败: {monitor['first_failure_date']} | 最近失败: {STATE.get('data_date', '')}\n"
+            f"原因: {reason}\n"
+            f"当前降级链: clist(×{consecutive}) → Tian 2/Sina → Tian 3/pytdx\n"
+            f"请检查东方财富API是否变更、IP是否被限制。"
+        )
+        log_alert("CRITICAL", "监控", alert_msg)
+        STATE['crisis_alerts'].append(alert_msg)
+
+    # Append to history
+    monitor['history'].append({"date": STATE.get('data_date', ''), "source": "clist",
+                                "count": 0, "success": False, "reason": reason,
+                                "consecutive_failures": consecutive})
+    if len(monitor['history']) > 30:
+        monitor['history'] = monitor['history'][-30:]
+    ds_monitor_save(monitor)
+
+MONITOR = ds_monitor_load()  # Load at module init
 
 # ============================================================
 # STEP 0: Beijing Time
@@ -475,11 +566,13 @@ def step10A():
                 except: continue
             STATE['source'] = 'clist'
             STATE['all_stocks'] = all_s
+            ds_monitor_record_success('clist', len(all_s))
             log_alert("INFO","行情采集",f"clist拉取{len(all_s)}只")
             return
     except: pass
     
     # Plan B: Sina
+    ds_monitor_record_failure("clist API不可达(网络超时/返回空/格式异常)")
     log_alert("INFO","行情采集","降级为新浪")
     STATE['source'] = 'sina'
     try:
@@ -519,11 +612,13 @@ def step10A():
                 if i%(80*10)==0: time.sleep(0.05)
             except: continue
         STATE['all_stocks'] = all_s
+        ds_monitor_record_success('sina', len(all_s))
         log_alert("INFO","行情采集",f"新浪拉取{len(all_s)}只")
     except Exception as e:
+        ds_monitor_record_failure(f"新浪也失败: {str(e)[:60]}")
         log_alert("WARNING","行情采集",f"新浪失败: {str(e)[:60]}")
     
-    # Plan C: pytdx (Tier 3, v6.6.24)
+    # Plan C: pytdx (Tier 3, v6.6.25)
     log_alert("INFO","行情采集","clist+新浪均不可达，降级为pytdx")
     STATE['source'] = 'pytdx'
     try:
@@ -586,8 +681,10 @@ def step10A():
                     time.sleep(0.02)
             except: continue
         STATE['all_stocks'] = all_s
+        ds_monitor_record_success('pytdx', len(all_s))
         log_alert("INFO","行情采集",f"pytdx拉取{len(all_s)}只")
     except Exception as e:
+        ds_monitor_record_failure(f"三级全部失败: {str(e)[:60]}")
         log_alert("ERROR","行情采集",f"三级数据源均失败: {str(e)[:100]}")
         raise RuntimeError(f"行情数据获取失败: {str(e)[:100]}")
 
@@ -812,7 +909,7 @@ def step14(matched):
         if c.get('main_inflow') and c['main_inflow'] < -100000000:
             score -= 2; reasons.append("L3:主力净流出-2")
         
-        # Signal deductions (v6.6.24: pytdx also has volume_ratio)
+        # Signal deductions (v6.6.25: pytdx also has volume_ratio)
         if STATE['source'] in ('clist','pytdx'):
             vr = c['volume_ratio']
             if cp>3 and vr is not None and vr<0.7: score -= 3; reasons.append("缩量上涨-3")
