@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的筛选 v6.6.23
+A股每日盘前短线标的筛选 v6.6.24
 完整35步执行流程 - 单文件统一版本
 """
 import json, os, sys, time, urllib.request, urllib.parse, urllib.error, subprocess, shutil
@@ -15,7 +15,7 @@ STATE = {
     'beijing_now': None, 'beijing_date': None, 'beijing_hour': None, 'beijing_weekday': None,
     'data_date': None, 'prediction_date': None, 'pred_yyyymmdd': None,
     'market_condition': '震荡', 'suggested_position': 50,
-    'file_version': 'v6.6.23', 'params': {},
+    'file_version': 'v6.6.24', 'params': {},
     'source': None, 'all_stocks': [], 'candidates': [],
     'holdings_list': [], 'crisis_alerts': [], 'sector_flow': {},
     'excluded_11': [], 'passed_11': [], 'excluded_12': [], 'passed_12': [],
@@ -24,7 +24,7 @@ STATE = {
     'n13_pass': 0, 'n17_pass': 0, 'n18_pass': 0, 'final_count': 0,
 }
 
-BUILTIN_VERSION = "v6.6.23"
+BUILTIN_VERSION = "v6.6.24"
 
 # ============================================================
 # Core Functions
@@ -521,8 +521,75 @@ def step10A():
         STATE['all_stocks'] = all_s
         log_alert("INFO","行情采集",f"新浪拉取{len(all_s)}只")
     except Exception as e:
-        log_alert("ERROR","行情采集",f"全部失败: {str(e)[:100]}")
-        raise RuntimeError("行情数据获取失败")
+        log_alert("WARNING","行情采集",f"新浪失败: {str(e)[:60]}")
+    
+    # Plan C: pytdx (Tier 3, v6.6.24)
+    log_alert("INFO","行情采集","clist+新浪均不可达，降级为pytdx")
+    STATE['source'] = 'pytdx'
+    try:
+        from pytdx.hq import TdxHq_API
+        api = TdxHq_API()
+        connected = False
+        for host in ['119.147.212.81', '120.76.152.87', '47.92.127.118', '59.173.18.140']:
+            if api.connect(host, 7709):
+                connected = True
+                break
+        if not connected:
+            raise ConnectionError("pytdx 所有主站不可达")
+        
+        # Get all stocks from SH and SZ markets
+        for market_code in [1, 0]:  # 1=SH, 0=SZ
+            try:
+                count = api.get_security_count(market_code)
+                batch_size = 80
+                for start in range(0, count, batch_size):
+                    quotes = api.get_security_list(market_code, start)
+                    if not quotes: continue
+                    for q in quotes:
+                        code = q.get('code', '')
+                        name = q.get('name', '')
+                        if not code or not name: continue
+                        # Get daily bar for this stock
+                        try:
+                            bars = api.get_security_bars(9, market_code, code, 0, 2)
+                            if bars and len(bars) >= 1:
+                                bar = bars[-1]  # latest bar
+                                cur = bar.get('close', 0)
+                                op = bar.get('open', 0)
+                                hi = bar.get('high', 0)
+                                lo = bar.get('low', 0)
+                                vol = bar.get('vol', 0)
+                                amt = bar.get('amount', 0)
+                                if cur <= 0 or op <= 0: continue
+                                # Get prevailing close via quote
+                                quote = api.get_security_quotes([(market_code, code)])
+                                prev_close = None
+                                if quote and len(quote) > 0:
+                                    prev_close = quote[0].get('last_close', op)
+                                if not prev_close or prev_close <= 0:
+                                    prev_close = op
+                                cp = round((cur - prev_close) / prev_close * 100, 2)
+                                amp_val = round((hi - lo) / prev_close * 100, 2) if prev_close > 0 else 0
+                                # Calculate volume_ratio: vol / avg5
+                                avg5 = sum(b['vol'] for b in bars if b.get('vol')) / max(1, len([b for b in bars if b.get('vol')]))
+                                vr = round(vol / avg5, 2) if avg5 > 0 else None
+                                # Estimate turnover from amount
+                                to = round(amt / (prev_close * 10000), 2) if prev_close > 0 and amt > 0 else 0
+                                all_s.append({
+                                    "code": code, "name": name,
+                                    "open": op, "close": cur, "change_pct": cp,
+                                    "turnover": to, "amplitude": amp_val,
+                                    "high": hi, "low": lo, "prev_close": prev_close,
+                                    "volume_ratio": vr, "amount": amt,
+                                    "main_inflow": None, "total_cap": None})
+                        except: continue
+                    time.sleep(0.02)
+            except: continue
+        STATE['all_stocks'] = all_s
+        log_alert("INFO","行情采集",f"pytdx拉取{len(all_s)}只")
+    except Exception as e:
+        log_alert("ERROR","行情采集",f"三级数据源均失败: {str(e)[:100]}")
+        raise RuntimeError(f"行情数据获取失败: {str(e)[:100]}")
 
 # ============================================================
 # Build Candidate Pool
@@ -654,9 +721,9 @@ def step12():
         if c.get('low') and close>0 and c['low']>0:
             if (close-c['low'])/c['low']<0.005 and cp<-3: reason="信号4:尾盘跳水"
         if turnover>30: reason="信号5:换手率>30%"
-        if STATE['source']=='clist' and vr is not None and vr>2.0 and cp<0.5: reason="信号6:放量滞涨"
+        if STATE['source'] in ('clist','pytdx') and vr is not None and vr>2.0 and cp<0.5: reason="信号6:放量滞涨"
         if amp>15: reason="信号7:振幅>15%"
-        if STATE['source']=='clist' and vr is not None and vr>8.0 and cp>3: reason="信号12:竞价爆量"
+        if STATE['source'] in ('clist','pytdx') and vr is not None and vr>8.0 and cp>3: reason="信号12:竞价爆量"
         
         if reason:
             c['signal_excluded']=True; c['signal_reason']=reason; STATE['excluded_12'].append(c)
@@ -675,13 +742,15 @@ def step13():
         cp = c['change_pct'] or 0; close = c['close'] or 0
         turnover = c['turnover'] or 0; amp = c['amplitude'] or 0
         vr = c['volume_ratio']; amt = c['amount'] or 0; mi = c['main_inflow'] or 0
+        src = STATE['source']
         m = []
         
         # A: 动量延续
-        if STATE['source']=='clist':
+        if src in ('clist', 'pytdx'):
+            # pytdx has volume_ratio + turnover, same conditions as clist
             if 3<=cp<=7 and vr is not None and 1.5<=vr<=3.0 and turnover>3:
                 if STATE['market_condition']!='弱市': m.append('A')
-        else:
+        else:  # sina
             if 3<=cp<=7 and amt>0 and close>(c.get('open') or 0):
                 if STATE['market_condition']!='弱市': m.append('A')
         
@@ -690,12 +759,22 @@ def step13():
             m.append('B')
         
         # D: 回调企稳
-        if 2<=cp<=6 and close>(c.get('open') or 0) and 2<=amp<=8:
-            m.append('D')
+        if src in ('clist', 'pytdx'):
+            # pytdx: 2-6% + 阳线 + 振幅2-8% + 量比>0.7(较clist放宽)
+            if 2<=cp<=6 and close>(c.get('open') or 0) and 2<=amp<=8:
+                if vr is not None and vr>0.7:
+                    m.append('D')
+        else:
+            if 2<=cp<=6 and close>(c.get('open') or 0) and 2<=amp<=8:
+                m.append('D')
         
         # E: 资金埋伏
         if 0<=cp<=2 and amp<2.5:
-            m.append('E')
+            if src=='clist' and mi>0:
+                m.append('E')
+            elif src in ('sina', 'pytdx'):
+                # sina/pytdx: no main_inflow, use amount as proxy
+                m.append('E')
         
         if m:
             priority = {'A':0,'B':1,'C':2,'D':3,'E':4}
@@ -704,7 +783,7 @@ def step13():
             matched.append(c)
     
     STATE['n13_pass'] = len(matched)
-    log_alert("INFO","策略匹配",f"通过{STATE['n13_pass']}只")
+    log_alert("INFO","策略匹配",f"通过{STATE['n13_pass']}只（数据源:{STATE['source']}）")
     return matched
 
 # ============================================================
@@ -733,8 +812,8 @@ def step14(matched):
         if c.get('main_inflow') and c['main_inflow'] < -100000000:
             score -= 2; reasons.append("L3:主力净流出-2")
         
-        # Signal deductions
-        if STATE['source']=='clist':
+        # Signal deductions (v6.6.24: pytdx also has volume_ratio)
+        if STATE['source'] in ('clist','pytdx'):
             vr = c['volume_ratio']
             if cp>3 and vr is not None and vr<0.7: score -= 3; reasons.append("缩量上涨-3")
             elif 0<cp<=3 and vr is not None and vr<0.7: score -= 4; reasons.append("缩量反弹-4")
