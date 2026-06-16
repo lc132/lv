@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.6.30
-35步完整执行流程 | 腾讯一级 | 新浪二级 | 策略进场价 | 全行业覆盖 | 16条硬编码修正
+A股每日盘前短线标的智能筛选 v6.6.31
+35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 16条硬编码修正 | 7日推荐标注
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.6.30"
+BUILTIN_VERSION = "v6.6.31"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -704,25 +704,28 @@ HARDCODED_INDUSTRY = {
 # ============================================================
 def step11_hard_exclude(candidates, all_holdings_codes):
     er = Counter()
-    rc = set()
+    recent_7d_codes = set()  # v6.6.31: 7日内推荐仅标注，不排除
     c7 = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=7)).strftime('%Y-%m-%d')
     for f in sorted(os.listdir('/workspace')):
         if f.startswith('推荐历史_') and f.endswith('.json'):
             for r in safe_read_json(os.path.join('/workspace', f)):
                 if r.get('type') == 'recommendation' and r.get('date', '') >= c7:
-                    rc.add(r.get('code', ''))
-    rc.update(all_holdings_codes)
+                    recent_7d_codes.add(r.get('code', ''))
     passed, excluded = [], []
     for c in candidates:
         code = c.get('code', ''); close = c.get('close', 0); chg = c.get('change_pct', 0)
         reason = None
-        if code.startswith('688'): reason = "科创板"
+        # v6.6.31: 7日内推荐仅标注，不排除（标注在 _recent_7d 字段）
+        if code in recent_7d_codes and code not in all_holdings_codes:
+            c['_recent_7d'] = True
+        if code in all_holdings_codes:
+            reason = "当前持仓"; c['_holding'] = True
+        elif code.startswith('688'): reason = "科创板"
         elif code.startswith('8'): reason = "北交所"
         elif close < 5: reason = f"股价<5元"
         elif close > 100: reason = f"股价>100元"
         elif 'ST' in c.get('name', ''): reason = "ST/*ST"
         elif chg > 7: reason = f"涨幅>7%"
-        elif code in rc: reason = "7日内已推荐+持仓"; c['_recently_screened'] = True
         elif close <= 0: reason = "停牌"
         mi = c.get('main_inflow')
         if not reason and mi and mi < -10000:
@@ -731,7 +734,9 @@ def step11_hard_exclude(candidates, all_holdings_codes):
                 c['_l3_warning'] = "⚠️主力净流出>1亿占成交额>15%"
         if reason: er[reason.split('(')[0]] += 1; excluded.append(c)
         else: passed.append(c)
-    log_alert("INFO", "硬排除", f"通过{len(passed)}只 排除{len(excluded)}只")
+    # 统计7日内推荐数量（仅统计通过且被标注的）
+    recent_7d_count = sum(1 for c in passed if c.get('_recent_7d'))
+    log_alert("INFO", "硬排除", f"通过{len(passed)}只 排除{len(excluded)}只 7日推荐{recent_7d_count}只")
     return passed, excluded, er
 
 # ============================================================
@@ -849,10 +854,11 @@ def step19_shortfall_handling(candidates):
     return []
 
 # ============================================================
-# v6.6.27 策略进场价计算（不用收盘价）
+# ============================================================
+# v6.6.31 策略进场价（基于历史数据推算）
 # ============================================================
 def calc_entry_price(c):
-    """基于策略计算次日合理进场价，不用收盘价"""
+    """基于历史数据推算次日合理进场价，综合考虑ATR/振幅位置/缺口/量比"""
     strategy = c.get('strategy', 'Z')
     close = c.get('close', 0)
     op = c.get('open', 0)
@@ -860,34 +866,85 @@ def calc_entry_price(c):
     low = c.get('low', 0)
     prev = c.get('prev_close', close)
     chg = c.get('change_pct', 0)
+    amp = c.get('amplitude', 0) or 0
+    vol_ratio = c.get('volume_ratio', 1) or 1
+    
+    # 计算当日真实波动(ATR日) — 基于历史数据的核心指标
+    if high > 0 and low > 0 and prev > 0:
+        tr = max(high - low, abs(high - prev), abs(low - prev))
+        atr_pct = tr / prev  # ATR百分比（日内波动率）
+    else:
+        atr_pct = max(amp / 100, 0.015) if amp else 0.02
+    
+    # 收盘在当日振幅的位置 (0=最低, 1=最高)
+    if high > low and high > 0:
+        pos = (close - low) / (high - low)
+    else:
+        pos = 0.5
+    
+    # 开盘缺口（相对前收）
+    gap = (op - prev) / prev if prev > 0 else 0
+    
+    # 根据量比调整预期（量比越高，次日惯性越强）
+    vol_adj = min(vol_ratio / 1.5, 1.5) if vol_ratio > 0 else 1.0
     
     if strategy == 'A':
-        # 动量延续: 次日大概率高开，建议在开盘价附近或略高于收盘价进场
-        # 若当日收盘在当日振幅上1/3位置，次日大概率高开 → 按收盘价+1%进场
-        if high > low and high > 0:
-            pos_in_range = (close - low) / (high - low) if (high - low) > 0 else 0.5
-            if pos_in_range > 0.65:
-                return round(close * 1.008, 2)  # 收盘强势，次日小幅高开
-        return round(close * 1.01, 2)  # 默认收盘价+1%
+        # 动量延续：强势股次日大概率高开
+        # 高开幅度 = 当日强势位置 × ATR × 量能修正
+        if pos > 0.65:
+            # 收盘在振幅上1/3：强势收盘，次日小幅高开0.5-1.2%
+            gap_expected = pos * atr_pct * 0.4 * vol_adj
+            entry = close * (1 + max(gap_expected, 0.005))
+        elif pos > 0.35:
+            # 收盘在振幅中间：中性，次日平开或小幅高开0.3-0.8%
+            entry = close * (1 + atr_pct * 0.25)
+        else:
+            # 收盘在振幅下1/3：尾盘回落，次日可能低开，在收盘价附近
+            entry = close * (1 + max(gap, 0.003))
+        return round(entry, 2)
     
     elif strategy == 'B':
-        # 超跌反弹: 次日可能继续低开或平开，在收盘价附近或略低进场
-        if chg < -5:
-            # 跌幅较大，次日可能惯性低开1-2%，在当日收盘价-1%挂单
-            return round(close * 0.99, 2)
-        return round(close * 0.995, 2)  # 收盘价-0.5%博反弹
+        # 超跌反弹：基于历史跌幅和日内低点推算安全进场价
+        # 优先参考当日低点作为支撑，在低点和收盘价之间取合理位置
+        if low > 0 and close > low:
+            # 若尾盘有回升迹象(收盘在低点上方>1%)，在低点上方1%进场
+            if close > low * 1.01 and pos > 0.3:
+                entry = low + (close - low) * 0.3  # 低点上方30%分位
+            elif chg < -5:
+                # 深度超跌，次日可能惯性低开，在收盘价-1%挂单
+                entry = close * (1 - atr_pct * 0.3)
+            else:
+                entry = close * 0.995
+        else:
+            entry = close * (1 - atr_pct * 0.2)
+        return round(entry, 2)
     
     elif strategy == 'C':
-        # 事件驱动: 事件利好下次日大概率高开，建议在收盘价+0.5%进场
-        return round(close * 1.005, 2)
+        # 事件驱动：放量突破，次日大概率高开
+        # 高开幅度 = ATR × 0.3 × 量比修正
+        gap_expected = atr_pct * 0.35 * vol_adj
+        entry = close * (1 + max(gap_expected, 0.005))
+        return round(entry, 2)
     
     elif strategy == 'D':
-        # 回调企稳: 突破确认位，在收盘价+1%进场（确认突破有效）
-        return round(close * 1.01, 2)
+        # 回调企稳：基于历史振幅判断支撑位
+        # 支撑位在当日低点附近，确认突破有效后进场
+        if low > 0 and high > low:
+            support = low + (high - low) * 0.15  # 低点上方15%为支撑区
+            # 在支撑位和收盘价之间偏上的位置进场
+            entry = support + (close - support) * 0.4
+        else:
+            entry = close * 1.01
+        return round(entry, 2)
     
     elif strategy == 'E':
-        # 资金埋伏: 低吸策略，在收盘价-0.5%进场
-        return round(close * 0.995, 2)
+        # 资金埋伏：基于历史振幅低吸
+        # 在当日振幅下1/3区间挂单，博次日反弹
+        if high > low and low > 0:
+            entry = low + (high - low) * 0.25  # 振幅下25%分位
+        else:
+            entry = close * 0.995
+        return round(entry, 2)
     
     return round(close, 2)
 
@@ -914,8 +971,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, er):
     ]
     if candidates:
         lines.append("## 推荐标的\n")
-        lines.append("| # | 策略 | 标的 | 代码 | 行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 评分 | 置信 | 进场 | 止损 | 止盈 |")
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        lines.append("| # | 策略 | 标的 | 代码 | 行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 |")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for idx, c in enumerate(candidates, 1):
             code = c.get('code', ''); name = c.get('name', '')
             s = c.get('strategy', '?'); ind = c.get('industry', '未知')
@@ -925,8 +982,9 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, er):
             chg_e = "🔴" if chg >= 0 else "🟢"
             entry = calc_entry_price(c)
             sl = round(entry * 0.96, 2); tp = round(entry * 1.05, 2)
+            r7d = "★" if c.get('_recent_7d') else ""
             url = f"https://quote.eastmoney.com/concept/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/concept/sz{code}.html"
-            lines.append(f"| {idx} | {s} | [{name}]({url}) | {code} | {ind} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} |")
+            lines.append(f"| {idx} | {s} | [{name}]({url}) | {code} | {ind} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} |")
     sd = Counter(c.get('strategy') for c in candidates)
     sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏'}
     lines.append("\n## 策略分布")
@@ -966,21 +1024,23 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisi
             index_cards += f'<div class="index-card"><div class="idx-name">{name}</div><div class="idx-price">-</div><div class="idx-chg">数据不可得</div></div>'
     
     rows_html = ""
-    for idx, c in enumerate(candidates, 1):
-        code = c.get('code', ''); name = c.get('name', ''); s = c.get('strategy', '?')
-        ind = c.get('industry', '未知'); chg = c.get('change_pct', 0)
-        op = c.get('open', 0) or 0; close = c.get('close', 0) or 0
-        amp = c.get('amplitude', 0) or 0; score = c.get('score', 0); conf = c.get('confidence', '★')
-        entry = calc_entry_price(c)
-        sl = round(entry * 0.96, 2); tp = round(entry * 1.05, 2)
-        chg_cls = "up" if chg >= 0 else "down"
-        conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
-        scl = f"strat_{s.lower()}"
-        url = f"https://quote.eastmoney.com/concept/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/concept/sz{code}.html"
-        rows_html += f"""<tr class="{scl}"><td>{idx}</td><td><span class="badge {scl}">{s}</span></td>
+        for idx, c in enumerate(candidates, 1):
+            code = c.get('code', ''); name = c.get('name', ''); s = c.get('strategy', '?')
+            ind = c.get('industry', '未知'); chg = c.get('change_pct', 0)
+            op = c.get('open', 0) or 0; close = c.get('close', 0) or 0
+            amp = c.get('amplitude', 0) or 0; score = c.get('score', 0); conf = c.get('confidence', '★')
+            entry = calc_entry_price(c)
+            sl = round(entry * 0.96, 2); tp = round(entry * 1.05, 2)
+            r7d_html = "★" if c.get('_recent_7d') else ""
+            chg_cls = "up" if chg >= 0 else "down"
+            conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
+            scl = f"strat_{s.lower()}"
+            r7_cls = "recent-7d" if c.get('_recent_7d') else ""
+            url = f"https://quote.eastmoney.com/concept/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/concept/sz{code}.html"
+            rows_html += f"""<tr class="{scl} {r7_cls}"><td>{idx}</td><td><span class="badge {scl}">{s}</span></td>
             <td><a href="{url}" target="_blank">{name}</a></td><td>{code}</td><td>{ind}</td>
             <td class="{chg_cls}">{chg:+.2f}%</td><td>{op:.2f}</td><td>{close:.2f}</td>
-            <td>{amp:.2f}%</td><td>{score}</td><td class="conf {conf_cls}">{conf}</td>
+            <td>{amp:.2f}%</td><td>{r7d_html}</td><td>{score}</td><td class="conf {conf_cls}">{conf}</td>
             <td class="entry">{entry:.2f}</td><td>{sl:.2f}</td><td>{tp:.2f}</td></tr>"""
     
     seg_html = ""; legend_html = ""
@@ -1060,6 +1120,7 @@ tr:hover{{background:#2d3b4f}}
 .strat_d{{background:#5c3d0e;color:#f59e0b}}.strat_e{{background:#5c1648;color:#ec4899}}
 tr.strat_a{{background:rgba(34,197,94,0.05)}}tr.strat_b{{background:rgba(59,130,246,0.05)}}tr.strat_c{{background:rgba(139,92,246,0.05)}}
 tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72,153,0.05)}}
+tr.recent-7d{{background:rgba(251,146,60,0.12)}} tr.recent-7d:hover{{background:rgba(251,146,60,0.2)}}
 .conf{{font-weight:bold}}.conf.high{{color:#22c55e}}.conf.mid{{color:#f59e0b}}.conf.low{{color:#ef4444}}
 .entry{{color:#38bdf8;font-weight:bold}}
 .alert-item{{display:flex;gap:.8rem;padding:.4rem 0;border-bottom:1px solid #334155;font-size:.8rem}}
@@ -1088,8 +1149,8 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 </div></section>
 <section><h2>系统告警</h2><div class="alert-list">{alerts_html}</div></section>
 <section><h2>最终推荐标的</h2><div style="overflow-x:auto"><table>
-<thead><tr><th>#</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th></tr></thead>
-<tbody>{rows_html if rows_html else '<tr><td colspan="14" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div></section>
+<thead><tr><th>#</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th></tr></thead>
+<tbody>{rows_html if rows_html else '<tr><td colspan="15" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div></section>
 <section><h2>策略说明</h2><table>
 <thead><tr><th style="width:18%">策略</th><th style="width:48%">条件</th><th style="width:16%">仓位(震荡)</th><th style="width:18%">仓位(弱市)</th></tr></thead>
 <tbody>
@@ -1099,7 +1160,7 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 <tr><td><span class="badge strat_d">D回调企稳</span></td><td style="white-space:normal;word-break:break-all">20日新高回调MA20 + 缩量站回MA5放量</td><td>12-15%</td><td>8-12%</td></tr>
 <tr><td><span class="badge strat_e">E资金埋伏</span></td><td style="white-space:normal;word-break:break-all">北向连续净买 + 主力流入>3000万 + 涨幅<2%</td><td>5-8%</td><td>3-5%</td></tr>
 </tbody></table></section></div>
-<div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
+<div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p style="color:#fb923c;margin-top:.3rem">★ 7日 = 近7日内已推荐标的（橙色高亮行），可持续关注但不建议重复建仓</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
     
     with open(hp, 'w', encoding='utf-8') as f: f.write(html)
     log_alert("INFO", "HTML报告", f"已生成至 {hp}")
