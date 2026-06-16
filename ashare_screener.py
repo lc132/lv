@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.6.36"
+BUILTIN_VERSION = "v6.6.37"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -773,19 +773,23 @@ HARDCODED_INDUSTRY = {
 # ============================================================
 def step11_hard_exclude(candidates, all_holdings_codes):
     er = Counter()
-    recent_7d_count = {}  # v6.6.34: 统计7日内推荐次数，数字显示
+    recent_7d_dates = {}  # v6.6.37: 按日期去重，统计7日内推荐天数
     c7 = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=7)).strftime('%Y-%m-%d')
     for f in sorted(os.listdir('/workspace')):
         if f.startswith('推荐历史_') and f.endswith('.json'):
             for r in safe_read_json(os.path.join('/workspace', f)):
                 if r.get('type') == 'recommendation' and r.get('date', '') >= c7:
                     code = r.get('code', '')
-                    recent_7d_count[code] = recent_7d_count.get(code, 0) + 1
+                    if code not in recent_7d_dates:
+                        recent_7d_dates[code] = set()
+                    recent_7d_dates[code].add(r.get('date', ''))
+    # 转换为天数计数
+    recent_7d_count = {code: len(dates) for code, dates in recent_7d_dates.items()}
     passed, excluded = [], []
     for c in candidates:
         code = c.get('code', ''); close = c.get('close', 0); chg = c.get('change_pct', 0)
         reason = None
-        # v6.6.34: 7日内推荐次数用数字显示（不排除，仅标注）
+        # v6.6.37: 7日内推荐天数（按日期去重），不排除，仅标注
         if code in recent_7d_count and code not in all_holdings_codes:
             c['_recent_7d'] = recent_7d_count[code]
         if code in all_holdings_codes:
