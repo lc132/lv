@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.6.32"
+BUILTIN_VERSION = "v6.6.33"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -698,6 +698,48 @@ HARDCODED_INDUSTRY = {
     '000700': '汽车',      # 模塑科技（汽车零部件，在000700-000799段但非钢铁）
     '002354': '传媒',      # 天娱数科（数字娱乐/游戏，在002300-002399段但非电力设备）
     '002490': '机械设备',  # 山东墨龙（石油机械设备，在002400-002499段但非传媒）
+    # v6.6.33: 28只行业修正（基于2026-06-17筛选结果全量校对）
+    '002725': '汽车',      # 跃岭股份（汽车轮毂，在002700-002799段但非机械设备）
+    '002745': '电子',      # 木林森（LED照明，在002700-002799段但非机械设备）
+    '600459': '有色金属',  # 贵研铂业（铂族金属，在600400-600499段但非电力设备）
+    '301150': '电子',      # 中一科技（电解铜箔，在301100-301199段但非基础化工）
+    '301157': '电力设备',  # 华塑科技（电池BMS，在301100-301199段但非基础化工）
+    '300246': '医药生物',  # 宝莱特（医疗器械，在300200-300299段但非基础化工）
+    '000969': '有色金属',  # 安泰科技（新材料，在000900-000999段但非非银金融）
+    '300688': '传媒',      # 创业黑马（企业服务/传媒，在300600-300699段但非国防军工）
+    '000831': '有色金属',  # 中国稀土（稀土，在000800-000899段但非汽车）
+    '600141': '基础化工',  # 兴发集团（磷化工，在600100-600199段但非电子）
+    '603990': '计算机',    # 麦迪科技（医疗IT，在603900-603999段但非商贸零售）
+    '603906': '基础化工',  # 龙蟠科技（车用化学品，在603900-603999段但非商贸零售）
+    '300967': '农林牧渔',  # 晓鸣股份（禽养殖，在300900-300999段但非电力设备）
+    '301513': '机械设备',  # 尚水智能（智能装备，在301500-301599段但非汽车）
+    '300503': '机械设备',  # 昊志机电（主轴电机，在300500-300599段但非建筑装饰）
+    '300508': '计算机',    # 维宏股份（数控系统，在300500-300599段但非建筑装饰）
+    '300537': '基础化工',  # 广信材料（UV涂料，在300500-300599段但非建筑装饰）
+    '300305': '基础化工',  # 裕兴股份（聚酯薄膜，在300300-300399段但非计算机）
+    '301303': '机械设备',  # 真兰仪表（仪器仪表，在301300-301399段但非计算机）
+    '301329': '电子',      # 信音电子（连接器，在301300-301399段但非计算机）
+    '300655': '电子',      # 晶瑞电材（电子化学品，在300600-300699段但非国防军工）
+    '300602': '电子',      # 飞荣达（EMI屏蔽材料，在300600-300699段但非国防军工）
+    '603936': '电子',      # 博敏电子（PCB，在603900-603999段但非商贸零售）
+    '601958': '有色金属',  # 金钼股份（钼矿，在601900-601999段但非传媒）
+    '002156': '电子',      # 通富微电（IC封测，在002100-002199段但非医药生物）
+    '002176': '有色金属',  # 江特电机（锂矿+电机，在002100-002199段但非医药生物）
+    '300883': '轻工制造',  # 龙利得（包装印刷，在300800-300899段但非环保）
+    '000506': '有色金属',  # 招金黄金（黄金开采，在000500-000599段但非公用事业）
+    '600520': '机械设备',  # 三佳科技（半导体设备，在600500-600599段但非食品饮料）
+    '600584': '电子',      # 长电科技（半导体封测，在600500-600599段但非食品饮料）
+    '600601': '电子',      # 方正科技（PCB，在600600-600699段但非食品饮料）
+    '600078': '基础化工',  # 澄星股份（磷化工，在600000-600099段但非银行）
+    '301419': '电子',      # 阿莱德（EMI材料，在301400-301499段但非通信）
+    '301439': '电力设备',  # 泓淋电力（电缆组件，在301400-301499段但非通信）
+    '301418': '电子',      # 协昌科技（运动控制IC，在301400-301499段但非通信）
+    '605589': '基础化工',  # 圣泉集团（酚醛树脂，在605500-605599段但非轻工制造）
+    '603690': '机械设备',  # 至纯科技（半导体清洗设备，在603600-603699段但非轻工制造）
+    '000759': '商贸零售',  # 中百集团（连锁零售，在000700-000799段但非钢铁）
+    '002192': '有色金属',  # 融捷股份（锂矿，在002100-002199段但非医药生物）
+    '300853': '机械设备',  # 申昊科技（巡检机器人，在300800-300899段但非环保）
+    '300802': '机械设备',  # 矩子科技（AOI检测设备，在300800-300899段但非环保）
 }
 
 # ============================================================
@@ -1027,24 +1069,24 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisi
             index_cards += f'<div class="index-card"><div class="idx-name">{name}</div><div class="idx-price">-</div><div class="idx-chg">数据不可得</div></div>'
     
     rows_html = ""
-        for idx, c in enumerate(candidates, 1):
-            code = c.get('code', ''); name = c.get('name', ''); s = c.get('strategy', '?')
-            ind = c.get('industry', '未知'); chg = c.get('change_pct', 0)
-            op = c.get('open', 0) or 0; close = c.get('close', 0) or 0
-            amp = c.get('amplitude', 0) or 0; score = c.get('score', 0); conf = c.get('confidence', '★')
-            entry = calc_entry_price(c)
-            sl = round(entry * 0.96, 2); tp = round(entry * 1.05, 2)
-            r7d_html = "★" if c.get('_recent_7d') else ""
-            chg_cls = "up" if chg >= 0 else "down"
-            conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
-            scl = f"strat_{s.lower()}"
-            r7_cls = "recent-7d" if c.get('_recent_7d') else ""
-            url = f"https://quote.eastmoney.com/concept/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/concept/sz{code}.html"
-            rows_html += f"""<tr class="{scl} {r7_cls}"><td>{idx}</td><td><span class="badge {scl}">{s}</span></td>
-            <td><a href="{url}" target="_blank">{name}</a></td><td>{code}</td><td>{ind}</td>
-            <td class="{chg_cls}">{chg:+.2f}%</td><td>{op:.2f}</td><td>{close:.2f}</td>
-            <td>{amp:.2f}%</td><td>{r7d_html}</td><td>{score}</td><td class="conf {conf_cls}">{conf}</td>
-            <td class="entry">{entry:.2f}</td><td>{sl:.2f}</td><td>{tp:.2f}</td></tr>"""
+    for idx, c in enumerate(candidates, 1):
+        code = c.get('code', ''); name = c.get('name', ''); s = c.get('strategy', '?')
+        ind = c.get('industry', '未知'); chg = c.get('change_pct', 0)
+        op = c.get('open', 0) or 0; close = c.get('close', 0) or 0
+        amp = c.get('amplitude', 0) or 0; score = c.get('score', 0); conf = c.get('confidence', '★')
+        entry = calc_entry_price(c)
+        sl = round(entry * 0.96, 2); tp = round(entry * 1.05, 2)
+        r7d_html = "★" if c.get('_recent_7d') else ""
+        chg_cls = "up" if chg >= 0 else "down"
+        conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
+        scl = f"strat_{s.lower()}"
+        r7_cls = "recent-7d" if c.get('_recent_7d') else ""
+        url = f"https://quote.eastmoney.com/concept/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/concept/sz{code}.html"
+        rows_html += f"""<tr class="{scl} {r7_cls}"><td>{idx}</td><td><span class="badge {scl}">{s}</span></td>
+        <td><a href="{url}" target="_blank">{name}</a></td><td>{code}</td><td>{ind}</td>
+        <td class="{chg_cls}">{chg:+.2f}%</td><td>{op:.2f}</td><td>{close:.2f}</td>
+        <td>{amp:.2f}%</td><td>{r7d_html}</td><td>{score}</td><td class="conf {conf_cls}">{conf}</td>
+        <td class="entry">{entry:.2f}</td><td>{sl:.2f}</td><td>{tp:.2f}</td></tr>"""
     
     seg_html = ""; legend_html = ""
     total_m = sum(sd.values())
