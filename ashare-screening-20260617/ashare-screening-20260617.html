@@ -2,683 +2,258 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>A股短线标的筛选 — 2026-06-17</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>A股短线标的筛选 - 2026-06-17</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', sans-serif; background: #0f172a; color: #e2e8f0; line-height: 1.6; }
-.header { background: linear-gradient(135deg, #1e3a5f 0%, #0f2744 100%); padding: 2rem; text-align: center; }
-.header h1 { font-size: clamp(1.2rem, 2.5vw, 1.8rem); color: #f0f9ff; }
-.header .sub { color: #94a3b8; font-size: 0.9rem; margin-top: 0.3rem; }
-.container { max-width: 1200px; margin: 0 auto; padding: 1rem; }
-.meta-row { display: flex; flex-wrap: wrap; gap: 0.8rem; justify-content: center; margin: 1rem 0; }
-.meta-card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 0.6rem 1.2rem; text-align: center; min-width: 100px; }
-.meta-card .label { font-size: 0.7rem; color: #94a3b8; }
-.meta-card .value { font-size: 1.1rem; font-weight: bold; color: #38bdf8; }
-.index-row { display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center; margin: 1rem 0; }
-.index-card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 1rem 1.5rem; text-align: center; min-width: 140px; }
-.index-card .idx-name { font-size: 0.85rem; color: #cbd5e1; }
-.index-card .idx-price { font-size: 1.5rem; font-weight: bold; }
-.index-card .idx-chg { font-size: 0.9rem; }
-.up { color: #ef4444; }
-.down { color: #22c55e; }
-section { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 1.5rem; margin: 1.2rem 0; }
-section h2 { font-size: 1.2rem; color: #38bdf8; margin-bottom: 1rem; border-bottom: 2px solid #334155; padding-bottom: 0.5rem; }
-.funnel { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
-.funnel-step { background: linear-gradient(90deg, #6366f1, #8b5cf6); color: #fff; text-align: center; padding: 0.5rem; border-radius: 6px; font-size: 0.8rem; transition: all 0.3s; }
-.funnel-last { background: linear-gradient(90deg, #3b82f6, #06b6d4); border: 2px solid #38bdf8; font-weight: bold; }
-.seg-bar { display: flex; height: 32px; border-radius: 6px; overflow: hidden; margin: 0.5rem 0; }
-.seg { display: flex; align-items: center; justify-content: center; color: #fff; font-weight: bold; font-size: 0.8rem; }
-.legend { display: flex; flex-wrap: wrap; gap: 1rem; margin: 0.5rem 0; font-size: 0.8rem; }
-.legend-item { display: flex; align-items: center; gap: 0.3rem; }
-.legend-dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
-.bar-row { display: flex; align-items: center; margin: 0.4rem 0; gap: 0.5rem; }
-.bar-label { width: 200px; font-size: 0.8rem; color: #cbd5e1; text-align: right; flex-shrink: 0; }
-.bar-track { flex: 1; background: #334155; border-radius: 4px; height: 24px; overflow: hidden; }
-.bar-fill { height: 100%; border-radius: 4px; display: flex; align-items: center; justify-content: flex-end; padding: 0 0.5rem; color: #fff; font-size: 0.75rem; font-weight: bold; min-width: 30px; }
-.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
-th { background: #334155; padding: 0.5rem; text-align: left; color: #38bdf8; position: sticky; top: 0; white-space: nowrap; }
-td { padding: 0.4rem 0.5rem; border-bottom: 1px solid #334155; white-space: nowrap; }
-tr:hover { background: #2d3b4f; }
-.badge { padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; }
-.strat_a { background: #14532d; color: #22c55e; }
-.strat_b { background: #1e3a5f; color: #3b82f6; }
-.strat_c { background: #3b1f6e; color: #8b5cf6; }
-.strat_d { background: #5c3d0e; color: #f59e0b; }
-.strat_e { background: #5c1648; color: #ec4899; }
-tr.strat_a { background: rgba(34,197,94,0.05); }
-tr.strat_b { background: rgba(59,130,246,0.05); }
-tr.strat_c { background: rgba(139,92,246,0.05); }
-tr.strat_d { background: rgba(245,158,11,0.05); }
-tr.strat_e { background: rgba(236,72,153,0.05); }
-.conf { font-weight: bold; }
-.conf.high { color: #22c55e; }
-.conf.mid { color: #f59e0b; }
-.conf.low { color: #ef4444; }
-.alert-item { display: flex; gap: 0.8rem; padding: 0.4rem 0; border-bottom: 1px solid #334155; font-size: 0.8rem; }
-.alert-level { padding: 2px 10px; border-radius: 4px; font-weight: bold; font-size: 0.7rem; white-space: nowrap; }
-.alert-level.warning { background: #5c3d0e; color: #f59e0b; }
-.alert-level.info { background: #1e3a5f; color: #3b82f6; }
-.alert-level.error { background: #5c1a1a; color: #ef4444; }
-.recently-screened { background: #3b2f00; border: 1px solid #f59e0b; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
-.recent-list { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
-.recent-tag { background: #5c3d0e; color: #f59e0b; padding: 3px 10px; border-radius: 4px; font-size: 0.75rem; }
-.footer { text-align: center; padding: 2rem; color: #64748b; font-size: 0.8rem; }
-.footer .disclaimer { color: #ef4444; font-weight: bold; margin-top: 0.5rem; }
-a { color: #38bdf8; text-decoration: none; }
-a:hover { text-decoration: underline; }
-@media (max-width: 768px) {
-    .chart-grid { grid-template-columns: 1fr; }
-    .container { padding: 0.5rem; }
-    th, td { font-size: 0.7rem; padding: 0.3rem; }
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Noto Sans CJK SC','WenQuanYi Micro Hei','Microsoft YaHei',sans-serif;background:#f5f7fa;color:#333;line-height:1.6}
+.container{max-width:1100px;margin:0 auto;padding:20px}
+.header{background:linear-gradient(135deg,#1a237e,#283593,#3949ab);color:#fff;padding:30px;border-radius:12px;margin-bottom:20px}
+.header h1{font-size:24px;margin-bottom:8px}
+.header .subtitle{font-size:14px;opacity:0.85}
+.index-row{display:flex;gap:12px;margin:16px 0}
+.index-card{flex:1;background:rgba(255,255,255,0.15);border-radius:8px;padding:12px 16px;text-align:center}
+.index-card .idx-name{font-size:11px;opacity:0.8}
+.index-card .idx-value{font-size:20px;font-weight:bold}
+.index-card .idx-chg{font-size:13px;margin-top:2px}
+.meta-row{display:flex;gap:12px;margin-top:16px}
+.meta-card{flex:1;background:rgba(255,255,255,0.12);border-radius:8px;padding:10px;text-align:center}
+.meta-card .meta-label{font-size:10px;opacity:0.7}
+.meta-card .meta-value{font-size:16px;font-weight:bold}
+.section{background:#fff;border-radius:10px;padding:24px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,0.08)}
+.section h2{font-size:18px;margin-bottom:16px;padding-bottom:8px;border-bottom:2px solid #e8ecf1}
+.funnel{display:flex;flex-direction:column;align-items:center;gap:4px;margin:16px 0}
+.funnel-step{text-align:center;padding:10px 20px;border-radius:6px;font-size:13px;color:#333;font-weight:bold}
+.funnel-arrow{color:#999;font-size:18px;margin:2px 0}
+.funnel-final{border:2px solid #2196F3;background:#E3F2FD}
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}
+.chart-box{background:#fafbfc;border-radius:8px;padding:16px;border:1px solid #e8ecf1}
+.chart-box h3{font-size:13px;margin-bottom:12px;color:#666}
+.seg-bar{display:flex;border-radius:6px;overflow:hidden;height:28px;margin-bottom:8px}
+.seg-legend{font-size:12px;color:#666;line-height:1.8}
+.bar-row{margin:4px 0}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid #e8ecf1}
+th{background:#f5f7fa;font-weight:bold;color:#555;font-size:12px;white-space:nowrap}
+tr:hover{background:#f8f9fb}
+.strategy-table th{font-size:12px;background:#f5f7fa}
+.strategy-table td{white-space:normal;word-break:break-all}
+.recently-screened{background:#FFF3E0;border-radius:8px;padding:16px;margin:16px 0}
+.recent-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.recent-tag{background:#FFE0B2;padding:4px 10px;border-radius:4px;font-size:12px}
+.alert-list{margin:8px 0}
+.alert-item{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12px;border-bottom:1px solid #f0f0f0}
+.alert-tag{padding:2px 8px;border-radius:3px;font-size:10px;font-weight:bold;color:#fff;min-width:50px;text-align:center}
+.alert-tag.error{background:#F44336}
+.alert-tag.warning{background:#FF9800}
+.alert-tag.info{background:#2196F3}
+.footer{text-align:center;padding:20px;color:#999;font-size:12px}
+.footer .disclaimer{color:#F44336;font-weight:bold;margin-top:8px}
+@media(max-width:768px){
+    .index-row,.meta-row{flex-wrap:wrap}
+    .index-card,.meta-card{min-width:100px}
+    .chart-grid{grid-template-columns:1fr}
+    table{font-size:11px}
+    th,td{padding:5px 6px}
 }
 </style>
 </head>
 <body>
+<div class="container">
+<!-- 1. 报告头部 -->
 <div class="header">
     <h1>A股短线标的筛选报告</h1>
-    <div class="sub">2026-06-17 | 规则版本 v6.6.25</div>
-</div>
-<div class="container">
+    <div class="subtitle">预测日期: 2026-06-17 | 数据日期: 2026-06-16 | 版本: v6.6.25</div>
     <div class="index-row">
-        <div class="index-card"><div class="idx-name">上证指数</div><div class="idx-price">-</div><div class="idx-chg">盘后更新</div></div>
-        <div class="index-card"><div class="idx-name">深证成指</div><div class="idx-price">-</div><div class="idx-chg">盘后更新</div></div>
-        <div class="index-card"><div class="idx-name">创业板指</div><div class="idx-price">-</div><div class="idx-chg">盘后更新</div></div>
+        <div class="index-card"><div class="idx-name">上证指数</div><div class="idx-value">--</div><div class="idx-chg">--</div></div>
+        <div class="index-card"><div class="idx-name">深证成指</div><div class="idx-value">--</div><div class="idx-chg">--</div></div>
+        <div class="index-card"><div class="idx-name">创业板指</div><div class="idx-value">--</div><div class="idx-chg">--</div></div>
     </div>
     <div class="meta-row">
-        <div class="meta-card"><div class="label">预测日期</div><div class="value">2026-06-17</div></div>
-        <div class="meta-card"><div class="label">数据日期</div><div class="value">2026-06-16</div></div>
-        <div class="meta-card"><div class="label">市场环境</div><div class="value">震荡</div></div>
-        <div class="meta-card"><div class="label">建议仓位</div><div class="value">55%</div></div>
-        <div class="meta-card"><div class="label">最终推荐</div><div class="value">35只</div></div>
+        <div class="meta-card"><div class="meta-label">预测日期</div><div class="meta-value">2026-06-17</div></div>
+        <div class="meta-card"><div class="meta-label">数据日期</div><div class="meta-value">2026-06-16</div></div>
+        <div class="meta-card"><div class="meta-label">市场环境</div><div class="meta-value">震荡</div></div>
+        <div class="meta-card"><div class="meta-label">建议仓位</div><div class="meta-value">35%</div></div>
+        <div class="meta-card"><div class="meta-label">最终推荐</div><div class="meta-value">5只</div></div>
     </div>
-
-    <section>
-        <h2>筛选管道</h2>
-        <div class="funnel"><div class="funnel-step " style="width:100%">原始标的池: 500只</div><div class="funnel-step " style="width:41%">硬排除(31项): 206只</div><div class="funnel-step " style="width:37%">信号过滤(14项): 188只</div><div class="funnel-step " style="width:15%">策略匹配(5策略): 48只</div><div class="funnel-step " style="width:15%">行业+同策略限制: 35只</div><div class="funnel-step funnel-last" style="width:15%">最终推荐: 35只</div></div>
-    </section>
-
-    <section>
-        <h2>数据可视化</h2>
-        <div class="chart-grid">
-            <div>
-                <h3 style="font-size:0.9rem;color:#cbd5e1;margin-bottom:0.5rem;">策略分布</h3>
-                <div class="seg-bar"><div class="seg" style="width:40.0%;background:#3b82f6">14</div><div class="seg" style="width:60.0%;background:#ec4899">21</div></div>
-                <div class="legend"><span class="legend-item"><span class="legend-dot" style="background:#3b82f6"></span> B超跌反弹: 14只 (40%)</span><span class="legend-item"><span class="legend-dot" style="background:#ec4899"></span> E资金埋伏: 21只 (60%)</span></div>
-            </div>
-            <div>
-                <h3 style="font-size:0.9rem;color:#cbd5e1;margin-bottom:0.5rem;">硬排除 TOP5</h3>
-                <div class="bar-row"><div class="bar-label">涨幅>7%</div><div class="bar-track"><div class="bar-fill" style="width:100.0%;background:linear-gradient(90deg,#6366f1,#a855f7)">121</div></div></div><div class="bar-row"><div class="bar-label">股价>100元</div><div class="bar-track"><div class="bar-fill" style="width:73.55371900826447%;background:linear-gradient(90deg,#6366f1,#a855f7)">89</div></div></div><div class="bar-row"><div class="bar-label">7日内已推荐+已持仓</div><div class="bar-track"><div class="bar-fill" style="width:61.98347107438017%;background:linear-gradient(90deg,#6366f1,#a855f7)">75</div></div></div><div class="bar-row"><div class="bar-label">股价<5元</div><div class="bar-track"><div class="bar-fill" style="width:7.43801652892562%;background:linear-gradient(90deg,#6366f1,#a855f7)">9</div></div></div>
-            </div>
-            <div>
-                <h3 style="font-size:0.9rem;color:#cbd5e1;margin-bottom:0.5rem;">各策略数量</h3>
-                <div class="bar-row"><div class="bar-label">A 动量延续</div><div class="bar-track"><div class="bar-fill" style="width:0.0%;background:#22c55e">0</div></div></div><div class="bar-row"><div class="bar-label">B 超跌反弹</div><div class="bar-track"><div class="bar-fill" style="width:66.66666666666666%;background:#3b82f6">14</div></div></div><div class="bar-row"><div class="bar-label">C 事件驱动</div><div class="bar-track"><div class="bar-fill" style="width:0.0%;background:#8b5cf6">0</div></div></div><div class="bar-row"><div class="bar-label">D 回调企稳</div><div class="bar-track"><div class="bar-fill" style="width:0.0%;background:#f59e0b">0</div></div></div><div class="bar-row"><div class="bar-label">E 资金埋伏</div><div class="bar-track"><div class="bar-fill" style="width:100.0%;background:#ec4899">21</div></div></div>
-            </div>
-            <div>
-                <h3 style="font-size:0.9rem;color:#cbd5e1;margin-bottom:0.5rem;">概述</h3>
-                <div style="font-size:0.8rem;color:#cbd5e1;">全市场标的→500只入围→206只通过硬排除→188只通过信号过滤→48只匹配策略→35只通过行业限制→<strong style="color:#38bdf8;">最终35只</strong></div>
-            </div>
-        </div>
-    </section>
-
-    <section>
-        <h2>系统告警</h2>
-        <div class="alert-list"><div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">今日无异常告警</span></div></div>
-    </section>
-
-    <section>
-        <h2>最终推荐标的</h2>
-        <div style="overflow-x:auto;">
-            <table>
-                <thead><tr><th>#</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th></tr></thead>
-                <tbody><tr class="strat_b">
-            <td>1</td>
-            <td><span class="badge strat_b">B</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz300244.html" target="_blank">迪安诊断</a></td>
-            <td>300244</td>
-            <td>基础化工</td>
-            <td class="down">-4.65%</td>
-            <td>19.49</td>
-            <td>18.87</td>
-            <td>0.00%</td>
-            <td>14</td>
-            <td class="conf mid">★★</td>
-            <td>18.87</td>
-            <td>18.12</td>
-            <td>19.81</td>
-        </tr><tr class="strat_b">
-            <td>2</td>
-            <td><span class="badge strat_b">B</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz300342.html" target="_blank">天银机电</a></td>
-            <td>300342</td>
-            <td>计算机</td>
-            <td class="down">-5.38%</td>
-            <td>52.00</td>
-            <td>50.51</td>
-            <td>0.00%</td>
-            <td>14</td>
-            <td class="conf mid">★★</td>
-            <td>50.51</td>
-            <td>48.49</td>
-            <td>53.04</td>
-        </tr><tr class="strat_b">
-            <td>3</td>
-            <td><span class="badge strat_b">B</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz000768.html" target="_blank">中航西飞</a></td>
-            <td>000768</td>
-            <td>钢铁</td>
-            <td class="down">-5.38%</td>
-            <td>21.40</td>
-            <td>21.63</td>
-            <td>0.00%</td>
-            <td>14</td>
-            <td class="conf mid">★★</td>
-            <td>21.63</td>
-            <td>20.76</td>
-            <td>22.71</td>
-        </tr><tr class="strat_b">
-            <td>4</td>
-            <td><span class="badge strat_b">B</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz000807.html" target="_blank">云铝股份</a></td>
-            <td>000807</td>
-            <td>汽车</td>
-            <td class="down">-4.27%</td>
-            <td>28.45</td>
-            <td>26.90</td>
-            <td>0.00%</td>
-            <td>14</td>
-            <td class="conf mid">★★</td>
-            <td>26.90</td>
-            <td>25.82</td>
-            <td>28.25</td>
-        </tr><tr class="strat_b">
-            <td>5</td>
-            <td><span class="badge strat_b">B</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz002181.html" target="_blank">粤 传 媒</a></td>
-            <td>002181</td>
-            <td>医药生物</td>
-            <td class="down">-5.89%</td>
-            <td>12.56</td>
-            <td>12.30</td>
-            <td>0.00%</td>
-            <td>14</td>
-            <td class="conf mid">★★</td>
-            <td>12.30</td>
-            <td>11.81</td>
-            <td>12.92</td>
-        </tr><tr class="strat_b">
-            <td>6</td>
-            <td><span class="badge strat_b">B</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz300763.html" target="_blank">锦浪科技</a></td>
-            <td>300763</td>
-            <td>机械设备</td>
-            <td class="down">-3.89%</td>
-            <td>91.50</td>
-            <td>87.20</td>
-            <td>0.00%</td>
-            <td>14</td>
-            <td class="conf mid">★★</td>
-            <td>87.20</td>
-            <td>83.71</td>
-            <td>91.56</td>
-        </tr><tr class="strat_b">
-            <td>7</td>
-            <td><span class="badge strat_b">B</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz002648.html" target="_blank">卫星化学</a></td>
-            <td>002648</td>
-            <td>电子</td>
-            <td class="down">-3.68%</td>
-            <td>23.99</td>
-            <td>23.27</td>
-            <td>0.00%</td>
-            <td>14</td>
-            <td class="conf mid">★★</td>
-            <td>23.27</td>
-            <td>22.34</td>
-            <td>24.43</td>
-        </tr><tr class="strat_b">
-            <td>8</td>
-            <td><span class="badge strat_b">B</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz002969.html" target="_blank">嘉美包装</a></td>
-            <td>002969</td>
-            <td>电子</td>
-            <td class="down">-3.05%</td>
-            <td>16.49</td>
-            <td>15.89</td>
-            <td>0.00%</td>
-            <td>14</td>
-            <td class="conf mid">★★</td>
-            <td>15.89</td>
-            <td>15.25</td>
-            <td>16.68</td>
-        </tr><tr class="strat_b">
-            <td>9</td>
-            <td><span class="badge strat_b">B</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sh601225.html" target="_blank">陕西煤业</a></td>
-            <td>601225</td>
-            <td>非银金融</td>
-            <td class="down">-6.44%</td>
-            <td>26.47</td>
-            <td>25.26</td>
-            <td>0.00%</td>
-            <td>14</td>
-            <td class="conf mid">★★</td>
-            <td>25.26</td>
-            <td>24.25</td>
-            <td>26.52</td>
-        </tr><tr class="strat_b">
-            <td>10</td>
-            <td><span class="badge strat_b">B</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz000547.html" target="_blank">航天发展</a></td>
-            <td>000547</td>
-            <td>公用事业</td>
-            <td class="down">-3.54%</td>
-            <td>19.99</td>
-            <td>19.92</td>
-            <td>0.00%</td>
-            <td>14</td>
-            <td class="conf mid">★★</td>
-            <td>19.92</td>
-            <td>19.12</td>
-            <td>20.92</td>
-        </tr><tr class="strat_b">
-            <td>11</td>
-            <td><span class="badge strat_b">B</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sh600989.html" target="_blank">宝丰能源</a></td>
-            <td>600989</td>
-            <td>银行</td>
-            <td class="down">-3.46%</td>
-            <td>22.60</td>
-            <td>22.30</td>
-            <td>0.00%</td>
-            <td>14</td>
-            <td class="conf mid">★★</td>
-            <td>22.30</td>
-            <td>21.41</td>
-            <td>23.42</td>
-        </tr><tr class="strat_b">
-            <td>12</td>
-            <td><span class="badge strat_b">B</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz002254.html" target="_blank">泰和新材</a></td>
-            <td>002254</td>
-            <td>建筑装饰</td>
-            <td class="down">-3.21%</td>
-            <td>17.69</td>
-            <td>17.48</td>
-            <td>0.00%</td>
-            <td>14</td>
-            <td class="conf mid">★★</td>
-            <td>17.48</td>
-            <td>16.78</td>
-            <td>18.35</td>
-        </tr><tr class="strat_b">
-            <td>13</td>
-            <td><span class="badge strat_b">B</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sh601898.html" target="_blank">中煤能源</a></td>
-            <td>601898</td>
-            <td>建筑装饰</td>
-            <td class="down">-8.71%</td>
-            <td>15.90</td>
-            <td>14.77</td>
-            <td>0.00%</td>
-            <td>14</td>
-            <td class="conf mid">★★</td>
-            <td>14.77</td>
-            <td>14.18</td>
-            <td>15.51</td>
-        </tr><tr class="strat_b">
-            <td>14</td>
-            <td><span class="badge strat_b">B</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sh601698.html" target="_blank">中国卫通</a></td>
-            <td>601698</td>
-            <td>有色金属</td>
-            <td class="down">-3.16%</td>
-            <td>33.00</td>
-            <td>32.77</td>
-            <td>0.00%</td>
-            <td>14</td>
-            <td class="conf mid">★★</td>
-            <td>32.77</td>
-            <td>31.46</td>
-            <td>34.41</td>
-        </tr><tr class="strat_e">
-            <td>15</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sh600396.html" target="_blank">华电辽能</a></td>
-            <td>600396</td>
-            <td>基础化工</td>
-            <td class="up">+1.89%</td>
-            <td>16.99</td>
-            <td>17.83</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>17.83</td>
-            <td>17.12</td>
-            <td>18.72</td>
-        </tr><tr class="strat_e">
-            <td>16</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz300207.html" target="_blank">欣旺达</a></td>
-            <td>300207</td>
-            <td>基础化工</td>
-            <td class="up">+1.78%</td>
-            <td>20.47</td>
-            <td>20.58</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>20.58</td>
-            <td>19.76</td>
-            <td>21.61</td>
-        </tr><tr class="strat_e">
-            <td>17</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz000792.html" target="_blank">盐湖股份</a></td>
-            <td>000792</td>
-            <td>钢铁</td>
-            <td class="up">+1.04%</td>
-            <td>32.10</td>
-            <td>32.03</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>32.03</td>
-            <td>30.75</td>
-            <td>33.63</td>
-        </tr><tr class="strat_e">
-            <td>18</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz300136.html" target="_blank">信维通信</a></td>
-            <td>300136</td>
-            <td>汽车</td>
-            <td class="up">+0.87%</td>
-            <td>94.00</td>
-            <td>97.70</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>97.70</td>
-            <td>93.79</td>
-            <td>102.59</td>
-        </tr><tr class="strat_e">
-            <td>19</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz002131.html" target="_blank">利欧股份</a></td>
-            <td>002131</td>
-            <td>医药生物</td>
-            <td class="up">+1.70%</td>
-            <td>5.35</td>
-            <td>5.38</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>5.38</td>
-            <td>5.16</td>
-            <td>5.65</td>
-        </tr><tr class="strat_e">
-            <td>20</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz002192.html" target="_blank">融捷股份</a></td>
-            <td>002192</td>
-            <td>医药生物</td>
-            <td class="up">+1.29%</td>
-            <td>90.00</td>
-            <td>90.90</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>90.90</td>
-            <td>87.26</td>
-            <td>95.45</td>
-        </tr><tr class="strat_e">
-            <td>21</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz300769.html" target="_blank">德方纳米</a></td>
-            <td>300769</td>
-            <td>机械设备</td>
-            <td class="up">+1.21%</td>
-            <td>64.88</td>
-            <td>65.24</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>65.24</td>
-            <td>62.63</td>
-            <td>68.50</td>
-        </tr><tr class="strat_e">
-            <td>22</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz002714.html" target="_blank">牧原股份</a></td>
-            <td>002714</td>
-            <td>机械设备</td>
-            <td class="up">+1.20%</td>
-            <td>35.00</td>
-            <td>35.28</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>35.28</td>
-            <td>33.87</td>
-            <td>37.04</td>
-        </tr><tr class="strat_e">
-            <td>23</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz300014.html" target="_blank">亿纬锂能</a></td>
-            <td>300014</td>
-            <td>电子</td>
-            <td class="up">+1.91%</td>
-            <td>58.45</td>
-            <td>58.77</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>58.77</td>
-            <td>56.42</td>
-            <td>61.71</td>
-        </tr><tr class="strat_e">
-            <td>24</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz000973.html" target="_blank">佛塑科技</a></td>
-            <td>000973</td>
-            <td>非银金融</td>
-            <td class="up">+1.46%</td>
-            <td>15.18</td>
-            <td>15.28</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>15.28</td>
-            <td>14.67</td>
-            <td>16.04</td>
-        </tr><tr class="strat_e">
-            <td>25</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sh600536.html" target="_blank">中国软件</a></td>
-            <td>600536</td>
-            <td>公用事业</td>
-            <td class="up">+1.24%</td>
-            <td>28.93</td>
-            <td>30.19</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>30.19</td>
-            <td>28.98</td>
-            <td>31.70</td>
-        </tr><tr class="strat_e">
-            <td>26</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sh600011.html" target="_blank">华能国际</a></td>
-            <td>600011</td>
-            <td>银行</td>
-            <td class="up">+0.12%</td>
-            <td>8.05</td>
-            <td>8.06</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>8.06</td>
-            <td>7.74</td>
-            <td>8.46</td>
-        </tr><tr class="strat_e">
-            <td>27</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz002261.html" target="_blank">拓维信息</a></td>
-            <td>002261</td>
-            <td>建筑装饰</td>
-            <td class="up">+1.27%</td>
-            <td>29.82</td>
-            <td>30.19</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>30.19</td>
-            <td>28.98</td>
-            <td>31.70</td>
-        </tr><tr class="strat_e">
-            <td>28</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sh601689.html" target="_blank">拓普集团</a></td>
-            <td>601689</td>
-            <td>有色金属</td>
-            <td class="up">+1.78%</td>
-            <td>60.88</td>
-            <td>61.70</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>61.70</td>
-            <td>59.23</td>
-            <td>64.79</td>
-        </tr><tr class="strat_e">
-            <td>29</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sh601601.html" target="_blank">中国太保</a></td>
-            <td>601601</td>
-            <td>有色金属</td>
-            <td class="up">+1.19%</td>
-            <td>33.01</td>
-            <td>33.25</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>33.25</td>
-            <td>31.92</td>
-            <td>34.91</td>
-        </tr><tr class="strat_e">
-            <td>30</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz002466.html" target="_blank">天齐锂业</a></td>
-            <td>002466</td>
-            <td>传媒</td>
-            <td class="up">+1.95%</td>
-            <td>62.99</td>
-            <td>63.72</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>63.72</td>
-            <td>61.17</td>
-            <td>66.91</td>
-        </tr><tr class="strat_e">
-            <td>31</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz002415.html" target="_blank">海康威视</a></td>
-            <td>002415</td>
-            <td>传媒</td>
-            <td class="up">+1.55%</td>
-            <td>30.60</td>
-            <td>30.71</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>30.71</td>
-            <td>29.48</td>
-            <td>32.25</td>
-        </tr><tr class="strat_e">
-            <td>32</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz002465.html" target="_blank">海格通信</a></td>
-            <td>002465</td>
-            <td>传媒</td>
-            <td class="up">+1.10%</td>
-            <td>13.76</td>
-            <td>13.83</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>13.83</td>
-            <td>13.28</td>
-            <td>14.52</td>
-        </tr><tr class="strat_e">
-            <td>33</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz002361.html" target="_blank">神剑股份</a></td>
-            <td>002361</td>
-            <td>电力设备</td>
-            <td class="up">+1.21%</td>
-            <td>15.72</td>
-            <td>15.93</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>15.93</td>
-            <td>15.29</td>
-            <td>16.73</td>
-        </tr><tr class="strat_e">
-            <td>34</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sh603608.html" target="_blank">天创时尚</a></td>
-            <td>603608</td>
-            <td>轻工制造</td>
-            <td class="up">+0.72%</td>
-            <td>25.50</td>
-            <td>26.58</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>26.58</td>
-            <td>25.52</td>
-            <td>27.91</td>
-        </tr><tr class="strat_e">
-            <td>35</td>
-            <td><span class="badge strat_e">E</span></td>
-            <td><a href="https://quote.eastmoney.com/concept/sz001696.html" target="_blank">宗申动力</a></td>
-            <td>001696</td>
-            <td>未知</td>
-            <td class="up">+0.04%</td>
-            <td>22.05</td>
-            <td>22.85</td>
-            <td>0.00%</td>
-            <td>10</td>
-            <td class="conf low">★</td>
-            <td>22.85</td>
-            <td>21.94</td>
-            <td>23.99</td>
-        </tr></tbody>
-            </table>
-        </div>
-    </section>
-
-    <section>
-        <h2>策略说明</h2>
-        <table>
-            <thead><tr><th style="width:18%">策略</th><th style="width:48%">条件</th><th style="width:16%">仓位(震荡)</th><th style="width:18%">仓位(弱市)</th></tr></thead>
-            <tbody>
-                <tr><td><span class="badge strat_a">A动量延续</span></td><td style="white-space:normal;word-break:break-all">涨幅3-7% + 量比1.5-3.0 + MA5>MA10>MA20</td><td>12-17%</td><td>0%(关闭)</td></tr>
-                <tr><td><span class="badge strat_b">B超跌反弹</span></td><td style="white-space:normal;word-break:break-all">连跌≥3日 + RSI<35 + KDJ J拐头 + MA20支撑</td><td>10-13%</td><td>12-15%</td></tr>
-                <tr><td><span class="badge strat_c">C事件驱动</span></td><td style="white-space:normal;word-break:break-all">重大合同/预增>50%/部委政策</td><td>8-10%</td><td>5-8%</td></tr>
-                <tr><td><span class="badge strat_d">D回调企稳</span></td><td style="white-space:normal;word-break:break-all">20日新高回调MA20 + 缩量站回MA5放量</td><td>12-15%</td><td>8-12%</td></tr>
-                <tr><td><span class="badge strat_e">E资金埋伏</span></td><td style="white-space:normal;word-break:break-all">北向连续净买 + 主力流入>3000万 + 涨幅<2%</td><td>5-8%</td><td>3-5%</td></tr>
-            </tbody>
-        </table>
-    </section>
 </div>
+
+<!-- 2. 筛选管道 -->
+<div class="section">
+    <h2>筛选管道</h2>
+    <div class="funnel">
+        <div class="funnel-step" style="background:#E3F2FD;width:100%">① 原始标的池: 500只</div>
+        <div class="funnel-arrow">↓</div>
+        <div class="funnel-step" style="background:#E8EAF6;width:80%">② 硬排除31项</div>
+        <div class="funnel-arrow">↓</div>
+        <div class="funnel-step" style="background:#F3E5F5;width:60%">③ 信号过滤14项</div>
+        <div class="funnel-arrow">↓</div>
+        <div class="funnel-step" style="background:#E8F5E9;width:40%">④ 策略匹配</div>
+        <div class="funnel-arrow">↓</div>
+        <div class="funnel-step" style="background:#FFF9C4;width:25%">⑤ 行业+新闻</div>
+        <div class="funnel-arrow">↓</div>
+        <div class="funnel-step funnel-final" style="width:15%">★ 最终: 5只</div>
+    </div>
+</div>
+
+<!-- 3. 数据可视化 -->
+<div class="section">
+    <h2>数据可视化</h2>
+    <div class="chart-grid">
+        <div class="chart-box">
+            <h3>策略分布</h3>
+            <div class="seg-bar"><div style="flex:10.989010989010989;background:#2196F3;height:28px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:bold;">B</div><div style="flex:45.604395604395606;background:#FF9800;height:28px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:bold;">D</div><div style="flex:43.40659340659341;background:#E91E63;height:28px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:bold;">E</div></div>
+            <div class="seg-legend"><span style="display:inline-block;width:12px;height:12px;background:#2196F3;margin-right:4px;border-radius:2px;"></span>超跌反弹:20只(11%) <span style="display:inline-block;width:12px;height:12px;background:#FF9800;margin-right:4px;border-radius:2px;"></span>回调企稳:83只(46%) <span style="display:inline-block;width:12px;height:12px;background:#E91E63;margin-right:4px;border-radius:2px;"></span>资金埋伏:79只(43%) </div>
+        </div>
+        <div class="chart-box">
+            <h3>硬排除TOP5</h3>
+            <div style="margin:4px 0;display:flex;align-items:center;"><span style="width:80px;font-size:11px;text-align:right;margin-right:8px;">7日内已推荐/持仓</span><div style="flex:1;background:#E3F2FD;border-radius:3px;height:20px;"><div style="width:100%;height:100%;background:linear-gradient(90deg,#667eea,#764ba2);border-radius:3px;display:flex;align-items:center;justify-content:flex-end;padding-right:6px;color:#fff;font-size:11px;font-weight:bold;">99只</div></div></div><div style="margin:4px 0;display:flex;align-items:center;"><span style="width:80px;font-size:11px;text-align:right;margin-right:8px;">股价<5元</span><div style="flex:1;background:#E3F2FD;border-radius:3px;height:20px;"><div style="width:40%;height:100%;background:linear-gradient(90deg,#667eea,#764ba2);border-radius:3px;display:flex;align-items:center;justify-content:flex-end;padding-right:6px;color:#fff;font-size:11px;font-weight:bold;">40只</div></div></div><div style="margin:4px 0;display:flex;align-items:center;"><span style="width:80px;font-size:11px;text-align:right;margin-right:8px;">股价>100元</span><div style="flex:1;background:#E3F2FD;border-radius:3px;height:20px;"><div style="width:29%;height:100%;background:linear-gradient(90deg,#667eea,#764ba2);border-radius:3px;display:flex;align-items:center;justify-content:flex-end;padding-right:6px;color:#fff;font-size:11px;font-weight:bold;">29只</div></div></div><div style="margin:4px 0;display:flex;align-items:center;"><span style="width:80px;font-size:11px;text-align:right;margin-right:8px;">涨停/连板</span><div style="flex:1;background:#E3F2FD;border-radius:3px;height:20px;"><div style="width:26%;height:100%;background:linear-gradient(90deg,#667eea,#764ba2);border-radius:3px;display:flex;align-items:center;justify-content:flex-end;padding-right:6px;color:#fff;font-size:11px;font-weight:bold;">26只</div></div></div><div style="margin:4px 0;display:flex;align-items:center;"><span style="width:80px;font-size:11px;text-align:right;margin-right:8px;">涨幅>7%</span><div style="flex:1;background:#E3F2FD;border-radius:3px;height:20px;"><div style="width:8%;height:100%;background:linear-gradient(90deg,#667eea,#764ba2);border-radius:3px;display:flex;align-items:center;justify-content:flex-end;padding-right:6px;color:#fff;font-size:11px;font-weight:bold;">8只</div></div></div>
+        </div>
+        <div class="chart-box">
+            <h3>各策略数量</h3>
+            <div class="bar-row" style="display:flex;align-items:center;margin:4px 0;"><span style="width:70px;font-size:11px;">动量延续</span><div style="flex:1;background:#f0f0f0;border-radius:3px;height:18px;"><div style="width:0.0%;height:100%;background:#4CAF50;border-radius:3px;display:flex;align-items:center;padding-left:6px;color:#fff;font-size:11px;font-weight:bold;">0只</div></div></div><div class="bar-row" style="display:flex;align-items:center;margin:4px 0;"><span style="width:70px;font-size:11px;">超跌反弹</span><div style="flex:1;background:#f0f0f0;border-radius:3px;height:18px;"><div style="width:10.989010989010989%;height:100%;background:#2196F3;border-radius:3px;display:flex;align-items:center;padding-left:6px;color:#fff;font-size:11px;font-weight:bold;">20只</div></div></div><div class="bar-row" style="display:flex;align-items:center;margin:4px 0;"><span style="width:70px;font-size:11px;">回调企稳</span><div style="flex:1;background:#f0f0f0;border-radius:3px;height:18px;"><div style="width:45.604395604395606%;height:100%;background:#FF9800;border-radius:3px;display:flex;align-items:center;padding-left:6px;color:#fff;font-size:11px;font-weight:bold;">83只</div></div></div><div class="bar-row" style="display:flex;align-items:center;margin:4px 0;"><span style="width:70px;font-size:11px;">资金埋伏</span><div style="flex:1;background:#f0f0f0;border-radius:3px;height:18px;"><div style="width:43.40659340659341%;height:100%;background:#E91E63;border-radius:3px;display:flex;align-items:center;padding-left:6px;color:#fff;font-size:11px;font-weight:bold;">79只</div></div></div>
+        </div>
+        <div class="chart-box">
+            <h3>筛选漏斗</h3>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:3px;">
+                <div style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:8px 16px;border-radius:4px;width:100%;text-align:center;font-size:12px;">① 原始: 500</div>
+                <div style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:8px 16px;border-radius:4px;width:80%;text-align:center;font-size:12px;">② 硬排除</div>
+                <div style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:8px 16px;border-radius:4px;width:60%;text-align:center;font-size:12px;">③ 信号过滤</div>
+                <div style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:8px 16px;border-radius:4px;width:40%;text-align:center;font-size:12px;">④ 策略匹配</div>
+                <div style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:8px 16px;border-radius:4px;width:20%;text-align:center;font-size:12px;">★ 最终: 5</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 4. 最终推荐标的表 -->
+<div class="section">
+    <h2>最终推荐标的</h2>
+    <div style="overflow-x:auto">
+    <table>
+        <thead>
+            <tr>
+                <th>#</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th>
+                <th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th>
+                <th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th>
+            </tr>
+        </thead>
+        <tbody>
+            
+        <tr style="border-left:3px solid #2196F3">
+            <td>1</td>
+            <td><span style="background:#2196F3;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;">超跌反弹</span></td>
+            <td><a href="https://quote.eastmoney.com/concept/sh600309.html" target="_blank" style="color:#2196F3;text-decoration:none;">万华化学</a></td>
+            <td>600309</td>
+            <td>基础化工</td>
+            <td style="color:#F44336;font-weight:bold;">-3.24%</td>
+            <td>72.5</td>
+            <td>71.12</td>
+            <td>3.37%</td>
+            <td><b>5</b></td>
+            <td><span style="color:#F44336;font-weight:bold;">★</span></td>
+            <td>70.41</td>
+            <td style="color:#F44336;">66.14</td>
+            <td style="color:#4CAF50;">74.68</td>
+        </tr>
+        <tr style="border-left:3px solid #2196F3">
+            <td>2</td>
+            <td><span style="background:#2196F3;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;">超跌反弹</span></td>
+            <td><a href="https://quote.eastmoney.com/concept/sh600066.html" target="_blank" style="color:#2196F3;text-decoration:none;">宇通客车</a></td>
+            <td>600066</td>
+            <td>银行</td>
+            <td style="color:#F44336;font-weight:bold;">-7.54%</td>
+            <td>28.26</td>
+            <td>26.13</td>
+            <td>7.86%</td>
+            <td><b>5</b></td>
+            <td><span style="color:#F44336;font-weight:bold;">★</span></td>
+            <td>25.87</td>
+            <td style="color:#F44336;">24.3</td>
+            <td style="color:#4CAF50;">27.44</td>
+        </tr>
+        <tr style="border-left:3px solid #2196F3">
+            <td>3</td>
+            <td><span style="background:#2196F3;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;">超跌反弹</span></td>
+            <td><a href="https://quote.eastmoney.com/concept/sh603778.html" target="_blank" style="color:#2196F3;text-decoration:none;">国晟科技</a></td>
+            <td>603778</td>
+            <td>汽车</td>
+            <td style="color:#F44336;font-weight:bold;">-8.87%</td>
+            <td>16.54</td>
+            <td>16.24</td>
+            <td>4.49%</td>
+            <td><b>5</b></td>
+            <td><span style="color:#F44336;font-weight:bold;">★</span></td>
+            <td>16.08</td>
+            <td style="color:#F44336;">15.1</td>
+            <td style="color:#4CAF50;">17.05</td>
+        </tr>
+        <tr style="border-left:3px solid #2196F3">
+            <td>4</td>
+            <td><span style="background:#2196F3;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;">超跌反弹</span></td>
+            <td><a href="https://quote.eastmoney.com/concept/sh603119.html" target="_blank" style="color:#2196F3;text-decoration:none;">浙江荣泰</a></td>
+            <td>603119</td>
+            <td>机械设备</td>
+            <td style="color:#F44336;font-weight:bold;">-3.53%</td>
+            <td>72.09</td>
+            <td>70.24</td>
+            <td>3.76%</td>
+            <td><b>5</b></td>
+            <td><span style="color:#F44336;font-weight:bold;">★</span></td>
+            <td>69.54</td>
+            <td style="color:#F44336;">65.32</td>
+            <td style="color:#4CAF50;">73.75</td>
+        </tr>
+        <tr style="border-left:3px solid #2196F3">
+            <td>5</td>
+            <td><span style="background:#2196F3;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;">超跌反弹</span></td>
+            <td><a href="https://quote.eastmoney.com/concept/sh603979.html" target="_blank" style="color:#2196F3;text-decoration:none;">金诚信</a></td>
+            <td>603979</td>
+            <td>商贸零售</td>
+            <td style="color:#F44336;font-weight:bold;">-5.87%</td>
+            <td>77.45</td>
+            <td>73.27</td>
+            <td>5.86%</td>
+            <td><b>5</b></td>
+            <td><span style="color:#F44336;font-weight:bold;">★</span></td>
+            <td>72.54</td>
+            <td style="color:#F44336;">68.14</td>
+            <td style="color:#4CAF50;">76.93</td>
+        </tr>
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<!-- 5. 策略说明 -->
+<div class="section">
+    <h2>策略说明</h2>
+    <table class="strategy-table" style="table-layout:fixed">
+        <thead>
+            <tr><th style="width:18%">策略</th><th style="width:48%">条件</th><th style="width:16%">仓位(震荡)</th><th style="width:18%">优先级</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>A动量延续</td><td style="white-space:normal;word-break:break-all">涨幅3-7%+量比1.5-3.0+量>5日均×1.5+MA5>MA10>MA20</td><td>15%</td><td>优1</td></tr>
+            <tr><td>B超跌反弹</td><td style="white-space:normal;word-break:break-all">连跌≥3日+RSI<35+KDJ J拐头+MA20/MA60支撑</td><td>12%</td><td>优2</td></tr>
+            <tr><td>D回调企稳</td><td style="white-space:normal;word-break:break-all">20日内新高+回调至MA20±3%+缩量站回MA5放量</td><td>13%</td><td>优4</td></tr>
+            <tr><td>E资金埋伏</td><td style="white-space:normal;word-break:break-all">北向连续净买+主力流入+涨幅<2%</td><td>7%</td><td>优5</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- 6. 系统告警 -->
+<div class="section">
+    <h2>系统告警</h2>
+    <div class="alert-list">
+        <div class="alert-item"><span class="alert-tag info">INFO</span><span>当日无告警记录</span></div>
+    </div>
+</div>
+
+<!-- 7. 报告尾部 -->
 <div class="footer">
-    <p>版本: v6.6.25 | 生成时间: 2026-06-16</p>
-    <p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p>
+    <p>版本: v6.6.25 | 生成时间: 2026-06-16 12:22:56 | 规则来源: lc132/lv</p>
+    <p class="disclaimer">⚠️ 仅供参考，不构成投资建议</p>
+</div>
 </div>
 </body>
 </html>
