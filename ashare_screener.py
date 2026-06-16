@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.6.33"
+BUILTIN_VERSION = "v6.6.34"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -747,20 +747,21 @@ HARDCODED_INDUSTRY = {
 # ============================================================
 def step11_hard_exclude(candidates, all_holdings_codes):
     er = Counter()
-    recent_7d_codes = set()  # v6.6.31: 7日内推荐仅标注，不排除
+    recent_7d_count = {}  # v6.6.34: 统计7日内推荐次数，数字显示
     c7 = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=7)).strftime('%Y-%m-%d')
     for f in sorted(os.listdir('/workspace')):
         if f.startswith('推荐历史_') and f.endswith('.json'):
             for r in safe_read_json(os.path.join('/workspace', f)):
                 if r.get('type') == 'recommendation' and r.get('date', '') >= c7:
-                    recent_7d_codes.add(r.get('code', ''))
+                    code = r.get('code', '')
+                    recent_7d_count[code] = recent_7d_count.get(code, 0) + 1
     passed, excluded = [], []
     for c in candidates:
         code = c.get('code', ''); close = c.get('close', 0); chg = c.get('change_pct', 0)
         reason = None
-        # v6.6.31: 7日内推荐仅标注，不排除（标注在 _recent_7d 字段）
-        if code in recent_7d_codes and code not in all_holdings_codes:
-            c['_recent_7d'] = True
+        # v6.6.34: 7日内推荐次数用数字显示（不排除，仅标注）
+        if code in recent_7d_count and code not in all_holdings_codes:
+            c['_recent_7d'] = recent_7d_count[code]
         if code in all_holdings_codes:
             reason = "当前持仓"; c['_holding'] = True
         elif code.startswith('688'): reason = "科创板"
@@ -1025,7 +1026,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, er):
             chg_e = "🔴" if chg >= 0 else "🟢"
             entry = calc_entry_price(c)
             sl = round(entry * 0.96, 2); tp = round(entry * 1.05, 2)
-            r7d = "★" if c.get('_recent_7d') else ""
+            r7d = str(c.get('_recent_7d')) if c.get('_recent_7d') else ""
             url = f"https://quote.eastmoney.com/concept/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/concept/sz{code}.html"
             lines.append(f"| {idx} | {s} | [{name}]({url}) | {code} | {ind} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} |")
     sd = Counter(c.get('strategy') for c in candidates)
@@ -1076,7 +1077,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisi
         amp = c.get('amplitude', 0) or 0; score = c.get('score', 0); conf = c.get('confidence', '★')
         entry = calc_entry_price(c)
         sl = round(entry * 0.96, 2); tp = round(entry * 1.05, 2)
-        r7d_html = "★" if c.get('_recent_7d') else ""
+        r7d_html = str(c.get('_recent_7d')) if c.get('_recent_7d') else ""
         chg_cls = "up" if chg >= 0 else "down"
         conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
         scl = f"strat_{s.lower()}"
