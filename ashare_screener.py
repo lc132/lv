@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.6.31
-35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 16条硬编码修正 | 7日推荐标注
+A股每日盘前短线标的智能筛选 v6.6.32
+35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 16条硬编码修正 | 7日推荐标注 | 指数涨跌金额
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.6.31"
+BUILTIN_VERSION = "v6.6.32"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -79,7 +79,7 @@ def _parse_tencent_field(raw, idx, default=None):
     except: return default
 
 def fetch_tencent_index(codes):
-    """拉取指数行情，返回 {code: {name,price,prev_close,change_pct}}"""
+    """拉取指数行情，返回 {code: {name,price,prev_close,change_pct,change_amount}}"""
     result = {}
     try:
         url = f"{TENCENT_API}{','.join(codes)}"
@@ -95,7 +95,8 @@ def fetch_tencent_index(codes):
                 price = _parse_tencent_field(raw, 3, 0)
                 prev = _parse_tencent_field(raw, 4, 0)
                 chg = round((price - prev) / prev * 100, 2) if prev > 0 else 0
-                result[code] = {"name": raw[1], "price": price, "prev_close": prev, "change_pct": chg}
+                chg_amt = round(price - prev, 2)  # 涨跌点数
+                result[code] = {"name": raw[1], "price": price, "prev_close": prev, "change_pct": chg, "change_amount": chg_amt}
             except: pass
     except Exception as e: log_alert("WARNING", "腾讯指数", f"获取失败: {str(e)[:60]}")
     return result
@@ -1016,10 +1017,12 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisi
         info = index_data.get(code, {})
         price = info.get("price", 0)
         chg = info.get("change_pct", 0)
+        chg_amt = info.get("change_amount", 0)
         if price > 0:
             chg_cls = "up" if chg >= 0 else "down"
             chg_sign = "+" if chg >= 0 else ""
-            index_cards += f'<div class="index-card"><div class="idx-name">{name}</div><div class="idx-price">{price:.2f}</div><div class="idx-chg {chg_cls}">{chg_sign}{chg:.2f}%</div></div>'
+            amt_sign = "+" if chg_amt >= 0 else ""
+            index_cards += f'<div class="index-card"><div class="idx-name">{name}</div><div class="idx-price">{price:.2f}</div><div class="idx-chg {chg_cls}"><span class="idx-amt">{amt_sign}{chg_amt:.2f}</span> <span class="idx-pct">{chg_sign}{chg:.2f}%</span></div></div>'
         else:
             index_cards += f'<div class="index-card"><div class="idx-name">{name}</div><div class="idx-price">-</div><div class="idx-chg">数据不可得</div></div>'
     
@@ -1095,6 +1098,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisi
 .index-card{{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:1rem 1.5rem;text-align:center;min-width:140px;flex:1}}
 .index-card .idx-name{{font-size:.85rem;color:#cbd5e1}}.index-card .idx-price{{font-size:1.5rem;font-weight:bold;color:#f8fafc}}
 .index-card .idx-chg{{font-size:.9rem;font-weight:bold}}
+.index-card .idx-amt{{font-size:1.1rem;display:block}} .index-card .idx-pct{{font-size:.75rem;color:#94a3b8;font-weight:normal}}
 .up{{color:#ef4444}}.down{{color:#22c55e}}
 section{{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:1.5rem;margin:1.2rem 0}}
 section h2{{font-size:1.2rem;color:#38bdf8;margin-bottom:1rem;border-bottom:2px solid #334155;padding-bottom:.5rem}}
