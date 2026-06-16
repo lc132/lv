@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.6.27
-35步完整执行流程 | 腾讯API替代新浪 | 指数行情展示 | 策略进场价
+A股每日盘前短线标的智能筛选 v6.6.28
+35步完整执行流程 | 腾讯一级 | 新浪二级 | 策略进场价
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.6.27"
+BUILTIN_VERSION = "v6.6.28"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -445,55 +445,66 @@ def step8_market_environment():
 # 步骤10A：全市场拉取（三级降级，Tier2改为腾讯）
 # ============================================================
 def step10A_fetch_all_stocks():
-    # Tier 1: clist
-    try:
-        url = "https://push2.eastmoney.com/api/qt/clist/get"
-        pq = {"pn": "1", "pz": "6000", "po": "1", "np": "1",
-              "ut": "bd1d9ddb04089700cf9c27f6f7426281", "fltt": "2", "invt": "2", "fid": "f3",
-              "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
-              "fields": "f2,f3,f5,f6,f7,f8,f10,f12,f14,f15,f16,f17,f18,f20,f62",
-              "_": str(int(time.time() * 1000))}
-        req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(pq)}",
-                                     headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://quote.eastmoney.com/'})
-        resp = urllib.request.urlopen(req, timeout=10)
-        data = json.loads(resp.read())
-        if data and data.get('data') and data['data'].get('diff'):
-            stocks = []
-            for item in data['data']['diff']:
-                code = item.get('f12', ''); name = item.get('f14', '')
-                cv = item.get('f2')
-                if not code or not name or cv == '-' or cv is None: continue
-                try:
-                    stocks.append({"code": code, "name": name,
-                        "open": float(item.get('f17', 0)) if item.get('f17') not in (None, '-') else None,
-                        "close": float(cv),
-                        "change_pct": float(item.get('f3', 0)) if item.get('f3') not in (None, '-') else 0,
-                        "turnover": float(item.get('f8', 0)) if item.get('f8') not in (None, '-') else 0,
-                        "amplitude": float(item.get('f7', 0)) if item.get('f7') not in (None, '-') else 0,
-                        "volume_ratio": float(item.get('f10', 0)) if item.get('f10') not in (None, '-') else 0,
-                        "amount": float(item.get('f6', 0)) if item.get('f6') not in (None, '-') else 0,
-                        "high": float(item.get('f15', 0)) if item.get('f15') not in (None, '-') else None,
-                        "low": float(item.get('f16', 0)) if item.get('f16') not in (None, '-') else None,
-                        "prev_close": float(item.get('f18', 0)) if item.get('f18') not in (None, '-') else None,
-                        "main_inflow": float(item.get('f62', 0)) if item.get('f62') not in (None, '-') else None,
-                        "total_cap": float(item.get('f20', 0)) if item.get('f20') not in (None, '-') else None})
-                except: continue
-            log_alert("INFO", "行情采集", f"clist 成功拉取 {len(stocks)} 只")
-            return stocks, "clist"
-    except Exception as e: log_alert("INFO", "行情采集", f"clist不可达: {str(e)[:60]}")
-    
-    # Tier 2: 腾讯API (v6.6.27 替代新浪)
-    log_alert("INFO", "行情采集", "降级为腾讯批量API")
+    # Tier 1: 腾讯API (v6.6.28 一级数据源)
     try:
         codes = []
         for i in range(600000, 606000): codes.append(f"sh{i}")
         for i in range(1, 5000): codes.append(f"sz{i:06d}")
         for i in range(300000, 302000): codes.append(f"sz{i}")
         stocks = fetch_tencent_stocks(codes)
-        log_alert("INFO", "行情采集", f"腾讯API 成功拉取 {len(stocks)} 只")
+        log_alert("INFO", "行情采集", f"腾讯(一级) 成功拉取 {len(stocks)} 只")
         return stocks, "tencent"
     except Exception as e:
-        log_alert("ERROR", "行情采集", f"腾讯失败: {str(e)[:60]}")
+        log_alert("WARNING", "行情采集", f"腾讯一级失败: {str(e)[:60]}")
+    
+    # Tier 2: 新浪批量API (v6.6.28 二级降级)
+    log_alert("INFO", "行情采集", "降级为新浪批量API(二级)")
+    try:
+        code_ranges = []
+        for i in range(600000, 606000): code_ranges.append(f"sh{i}")
+        for i in range(1, 5000): code_ranges.append(f"sz{i:06d}")
+        for i in range(300000, 302000): code_ranges.append(f"sz{i}")
+        stocks = []
+        batch_size = 80
+        for i in range(0, len(code_ranges), batch_size):
+            batch = code_ranges[i:i+batch_size]
+            try:
+                url = f"https://hq.sinajs.cn/list={','.join(batch)}"
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'})
+                resp = urllib.request.urlopen(req, timeout=5)
+                text = resp.read().decode('gbk')
+                for line in text.strip().split('\n'):
+                    if not line or '=""' in line: continue
+                    try:
+                        parts = line.split('"')[1].split(',')
+                        if len(parts) < 6: continue
+                        header = line.split('="')[0]
+                        raw_code = header.split('_')[-1] if '_' in header else header[-6:]
+                        code = raw_code if len(raw_code) == 6 else raw_code[-6:]
+                        name = parts[0]
+                        current = float(parts[3]) if parts[3] else 0
+                        prev_close = float(parts[2]) if parts[2] else 0
+                        if current <= 0 or prev_close <= 0: continue
+                        high_v = float(parts[4]) if parts[4] else 0
+                        low_v = float(parts[5]) if parts[5] else 0
+                        amplitude_v = round((high_v - low_v) / prev_close * 100, 2) if prev_close > 0 and high_v > 0 and low_v > 0 else 0
+                        stocks.append({
+                            "code": code, "name": name,
+                            "open": float(parts[1]) if parts[1] else 0,
+                            "close": current,
+                            "change_pct": round((current - prev_close) / prev_close * 100, 2),
+                            "amount": float(parts[9]) if len(parts) > 9 and parts[9] else 0,
+                            "high": high_v, "low": low_v, "prev_close": prev_close,
+                            "turnover": 0, "amplitude": amplitude_v,
+                            "volume_ratio": None, "main_inflow": None, "total_cap": None,
+                        })
+                    except: continue
+                if i % (batch_size * 10) == 0: time.sleep(0.02)
+            except: continue
+        log_alert("INFO", "行情采集", f"新浪(二级) 成功拉取 {len(stocks)} 只")
+        return stocks, "sina"
+    except Exception as e:
+        log_alert("ERROR", "行情采集", f"新浪二级也失败: {str(e)[:60]}")
     
     # Tier 3: pytdx
     try:
@@ -771,7 +782,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, er):
         f"# A股短线标的筛选报告 — {prediction_date}", "",
         f"- **数据日期**: {data_date}  |  **预测日期**: {prediction_date}",
         f"- **市场环境**: {market_condition}  |  **建议仓位**: {position_pct}%",
-        f"- **数据来源**: 东方财富clist/腾讯qt → pytdx三级降级",
+        f"- **数据来源**: 腾讯qt(一级) / 新浪(二级) / pytdx(三级)",
         f"- **规则版本**: {file_version}", "",
         "## 筛选管道（6级漏斗）", "",
         "| 阶段 | 数量 | 排除 | 说明 |",
@@ -1071,19 +1082,19 @@ def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, sd):
 # 数据源监控
 # ============================================================
 def update_data_source_monitor(ds):
-    monitor = safe_read_json("/workspace/数据源监控.json", default={"clist_success": 0, "clist_consecutive_failures": 0, "total_runs": 0, "last_source": "", "history": []})
-    if not isinstance(monitor, dict): monitor = {"clist_success": 0, "clist_consecutive_failures": 0, "total_runs": 0, "last_source": "", "history": []}
+    monitor = safe_read_json("/workspace/数据源监控.json", default={"tencent_success": 0, "tencent_consecutive_failures": 0, "total_runs": 0, "last_source": "", "history": []})
+    if not isinstance(monitor, dict): monitor = {"tencent_success": 0, "tencent_consecutive_failures": 0, "total_runs": 0, "last_source": "", "history": []}
     monitor["total_runs"] = monitor.get("total_runs", 0) + 1
-    if ds == "clist":
-        monitor["clist_success"] = monitor.get("clist_success", 0) + 1
-        cf = monitor.get("clist_consecutive_failures", 0)
-        if cf > 0: log_alert("INFO", "数据源监控", f"clist已恢复（连续失败{cf}次）")
-        monitor["clist_consecutive_failures"] = 0
+    if ds == "tencent":
+        monitor["tencent_success"] = monitor.get("tencent_success", 0) + 1
+        cf = monitor.get("tencent_consecutive_failures", 0)
+        if cf > 0: log_alert("INFO", "数据源监控", f"腾讯一级已恢复（连续失败{cf}次）")
+        monitor["tencent_consecutive_failures"] = 0
     else:
-        monitor["clist_consecutive_failures"] = monitor.get("clist_consecutive_failures", 0) + 1
-        cf = monitor["clist_consecutive_failures"]
-        if cf == 1: log_alert("WARNING", "数据源监控", f"clist第1次不可达，降级至{ds}")
-        elif cf >= 10: log_alert("CRITICAL", "数据源监控", f"clist连续{cf}次不可达！")
+        monitor["tencent_consecutive_failures"] = monitor.get("tencent_consecutive_failures", 0) + 1
+        cf = monitor["tencent_consecutive_failures"]
+        if cf == 1: log_alert("WARNING", "数据源监控", f"腾讯一级第1次不可达，降级至{ds}")
+        elif cf >= 10: log_alert("CRITICAL", "数据源监控", f"腾讯一级连续{cf}次不可达！")
     monitor["last_source"] = ds
     monitor["history"].append({"date": data_date, "source": ds, "count": 0, "success": True})
     if len(monitor["history"]) > 30: monitor["history"] = monitor["history"][-30:]
@@ -1134,7 +1145,7 @@ def main():
     
     raw_pool = [s for s in all_stocks if s.get('change_pct') is not None and s.get('change_pct') > -9.5
                 and s.get('close') is not None and s.get('close') > 0]
-    if ds == 'clist': raw_pool.sort(key=lambda x: (x.get('turnover', 0) or 0), reverse=True)
+    if ds == 'tencent': raw_pool.sort(key=lambda x: (x.get('turnover', 0) or 0), reverse=True)
     else: raw_pool.sort(key=lambda x: (x.get('amount', 0) or 0), reverse=True)
     raw_pool = raw_pool[:500]
     total_raw = len(raw_pool)
