@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.6.37"
+BUILTIN_VERSION = "v6.6.38"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -846,28 +846,75 @@ def step13_strategy_match(candidates):
         chg = c.get('change_pct', 0); amp = c.get('amplitude', 0)
         amt = c.get('amount', 0); vr = c.get('volume_ratio')
         close = c.get('close', 0); op = c.get('open', 0)
+        high = c.get('high', 0); low = c.get('low', 0)
         s = None; reason = ""; score = 0
+        # ── A 动量延续 ──
         if market_condition != "弱市" and 3 <= chg <= 7:
             if vr is not None and 1.5 <= vr <= 3.0:
                 s = "A"; reason = f"动量延续:涨{chg:.1f}%+量比{vr:.1f}"; score = 10
+                # v6.6.38: 假突破过滤 — 上影线:下影线>2:1 → 降置信减3分
+                if high > 0 and low > 0 and high > low:
+                    ent = max(close, op); body_low = min(close, op)
+                    upper_shadow = high - ent if ent > 0 else 0
+                    lower_shadow = body_low - low if body_low > 0 else 0
+                    if lower_shadow > 0 and upper_shadow / lower_shadow > 2:
+                        c['_fake_breakout'] = True
+                        score -= 3
+                        reason += f" ⚠假突破(上影{round(upper_shadow/lower_shadow,1)}x)"
+        # ── B 超跌反弹 ──
         if not s and -9.5 <= chg <= -3:
-            if amp > 3 or (low := c.get('low', 0)) < close * 0.99:
+            # v6.6.38: 最大跌幅限制 — 跌幅>30%可能暴雷，排除
+            if chg < -30:
+                c['_excluded_max_decline'] = True
+            elif amp > 3 or (low_val := c.get('low', 0)) < close * 0.99:
                 s = "B"; reason = f"超跌反弹:跌{chg:.1f}%+振幅{amp:.1f}%"; score = 7
+        # ── C 事件驱动 ──
         if not s and 0 < chg <= 5:
-            if beijing_now.month in (1, 3, 4, 8, 10):
-                s = "C"; reason = f"事件驱动(财报季):涨{chg:.1f}%"; score = 8
+            is_earnings = beijing_now.month in (1, 3, 4, 8, 10)
+            # v6.6.38: C策略量价确认 — 需要量比≥1.2或收盘涨幅>2%，否则降级
+            vr_ok = vr is not None and vr >= 1.2
+            chg_ok = chg >= 2
+            if is_earnings:
+                if vr_ok or chg_ok:
+                    s = "C"; reason = f"事件驱动(财报季):涨{chg:.1f}%"; score = 8
+                else:
+                    s = "C"; reason = f"事件驱动(财报季):涨{chg:.1f}%"; score = 5  # 降级
+                    c['_c_downgrade'] = True
             elif vr is not None and vr >= 1.0:
-                s = "C"; reason = f"事件驱动:涨{chg:.1f}%+量比{vr:.1f}"; score = 7
+                if vr_ok or chg_ok:
+                    s = "C"; reason = f"事件驱动:涨{chg:.1f}%+量比{vr:.1f}"; score = 7
+                else:
+                    s = "C"; reason = f"事件驱动:涨{chg:.1f}%+量比{vr:.1f}"; score = 4  # 降级
+                    c['_c_downgrade'] = True
+        # ── D 回调企稳突破 ──
         if not s and 2 <= chg <= 6:
             if 2 <= amp <= 8 and close > op:
                 s = "D"; reason = f"回调企稳:涨{chg:.1f}%+阳线+振幅{amp:.1f}%"; score = 8
                 if vr is not None and vr >= 1.5: s = "A"; reason = f"动量延续:涨{chg:.1f}%+量比{vr:.1f}"; score = 10
+        # ── E 资金埋伏 ──
         if not s and 0 <= chg <= 2:
             mi = c.get('main_inflow')
             if mi is not None and mi > params.get('northbound_threshold', 3000):
                 s = "E"; reason = f"资金埋伏:涨{chg:.1f}%+主力流入{mi:.0f}万"; score = 6
             elif amt > 3e8 and amp > 0.5:
                 s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+成交额{amt/1e8:.1f}亿"; score = 5
+        # ── F 北向资金埋伏 (v6.6.38 新增) ──
+        if not s and 0 <= chg <= 3:
+            mi = c.get('main_inflow')
+            # 以主力流入代理北向: >5000万阈值 + 持续5日从推荐历史推算
+            if mi is not None and mi > 5000:
+                # 从推荐历史统计近5日同一标的是否持续有资金流入记录
+                nb_days = 0
+                for fname in sorted(os.listdir('/workspace')):
+                    if fname.startswith('推荐历史_') and fname.endswith('.json'):
+                        for r in safe_read_json(os.path.join('/workspace', fname)):
+                            if r.get('code') == c.get('code') and r.get('type') == 'recommendation':
+                                rd = r.get('date', '')
+                                if rd >= (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=5)).strftime('%Y-%m-%d'):
+                                    nb_days += 1
+                                    break
+                if nb_days >= 3:
+                    s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi:.0f}万+持续{nb_days}日"; score = 5
         if s: c['strategy'] = s; c['reason'] = reason; c['score'] = score; matched.append(c)
     log_alert("INFO", "策略匹配", f"匹配{len(matched)}只")
     return matched
@@ -881,6 +928,8 @@ def step14_scoring(candidates):
         if c.get('_first_yin'): sc += 1
         if c.get('_signal_score_adj'): sc += c['_signal_score_adj']
         if c.get('_l3_warning'): sc -= 2
+        if c.get('_fake_breakout'): sc -= 3  # v6.6.38: A策略假突破惩罚
+        if c.get('_c_downgrade'): sc -= 2    # v6.6.38: C策略量价不足降级
         c['score'] = max(0, sc)
         s = c['score']
         if s >= 18: c['confidence'] = '★★★'
@@ -904,7 +953,17 @@ def step17_industry_limit(candidates):
     return final
 
 def step16_comprehensive_score(candidates):
-    so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4}
+    so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5}
+    # v6.6.38: 板块联动检测 — 同板块≥3只A/D → 板块加分
+    sector_ad = defaultdict(list)
+    for c in candidates:
+        if c.get('strategy') in ('A', 'D'):
+            sector_ad[c.get('industry', '')].append(c)
+    sector_bonus = {}
+    for ind, clist in sector_ad.items():
+        if len(clist) >= 3:
+            for c in clist:
+                sector_bonus[c.get('code', '')] = 0.10  # 板块联动加分10%
     for c in candidates:
         vr = c.get('volume_ratio') or 0; to = c.get('turnover') or 0; chg = c.get('change_pct') or 0
         vs = min(vr / 3.0, 1.0)
@@ -916,8 +975,13 @@ def step16_comprehensive_score(candidates):
         s = c.get('strategy', 'Z')
         if s in ('A', 'E'): cs = max(0, 1.0 - abs(chg - 3) / 7.0)
         elif s == 'B': cs = max(0, 1.0 - abs(chg + 5) / 5.0)
+        elif s == 'F': cs = max(0, 1.0 - abs(chg - 1.5) / 3.0)  # F偏好小幅上涨
         else: cs = max(0, 1.0 - abs(chg - 2) / 8.0)
-        c['_tie_score'] = vs * 0.25 + ts * 0.25 + cs * 0.25 + 0.15 + (1.0 - so.get(s, 99) / 10.0) * 0.10
+        # v6.6.38: 均线粘合发散增强 — 振幅<3%+量比>1.2 → 疑似粘合发散
+        amp = c.get('amplitude', 0) or 0
+        ma_bonus = 0.05 if amp < 3 and vr > 1.2 else 0
+        code = c.get('code', '')
+        c['_tie_score'] = vs * 0.25 + ts * 0.25 + cs * 0.25 + 0.15 + (1.0 - so.get(s, 99) / 10.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus
     candidates.sort(key=lambda x: (-x.get('score', 0), so.get(x.get('strategy', 'Z'), 99), -(x.get('_tie_score', 0))))
     return candidates
 
@@ -1020,6 +1084,15 @@ def calc_entry_price(c):
             entry = close * 0.995
         return round(entry, 2)
     
+    elif strategy == 'F':
+        # 北向资金埋伏(v6.6.38): 涨幅有限+持续资金流入，次日平开或小幅低开
+        # 在收盘价下方0.5%挂单，低吸为主
+        if low > 0 and close > low:
+            entry = low + (close - low) * 0.3
+        else:
+            entry = close * 0.995
+        return round(entry, 2)
+    
     return round(close, 2)
 
 # ============================================================
@@ -1060,9 +1133,10 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, er):
             url = f"https://quote.eastmoney.com/concept/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/concept/sz{code}.html"
             lines.append(f"| {idx} | {s} | [{name}]({url}) | {code} | {ind} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} |")
     sd = Counter(c.get('strategy') for c in candidates)
-    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏'}
+    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金'}
+    sl = {'A': 'A动量', 'B': 'B超跌', 'C': 'C事件', 'D': 'D回调', 'E': 'E资金', 'F': 'F北向'}
     lines.append("\n## 策略分布")
-    for s in ['A', 'B', 'C', 'D', 'E']:
+    for s in ['A', 'B', 'C', 'D', 'E', 'F']:
         if sd.get(s, 0) > 0: lines.append(f"- {s} {sn.get(s, '')}: {sd[s]}只")
     lines.append("\n## 硬排除 TOP5")
     for r, cnt in er.most_common(5): lines.append(f"- {r}: {cnt}只")
@@ -1079,8 +1153,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisi
     os.makedirs(hd, exist_ok=True)
     hp = f"{hd}/ashare-screening-{pred_yyyymmdd}.html"
     sd = Counter(c.get('strategy') for c in candidates)
-    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏'}
-    sc = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899'}
+    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金'}
+    sc = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4'}
     fc = len(candidates)
     
     # 指数卡片HTML
@@ -1122,7 +1196,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisi
     seg_html = ""; legend_html = ""
     total_m = sum(sd.values())
     if total_m > 0:
-        for s in ['A', 'B', 'C', 'D', 'E']:
+        for s in ['A', 'B', 'C', 'D', 'E', 'F']:
             cnt = sd.get(s, 0)
             if cnt > 0:
                 pct = cnt / total_m * 100
@@ -1145,7 +1219,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisi
         funnel_html += f'<div class="funnel-step {cls}" style="width:{w}%">{name}: {count}只</div>'
     
     strat_bars = ""
-    for s in ['A', 'B', 'C', 'D', 'E']:
+    for s in ['A', 'B', 'C', 'D', 'E', 'F']:
         cnt = sd.get(s, 0)
         bp = cnt / max(max(sd.values()), 1) * 100
         strat_bars += f'<div class="bar-row"><div class="bar-label">{s} {sn.get(s, "")}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%;background:{sc[s]}">{cnt}</div></div></div>'
@@ -1194,9 +1268,9 @@ td{{padding:.4rem .5rem;border-bottom:1px solid #334155;white-space:nowrap}}
 tr:hover{{background:#2d3b4f}}
 .badge{{padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:bold}}
 .strat_a{{background:#14532d;color:#22c55e}}.strat_b{{background:#1e3a5f;color:#3b82f6}}.strat_c{{background:#3b1f6e;color:#8b5cf6}}
-.strat_d{{background:#5c3d0e;color:#f59e0b}}.strat_e{{background:#5c1648;color:#ec4899}}
+.strat_d{{background:#5c3d0e;color:#f59e0b}}.strat_e{{background:#5c1648;color:#ec4899}}.strat_f{{background:#0f4c5c;color:#06b6d4}}
 tr.strat_a{{background:rgba(34,197,94,0.05)}}tr.strat_b{{background:rgba(59,130,246,0.05)}}tr.strat_c{{background:rgba(139,92,246,0.05)}}
-tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72,153,0.05)}}
+tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72,153,0.05)}}tr.strat_f{{background:rgba(6,182,212,0.05)}}
 tr.recent-7d{{background:rgba(251,146,60,0.12)}} tr.recent-7d:hover{{background:rgba(251,146,60,0.2)}}
 .conf{{font-weight:bold}}.conf.high{{color:#22c55e}}.conf.mid{{color:#f59e0b}}.conf.low{{color:#ef4444}}
 .entry{{color:#38bdf8;font-weight:bold}}
@@ -1236,6 +1310,7 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 <tr><td><span class="badge strat_c">C事件驱动</span></td><td style="white-space:normal;word-break:break-all">重大合同/预增>50%/部委政策</td><td>8-10%</td><td>5-8%</td></tr>
 <tr><td><span class="badge strat_d">D回调企稳</span></td><td style="white-space:normal;word-break:break-all">20日新高回调MA20 + 缩量站回MA5放量</td><td>12-15%</td><td>8-12%</td></tr>
 <tr><td><span class="badge strat_e">E资金埋伏</span></td><td style="white-space:normal;word-break:break-all">北向连续净买 + 主力流入>3000万 + 涨幅<2%</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_f">F北向资金</span></td><td style="white-space:normal;word-break:break-all">主力流入>5000万+持续3日+涨幅<3%</td><td>3-5%</td><td>3-5%</td></tr>
 </tbody></table></section></div>
 <div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p style="color:#fb923c;margin-top:.3rem">★ 7日 = 近7日内已推荐标的（橙色高亮行），可持续关注但不建议重复建仓</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
     
@@ -1311,8 +1386,8 @@ def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, sd):
     if not FEISHU_WEBHOOK: log_alert("WARNING", "飞书推送", "无Webhook"); return
     try:
         fc = len(candidates)
-        sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏'}
-        ss = " | ".join([f"{s}{sn.get(s,'')}:{sd.get(s,0)}只" for s in ['A','B','C','D','E'] if sd.get(s, 0) > 0]) or "无推荐标的"
+        sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金'}
+        ss = " | ".join([f"{s}{sn.get(s,'')}:{sd.get(s,0)}只" for s in ['A','B','C','D','E','F'] if sd.get(s, 0) > 0]) or "无推荐标的"
         pb = "https://lc132.github.io/lv"
         pr = f"{pb}/ashare-screening-{pred_yyyymmdd}/ashare-screening-{pred_yyyymmdd}.html"
         card = {"msg_type": "interactive", "card": {
@@ -1428,8 +1503,8 @@ def main():
     print("=" * 60)
     print(f"prediction_date={prediction_date} (数据来源:{data_date})")
     print(f"①原始:N={total_raw} → ②硬排除:N={ae} → ③信号过滤:N={asig} → ④策略:N={astr} → ⑤行业限制:N={aind} → ★ 最终:N={fc}")
-    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏'}
-    print(f"策略分布: " + " ".join([f"{s}:{sd.get(s,0)}" for s in ['A','B','C','D','E']]))
+    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金'}
+    print(f"策略分布: " + " ".join([f"{s}:{sd.get(s,0)}" for s in ['A','B','C','D','E','F']]))
     print(f"排除TOP5: " + " ".join([f"{r}:{c}只" for r, c in er.most_common(5)]))
     print("=" * 60)
     
