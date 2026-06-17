@@ -1420,11 +1420,6 @@ def step26_github_sync(mp, hd, candidates):
 # ============================================================
 def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, sd):
     if not FEISHU_WEBHOOK: log_alert("WARNING", "飞书推送", "无Webhook"); return
-    # v6.6.42: 去重 — 同一prediction_date只推送一次，避免优化迭代时重复推送
-    sentinel = f"/workspace/.feishu_sent_{prediction_date}"
-    if os.path.exists(sentinel):
-        log_alert("INFO", "飞书推送", f"⏭ {prediction_date} 已推送过，跳过（去重）")
-        return
     try:
         fc = len(candidates)
         sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金'}
@@ -1448,8 +1443,6 @@ def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, sd):
         result = json.loads(resp.read())
         if result.get('code') == 0:
             log_alert("INFO", "飞书推送", f"✅ {prediction_date} 已推送")
-            # 写入哨兵文件，防止同一日期重复推送
-            with open(sentinel, 'w') as f: f.write(prediction_date)
         else: log_alert("WARNING", "飞书推送", f"推送失败: {result.get('msg','')}")
     except Exception as e: log_alert("WARNING", "飞书推送", f"失败: {str(e)[:80]}")
 
