@@ -218,20 +218,20 @@ def step14_16_scoring(ctx):
         else:
             confidence = "★"
         
-        # 进场/止损/止盈
-        entry = close
+        # 进场/止损/止盈（v6.6.41: 进场价下修0.97倍，回测显示进场命中率仅24-35%）
+        entry = round(close * 0.97, 2)
         if strategy == 'A':
-            stop_loss = round(close * 0.96, 2)
-            take_profit = round(close * 1.05, 2)
+            stop_loss = round(entry * 0.96, 2)
+            take_profit = round(entry * 1.05, 2)
         elif strategy == 'B':
-            stop_loss = round(close * 0.95, 2)
-            take_profit = round(close * 1.06, 2)
+            stop_loss = round(entry * 0.95, 2)
+            take_profit = round(entry * 1.06, 2)
         elif strategy == 'E':
-            stop_loss = round(close * 0.95, 2)
-            take_profit = round(close * 1.05, 2)
+            stop_loss = round(entry * 0.95, 2)
+            take_profit = round(entry * 1.05, 2)
         else:
-            stop_loss = round(close * 0.95, 2)
-            take_profit = round(close * 1.04, 2)
+            stop_loss = round(entry * 0.95, 2)
+            take_profit = round(entry * 1.04, 2)
         
         c['score'] = score
         c['_score_hint'] = score

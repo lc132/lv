@@ -119,7 +119,8 @@ def backtest(recommendations):
         code = rec.get("code", "")
         name = rec.get("name", "")
         strategy = rec.get("strategy", "")
-        entry = rec.get("entry", 0)
+        raw_entry = rec.get("entry", 0)
+        entry = round(raw_entry * 0.97, 2) if raw_entry else 0  # 下修0.97倍
         stop_loss = rec.get("stop_loss", 0)
         take_profit = rec.get("take_profit", 0)
         rec_date = rec.get("date", "")
