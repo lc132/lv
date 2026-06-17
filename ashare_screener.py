@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.6.38"
+BUILTIN_VERSION = "v6.6.43"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -170,13 +170,22 @@ def step0_get_beijing_time():
     if beijing_now is None: raise RuntimeError("北京时间获取失败")
     beijing_date = beijing_now.strftime('%Y-%m-%d')
     beijing_weekday = beijing_now.weekday()
+    beijing_hour = beijing_now.hour
+    is_pre_market = (beijing_hour < 9) or (beijing_hour == 9 and beijing_now.minute < 30)
+    is_post_market = (beijing_hour >= 15)
+    # data_date: 盘前/交易时段→昨日，收盘后→当日，周末回退到周五
     if beijing_weekday == 5: data_date = (beijing_now - timedelta(days=1)).strftime('%Y-%m-%d')
     elif beijing_weekday == 6: data_date = (beijing_now - timedelta(days=2)).strftime('%Y-%m-%d')
+    elif is_pre_market or not is_post_market: data_date = (beijing_now - timedelta(days=1)).strftime('%Y-%m-%d')
     else: data_date = beijing_date
-    if beijing_weekday <= 3: prediction_date = (beijing_now + timedelta(days=1)).strftime('%Y-%m-%d')
-    elif beijing_weekday == 4: prediction_date = (beijing_now + timedelta(days=3)).strftime('%Y-%m-%d')
-    elif beijing_weekday == 5: prediction_date = (beijing_now + timedelta(days=2)).strftime('%Y-%m-%d')
-    else: prediction_date = (beijing_now + timedelta(days=1)).strftime('%Y-%m-%d')
+    # prediction_date: 盘前→当日，收盘后→下一交易日，周末→周一
+    if beijing_weekday == 5: prediction_date = (beijing_now + timedelta(days=2)).strftime('%Y-%m-%d')
+    elif beijing_weekday == 6: prediction_date = (beijing_now + timedelta(days=1)).strftime('%Y-%m-%d')
+    elif is_pre_market: prediction_date = beijing_date
+    elif is_post_market:
+        if beijing_weekday == 4: prediction_date = (beijing_now + timedelta(days=3)).strftime('%Y-%m-%d')
+        else: prediction_date = (beijing_now + timedelta(days=1)).strftime('%Y-%m-%d')
+    else: prediction_date = beijing_date
     pred_yyyymmdd = prediction_date.replace('-', '')
     log_alert("INFO", "北京时间", f"beijing={beijing_date} data={data_date} pred={prediction_date}")
 
@@ -766,6 +775,33 @@ HARDCODED_INDUSTRY = {
     '300554': '机械设备',  # 三超新材（金刚石线，在300500-300599段但非建筑装饰）
     '300571': '传媒',      # 平治信息（数字阅读，在300500-300599段但非建筑装饰）
     '003026': '电子',      # 中晶科技（半导体硅片，在003000-003999段但非食品饮料）
+    # v6.6.42: 14只行业修正（基于2026-06-18筛选结果校对）
+    '600549': '有色金属',  # 厦门钨业（钨钼冶炼，在600500-600599段但非食品饮料）
+    '000722': '公用事业',  # 湖南发展（水电，在000700-000799段但非钢铁）
+    '600589': '计算机',    # 大位科技（IT服务，在600500-600599段但非食品饮料）
+    '000032': '建筑装饰',  # 深桑达A（电子系统工程，在000000-000099段但非银行）
+    '600063': '基础化工',  # 皖维高新（化工纤维，在600000-600099段但非银行）
+    '000733': '电子',      # 振华科技（电子元器件，在000700-000799段但非钢铁）
+    '000603': '有色金属',  # 盛达资源（银矿铅锌矿，在000600-000699段但非公用事业）
+    '000995': '食品饮料',  # 皇台酒业（白酒，在000900-000999段但非非银金融）
+    '000970': '有色金属',  # 中科三环（稀土永磁，在000900-000999段但非非银金融）
+    '603938': '基础化工',  # 三孚股份（有机硅，在603900-603999段但非商贸零售）
+    '002457': '建筑材料',  # 青龙管业（混凝土管道，在002400-002499段但非传媒）
+    '600460': '电子',      # 士兰微（半导体，在600400-600499段但非电力设备）
+    '605358': '电子',      # 立昂微（半导体硅片，在605300-605399段但非食品饮料）
+    '603678': '电子',      # 火炬电子（MLCC电容，在603600-603699段但非轻工制造）
+    # v6.6.42: 第二轮校对（2026-06-18 余量修正）
+    '000636': '电子',      # 风华高科（MLCC电容，在000600-000699段但非公用事业）
+    '002378': '有色金属',  # 章源钨业（钨矿开采，在002300-002399段但非电力设备）
+    '002149': '有色金属',  # 西部材料（稀有金属材料，在002100-002199段但非医药生物）
+    '002845': '电子',      # 同兴达（液晶显示模组，在002800-002899段但非基础化工）
+    '300568': '电力设备',  # 星源材质（锂电隔膜，在300500-300599段但非建筑装饰）
+    '300632': '电子',      # 光莆股份（LED照明，在300600-300699段但非国防军工）
+    '600522': '通信',      # 中天科技（光纤光缆，在600500-600599段但非食品饮料）
+    '000767': '公用事业',  # 晋控电力（火力发电，在000700-000799段但非钢铁）
+    # v6.6.42: 第三轮校对（2026-06-18 最终余量）
+    '002129': '电力设备',  # TCL中环（光伏硅片，在002100-002199段但非医药生物）
+    '000510': '基础化工',  # 新金路（PVC树脂，在000500-000599段但非公用事业）
 }
 
 # ============================================================
@@ -1384,6 +1420,11 @@ def step26_github_sync(mp, hd, candidates):
 # ============================================================
 def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, sd):
     if not FEISHU_WEBHOOK: log_alert("WARNING", "飞书推送", "无Webhook"); return
+    # v6.6.42: 去重 — 同一prediction_date只推送一次，避免优化迭代时重复推送
+    sentinel = f"/workspace/.feishu_sent_{prediction_date}"
+    if os.path.exists(sentinel):
+        log_alert("INFO", "飞书推送", f"⏭ {prediction_date} 已推送过，跳过（去重）")
+        return
     try:
         fc = len(candidates)
         sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金'}
@@ -1405,7 +1446,10 @@ def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, sd):
                                      headers={'Content-Type': 'application/json'}, method='POST')
         resp = urllib.request.urlopen(req, timeout=10)
         result = json.loads(resp.read())
-        if result.get('code') == 0: log_alert("INFO", "飞书推送", f"✅ {prediction_date} 已推送")
+        if result.get('code') == 0:
+            log_alert("INFO", "飞书推送", f"✅ {prediction_date} 已推送")
+            # 写入哨兵文件，防止同一日期重复推送
+            with open(sentinel, 'w') as f: f.write(prediction_date)
         else: log_alert("WARNING", "飞书推送", f"推送失败: {result.get('msg','')}")
     except Exception as e: log_alert("WARNING", "飞书推送", f"失败: {str(e)[:80]}")
 
