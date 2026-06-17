@@ -66,8 +66,8 @@ def fetch_t1_close(code, target_date):
             "fields1": "f1,f2,f3,f4,f5,f6",
             "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
             "klt": "101", "fqt": "1",
-            "beg": target_date.replace("-", ""),
-            "end": target_date.replace("-", ""),
+            "beg": target_date  # 腾讯K线需要带连字符格式 YYYY-MM-DD,
+            "end": target_date  # 腾讯K线需要带连字符格式 YYYY-MM-DD,
             "_": str(int(time.time() * 1000))
         }
         query = urllib.parse.urlencode(params)
