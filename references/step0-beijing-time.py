@@ -39,22 +39,33 @@ beijing_date = beijing_now.strftime('%Y-%m-%d')
 beijing_hour = beijing_now.hour
 beijing_weekday = beijing_now.weekday()  # 0=周一,6=周日
 
-# data_date（数据日期）：数据来源日。周末回退到周五
+# data_date（数据日期）：数据来源日
+# 盘前/交易时段→昨日（数据来自昨日收盘），收盘后→当日（数据来自当日收盘）
+# 周末回退到周五
 if beijing_weekday == 5:       # 周六 → 数据日期为周五
     data_date = (beijing_now - timedelta(days=1)).strftime('%Y-%m-%d')
 elif beijing_weekday == 6:     # 周日 → 数据日期为周五
     data_date = (beijing_now - timedelta(days=2)).strftime('%Y-%m-%d')
-else:
+elif is_pre_market or not is_post_market:  # 盘前/交易时段 → 数据来自昨日收盘
+    data_date = (beijing_now - timedelta(days=1)).strftime('%Y-%m-%d')
+else:                           # 收盘后 → 数据来自当日收盘
     data_date = beijing_date
 
-# prediction_date（预测日期）：下一个交易日
-# Mon(0)→Tue(+1), Tue(1)→Wed(+1), Wed(2)→Thu(+1), Thu(3)→Fri(+1)
-# Fri(4)→Mon(+3), Sat(5)→Mon(+2), Sun(6)→Mon(+1)
-if beijing_weekday <= 3:       # 周一至周四 → 次日
-    prediction_date = (beijing_now + timedelta(days=1)).strftime('%Y-%m-%d')
-elif beijing_weekday == 4:     # 周五 → 下周一
-    prediction_date = (beijing_now + timedelta(days=3)).strftime('%Y-%m-%d')
-elif beijing_weekday == 5:     # 周六 → 下周一
+# prediction_date（预测日期）：盘前→当日 | 收盘后→下一交易日 | 交易时段→当日
+# 核心原则：盘前(9:30前)用昨日数据预测当日，收盘后(15:00后)用当日数据预测次日
+is_pre_market = (beijing_hour < 9) or (beijing_hour == 9 and beijing_now.minute < 30)
+is_post_market = (beijing_hour >= 15)
+
+if beijing_weekday == 5:       # 周六 → 下周一
     prediction_date = (beijing_now + timedelta(days=2)).strftime('%Y-%m-%d')
-else:                           # 周日 → 下周一
+elif beijing_weekday == 6:     # 周日 → 下周一
     prediction_date = (beijing_now + timedelta(days=1)).strftime('%Y-%m-%d')
+elif is_pre_market:            # 盘前(9:30前) → 预测当日（用昨日收盘数据）
+    prediction_date = beijing_date
+elif is_post_market:           # 收盘后(15:00后) → 预测下一交易日
+    if beijing_weekday == 4:   # 周五收盘 → 下周一
+        prediction_date = (beijing_now + timedelta(days=3)).strftime('%Y-%m-%d')
+    else:
+        prediction_date = (beijing_now + timedelta(days=1)).strftime('%Y-%m-%d')
+else:                           # 交易时段(9:30-15:00) → 预测当日
+    prediction_date = beijing_date
