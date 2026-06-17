@@ -124,8 +124,7 @@ def backtest(recommendations):
         code = rec.get("code", "")
         name = rec.get("name", "")
         strategy = rec.get("strategy", "")
-        raw_entry = rec.get("entry", 0)
-        entry = round(raw_entry * 0.97, 2) if raw_entry else 0  # 下修0.97倍
+        entry = rec.get("entry", 0)  # entry在score.py中已下修0.97倍(v6.6.41)，回测无需重复下修
         stop_loss = rec.get("stop_loss", 0)
         take_profit = rec.get("take_profit", 0)
         rec_date = rec.get("date", "")
@@ -186,12 +185,13 @@ def backtest(recommendations):
 # 5. 生成回测报告
 # ============================================================
 def generate_report(results, stats):
+    beijing_now = datetime.utcnow() + timedelta(hours=8)
     strategy_names = {"A": "动量延续", "B": "超跌反弹", "C": "事件驱动", "D": "回调企稳", "E": "资金埋伏", "F": "北向资金"}
     
     lines = []
     lines.append("# A股短线标的回测报告")
     lines.append("")
-    lines.append(f"**生成时间**: 2026-06-17 18:04 (北京时间)")
+    lines.append(f"**生成时间**: {beijing_now.strftime('%Y-%m-%d %H:%M')} (北京时间)")
     lines.append("")
     lines.append("---")
     lines.append("")
