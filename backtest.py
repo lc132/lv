@@ -33,27 +33,39 @@ def read_all_recommendations():
     return all_recs
 
 # ============================================================
-# 2. 获取股票历史K线数据（用于T+1回测）
+# 2. 获取股票历史K线数据（用于T+1回测）— 腾讯优先(沙箱可用), 东方财富备用
 # ============================================================
 def fetch_t1_close(code, target_date):
     """
     获取指定股票在 target_date 的收盘价
-    优先使用东方财富日K接口
+    优先使用腾讯日K接口(沙箱可用), 东方财富备用
     """
-    # 确定市场代码
-    if code.startswith("6"):
-        secid = f"1.{code}"
-    else:
-        secid = f"0.{code}"
-    
+    # 主方案: 腾讯日K (沙箱可用)
+    prefix = "sh" if code.startswith("6") else "sz"
     try:
+        url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={prefix}{code},day,{target_date.replace('-','')},,1,qfq"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        resp = urllib.request.urlopen(req, timeout=6)
+        data = json.loads(resp.read())
+        klines = data.get("data", {}).get(f"{prefix}{code}", {}).get("qfqday", [])
+        if klines:
+            k = klines[-1]
+            return {"close": float(k[2]), "open": float(k[1]), "high": float(k[3]), "low": float(k[4])}
+    except Exception as e:
+        pass
+    
+    # Fallback: 东方财富日K (非沙箱环境)
+    try:
+        if code.startswith("6"):
+            secid = f"1.{code}"
+        else:
+            secid = f"0.{code}"
         url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
         params = {
             "secid": secid,
             "fields1": "f1,f2,f3,f4,f5,f6",
             "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-            "klt": "101",  # 日K
-            "fqt": "1",    # 前复权
+            "klt": "101", "fqt": "1",
             "beg": target_date.replace("-", ""),
             "end": target_date.replace("-", ""),
             "_": str(int(time.time() * 1000))
@@ -68,25 +80,7 @@ def fetch_t1_close(code, target_date):
         if data and data.get("data") and data["data"].get("klines"):
             kline = data["data"]["klines"][-1]
             parts = kline.split(",")
-            close = float(parts[2])
-            open_p = float(parts[1])
-            high = float(parts[3])
-            low = float(parts[4])
-            return {"close": close, "open": open_p, "high": high, "low": low}
-    except Exception as e:
-        pass
-    
-    # Fallback: 腾讯日K
-    try:
-        prefix = "sh" if code.startswith("6") else "sz"
-        url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={prefix}{code},day,{target_date.replace('-','')},,1,qfq"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        resp = urllib.request.urlopen(req, timeout=5)
-        data = json.loads(resp.read())
-        klines = data.get("data", {}).get(f"{prefix}{code}", {}).get("qfqday", [])
-        if klines:
-            k = klines[-1]
-            return {"close": float(k[2]), "open": float(k[1]), "high": float(k[3]), "low": float(k[4])}
+            return {"close": float(parts[2]), "open": float(parts[1]), "high": float(parts[3]), "low": float(parts[4])}
     except: pass
     
     return None

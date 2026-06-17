@@ -182,7 +182,7 @@ def step10A_fetch_all_stocks(ctx):
     stocks = None
     source = None
     
-    # 方案一：东方财富 clist API（分页拉取，按成交额排序确保活跃标的优先）
+    # 方案二：东方财富 clist API（非沙箱环境可用，沙箱中被封锁）
     # v6.6.4 fix: 原按涨跌幅(fid=f3)降序导致只拉到涨停/连板标的被硬排除全灭
     # 改为按成交额(fid=f6)降序 + 分页循环 + 数据量门控
     # v6.6.17: 增加重试机制（3次，间隔2s）+ User-Agent轮换
@@ -257,7 +257,7 @@ def step10A_fetch_all_stocks(ctx):
                 if retry_num < CLIST_RETRY - 1:
                     time.sleep(2)
                     continue
-                log_alert("WARN", "行情采集", f"clist返回量({len(all_items)})低于门控，降级新浪")
+                log_alert("WARN", "行情采集", f"东方财富返回量({len(all_items)})低于门控，降级腾讯")
                 stocks = None
             else:
                 # 解析
@@ -301,11 +301,106 @@ def step10A_fetch_all_stocks(ctx):
             if retry_num < CLIST_RETRY - 1:
                 time.sleep(2)
                 continue
-            log_alert("INFO", "行情采集", f"clist不可达(重试{CLIST_RETRY}次): {str(e)[:60]}，降级新浪")
+            log_alert("INFO", "行情采集", f"东方财富API不可达(重试{CLIST_RETRY}次): {str(e)[:60]}，降级腾讯")
     
     if not clist_success:
         stocks = None
     
+    # 方案一：腾讯 gtimg 行情（沙箱环境可用，优先使用）
+    if stocks is None:
+        try:
+            print("  尝试腾讯gtimg行情拉取...")
+            # 腾讯gtimg: 一次性拉取指数+个股行情
+            # 构建批量查询URL（每批最多80个）
+            stocks = []
+            code_list = []
+            # 上海主板: 600000-605999
+            for i in range(600000, 606000, 2):
+                code_list.append(f"sh{i}")
+            # 深圳主板: 000001-004999
+            for i in range(1, 5000, 2):
+                code_list.append(f"sz{i:06d}")
+            # 创业板: 300000-301999
+            for i in range(300000, 302000, 2):
+                code_list.append(f"sz{i}")
+            
+            batch_size = 80
+            total_batches = len(code_list) // batch_size + 1
+            print(f"  腾讯gtimg分批拉取: {len(code_list)}个代码, {total_batches}批")
+            
+            for batch_idx in range(0, len(code_list), batch_size):
+                batch = code_list[batch_idx:batch_idx + batch_size]
+                if not batch:
+                    continue
+                try:
+                    url = f"https://qt.gtimg.cn/q={','.join(batch)}"
+                    req = urllib.request.Request(url, headers={
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                        'Referer': 'https://quote.eastmoney.com/'
+                    })
+                    resp = urllib.request.urlopen(req, timeout=10)
+                    text = resp.read().decode('gbk')
+                    for line in text.strip().split('\n'):
+                        if not line or '=""' in line:
+                            continue
+                        try:
+                            parts = line.split('~')
+                            if len(parts) < 37:
+                                continue
+                            # Extract code from header
+                            header = line.split('="')[0] if '="' in line else ''
+                            raw_code = header.split('_')[-1] if '_' in header else ''
+                            code = raw_code if len(raw_code) == 6 else raw_code[-6:]
+                            name = parts[1]
+                            if not code or not name:
+                                continue
+                            close_val = parts[3]
+                            if close_val == '' or close_val == '0.00':
+                                continue
+                            close = float(close_val)
+                            prev = float(parts[4]) if parts[4] else close
+                            open_p = float(parts[5]) if parts[5] else close
+                            high = float(parts[33]) if parts[33] else close
+                            low = float(parts[34]) if parts[34] else close
+                            amount = float(parts[37]) if len(parts) > 37 and parts[37] else 0
+                            change_pct = float(parts[32]) if parts[32] else 0
+                            turnover = float(parts[38]) if len(parts) > 38 and parts[38] else 0
+                            volume_ratio = float(parts[47]) if len(parts) > 47 and parts[47] else None
+                            amplitude = float(parts[43]) if len(parts) > 43 and parts[43] else (
+                                round((high - low) / prev * 100, 2) if prev > 0 else 0
+                            )
+                            main_inflow = float(parts[49]) if len(parts) > 49 and parts[49] else None
+                            total_cap = float(parts[45]) if len(parts) > 45 and parts[45] else None
+                            
+                            stocks.append({
+                                "code": code, "name": name,
+                                "open": open_p, "close": close,
+                                "change_pct": change_pct, "turnover": turnover,
+                                "amplitude": amplitude, "volume_ratio": volume_ratio,
+                                "high": high, "low": low, "prev_close": prev,
+                                "amount": amount, "main_inflow": main_inflow,
+                                "total_cap": total_cap, "pe_ttm": None,
+                                "sector": "未知", "industry": "未知",
+                            })
+                        except (ValueError, IndexError, TypeError):
+                            continue
+                    time.sleep(0.02)
+                except Exception:
+                    continue
+            
+            if len(stocks) >= 500:
+                source = "腾讯gtimg"
+                print(f"  ✓ 腾讯gtimg: {len(stocks)}只")
+                log_alert("INFO", "行情采集", f"腾讯gtimg拉取成功: {len(stocks)}只")
+            else:
+                print(f"  ⚠️ 腾讯gtimg仅返回{len(stocks)}只，降级新浪")
+                stocks = None
+        except Exception as e:
+            print(f"  ⚠️ 腾讯gtimg不可达: {str(e)[:60]}，降级新浪")
+            stocks = None
+    
+    # 方案二：东方财富 clist API（非沙箱环境可用，沙箱中被封锁）
+    if stocks is None:
     # 方案二：新浪批处理
     if stocks is None:
         try:
