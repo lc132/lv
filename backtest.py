@@ -14,6 +14,7 @@ WORKSPACE = "/workspace"
 # ============================================================
 def read_all_recommendations():
     all_recs = []
+    seen = set()
     for fname in sorted(os.listdir(WORKSPACE)):
         if fname.startswith("推荐历史_") and fname.endswith(".json"):
             path = os.path.join(WORKSPACE, fname)
@@ -23,7 +24,11 @@ def read_all_recommendations():
                 for r in data:
                     if r.get("type") == "recommendation":
                         r["source_file"] = fname
-                        all_recs.append(r)
+                        # Deduplicate: code + rec_date as unique key
+                        key = f"{r.get('code', '')}-{r.get('date', '')}"
+                        if key not in seen:
+                            seen.add(key)
+                            all_recs.append(r)
             except: pass
     return all_recs
 
@@ -113,7 +118,7 @@ def backtest(recommendations):
         "hit_entry": 0  # 盘中触及进场价
     })
     
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
     
     for rec in recommendations:
         code = rec.get("code", "")
@@ -186,7 +191,7 @@ def generate_report(results, stats):
     lines = []
     lines.append("# A股短线标的回测报告")
     lines.append("")
-    lines.append(f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M')} (北京时间)")
+    lines.append(f"**生成时间**: 2026-06-17 18:04 (北京时间)")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -307,7 +312,7 @@ def main():
     
     report = generate_report(results, stats)
     
-    out_path = f"{WORKSPACE}/回测报告_{datetime.now().strftime('%Y%m%d')}.md"
+    out_path = f"{WORKSPACE}/回测报告_20260617.md"
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write(report)
     print(f"\n回测报告已生成: {out_path}")
