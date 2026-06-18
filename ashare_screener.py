@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.6.32
+A股每日盘前短线标的智能筛选 v6.6.45
 35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 16条硬编码修正 | 7日推荐标注 | 指数涨跌金额
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.6.44"
+BUILTIN_VERSION = "v6.6.45"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -125,7 +125,7 @@ def fetch_tencent_stocks(codes):
                     if close <= 0 or prev_close <= 0: continue
                     high = _parse_tencent_field(raw, 33, close)
                     low = _parse_tencent_field(raw, 34, close)
-                    # 腾讯API字段映射: [37]=amount(万元) [38]=turnover(%) [43]=high(冗余) [44]=low(冗余) [45]=amplitude(%) [46]=total_cap(亿元) [51]=volume_ratio
+                    # 腾讯API字段: [37]=amount(万元) [38]=turnover(%) [39]=pe_ttm [43]=amplitude(%) [44]=total_cap(亿元) [45]=high(冗余) [46]=low(冗余) [49]=volume_ratio
                     result.append({
                         "code": code, "name": name,
                         "open": open_p, "close": close,
@@ -155,12 +155,18 @@ def fetch_tencent_single(code):
 # ============================================================
 def step0_get_beijing_time():
     global beijing_now, beijing_date, beijing_weekday, data_date, prediction_date, pred_yyyymmdd
-    for api_url in ['https://timeapi.io/api/time/current/zone?timeZone=Asia/Shanghai']:
+    for api_url in ['https://timeapi.io/api/time/current/zone?timeZone=Asia/Shanghai',
+                     'https://worldtimeapi.org/api/timezone/Asia/Shanghai',
+                     'http://worldclockapi.com/api/json/cst/now']:
         try:
             req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0'})
             resp = urllib.request.urlopen(req, timeout=5)
             data = json.loads(resp.read())
-            dt_str = data['dateTime']
+            dt_str = data.get('dateTime') or data.get('datetime') or data.get('currentDateTime')
+            if not dt_str: continue
+            # 清理时区后缀 +08:00 → 纯ISO格式
+            if '+' in dt_str: dt_str = dt_str.split('+')[0]
+            elif dt_str.endswith('Z'): dt_str = dt_str[:-1]
             if '.' in dt_str:
                 date_part, frac = dt_str.split('.')
                 dt_str = date_part + '.' + frac[:6]
@@ -304,7 +310,7 @@ def step4A_doT_eval(holdings):
     recs = []
     for h in holdings:
         pnl = h.get('pnl_pct', 0)
-        if pnl > 0 or pnl > -5: f = "观望"
+        if pnl > -5: f = "观望"
         elif -10 < pnl <= -5: f = "True"
         elif -15 < pnl <= -10: f = "谨慎"
         else: f = "False"
@@ -461,6 +467,7 @@ def step10A_fetch_all_stocks():
         for i in range(600000, 606000): codes.append(f"sh{i}")
         for i in range(1, 5000): codes.append(f"sz{i:06d}")
         for i in range(300000, 302000): codes.append(f"sz{i}")
+        # 注：688xxx(科创板)未纳入拉取，step11硬排除科创板，拉取也无意义
         stocks = fetch_tencent_stocks(codes)
         log_alert("INFO", "行情采集", f"腾讯(一级) 成功拉取 {len(stocks)} 只")
         return stocks, "tencent"
@@ -904,10 +911,13 @@ def step13_strategy_match(candidates):
                         reason += f" ⚠假突破(上影{round(upper_shadow/lower_shadow,1)}x)"
         # ── B 超跌反弹 ──
         if not s and -9.5 <= chg <= -3:
-            # v6.6.38: 最大跌幅限制 — 跌幅>30%可能暴雷，排除
-            if chg < -30:
+            # v6.6.45: 最大跌幅限制 — 当日跌幅>9.5%可能暴雷，排除（chg本身在[-9.5,-3]区间，检测边界）
+            # 同时检查是否从近期高点累计跌幅>30%（通过振幅辅助判断）
+            c['_excluded_max_decline'] = False
+            if chg <= -9.5 or (amp > 15 and chg < -7):
                 c['_excluded_max_decline'] = True
-            elif amp > 3 or (low_val := c.get('low', 0)) < close * 0.99:
+                continue  # 跳过该标的，不匹配任何策略
+            if amp > 3 or (low > 0 and close > low * 1.005):
                 s = "B"; reason = f"超跌反弹:跌{chg:.1f}%+振幅{amp:.1f}%"; score = 7
         # ── C 事件驱动 ──
         if not s and 0 < chg <= 5:
@@ -931,7 +941,9 @@ def step13_strategy_match(candidates):
         if not s and 2 <= chg <= 6:
             if 2 <= amp <= 8 and close > op:
                 s = "D"; reason = f"回调企稳:涨{chg:.1f}%+阳线+振幅{amp:.1f}%"; score = 8
-                if vr is not None and vr >= 1.5: s = "A"; reason = f"动量延续:涨{chg:.1f}%+量比{vr:.1f}"; score = 10
+                # v6.6.45: D→A升级需同时满足A的涨幅门槛(3-7%)和量比门槛(1.5-3.0)
+                if vr is not None and vr >= 1.5 and 3 <= chg <= 7:
+                    s = "A"; reason = f"动量延续:涨{chg:.1f}%+量比{vr:.1f}"; score = 10
         # ── E 资金埋伏 ──
         if not s and 0 <= chg <= 2:
             mi = c.get('main_inflow')
@@ -979,17 +991,22 @@ def step14_scoring(candidates):
     return candidates
 
 def step17_industry_limit(candidates):
+    # v6.6.45: 保留 step16 综合评分排序(_tie_score)，仅按行业/策略限制数量
+    so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5}
     ig = defaultdict(list)
     for c in candidates: ig[c.get('industry', '未知')].append(c)
     limited = []
     for g in ig.values():
-        g.sort(key=lambda x: x.get('score', 0), reverse=True); limited.extend(g[:3])
+        # 按 score → strategy_priority → tie_score 三级排序(同step16)
+        g.sort(key=lambda x: (-x.get('score', 0), so.get(x.get('strategy', 'Z'), 99), -(x.get('_tie_score', 0))))
+        limited.extend(g[:3])
     max_s = max(1, len(limited) * params.get('strategy_concentration_pct', 60) // 100)
     sg = defaultdict(list)
     for c in limited: sg[c.get('strategy', 'Z')].append(c)
     final = []
     for g in sg.values():
-        g.sort(key=lambda x: x.get('score', 0), reverse=True); final.extend(g[:max_s])
+        g.sort(key=lambda x: (-x.get('score', 0), so.get(x.get('strategy', 'Z'), 99), -(x.get('_tie_score', 0))))
+        final.extend(g[:max_s])
     log_alert("INFO", "行业限制", f"通过{len(final)}只 (原始{len(candidates)}只)")
     return final
 
@@ -1538,8 +1555,8 @@ def main():
     
     raw_pool = [s for s in all_stocks if s.get('change_pct') is not None and s.get('change_pct') > -9.5
                 and s.get('close') is not None and s.get('close') > 0]
-    if ds == 'tencent': raw_pool.sort(key=lambda x: (x.get('turnover', 0) or 0), reverse=True)
-    else: raw_pool.sort(key=lambda x: (x.get('amount', 0) or 0), reverse=True)
+    if ds == 'tencent': raw_pool.sort(key=lambda x: ((x.get('turnover', 0) or 0), (x.get('amount', 0) or 0)), reverse=True)
+    else: raw_pool.sort(key=lambda x: ((x.get('amount', 0) or 0), (x.get('turnover', 0) or 0)), reverse=True)
     raw_pool = raw_pool[:500]
     total_raw = len(raw_pool)
     print(f"  原始池: {total_raw}只")
