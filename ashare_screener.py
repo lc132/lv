@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.6.45
+A股每日盘前短线标的智能筛选 v6.6.46
 35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 16条硬编码修正 | 7日推荐标注 | 指数涨跌金额
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.6.45"
+BUILTIN_VERSION = "v6.6.46"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -991,21 +991,26 @@ def step14_scoring(candidates):
     return candidates
 
 def step17_industry_limit(candidates):
-    # v6.6.45: 保留 step16 综合评分排序(_tie_score)，仅按行业/策略限制数量
+    # v6.6.46: 保留 step16 综合评分排序(_tie_score)，五级二次评估打破平局
     so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5}
+    def _tie_key(c):
+        vr = c.get('volume_ratio') or 0
+        to = c.get('turnover') or 0
+        to_penalty = abs(to - 10) if to > 0 else 99
+        return (-c.get('score', 0), so.get(c.get('strategy', 'Z'), 99), -(c.get('_tie_score', 0)),
+                -vr, to_penalty)
     ig = defaultdict(list)
     for c in candidates: ig[c.get('industry', '未知')].append(c)
     limited = []
     for g in ig.values():
-        # 按 score → strategy_priority → tie_score 三级排序(同step16)
-        g.sort(key=lambda x: (-x.get('score', 0), so.get(x.get('strategy', 'Z'), 99), -(x.get('_tie_score', 0))))
+        g.sort(key=_tie_key)
         limited.extend(g[:3])
     max_s = max(1, len(limited) * params.get('strategy_concentration_pct', 60) // 100)
     sg = defaultdict(list)
     for c in limited: sg[c.get('strategy', 'Z')].append(c)
     final = []
     for g in sg.values():
-        g.sort(key=lambda x: (-x.get('score', 0), so.get(x.get('strategy', 'Z'), 99), -(x.get('_tie_score', 0))))
+        g.sort(key=_tie_key)
         final.extend(g[:max_s])
     log_alert("INFO", "行业限制", f"通过{len(final)}只 (原始{len(candidates)}只)")
     return final
@@ -1040,7 +1045,16 @@ def step16_comprehensive_score(candidates):
         ma_bonus = 0.05 if amp < 3 and vr > 1.2 else 0
         code = c.get('code', '')
         c['_tie_score'] = vs * 0.25 + ts * 0.25 + cs * 0.25 + 0.15 + (1.0 - so.get(s, 99) / 10.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus
-    candidates.sort(key=lambda x: (-x.get('score', 0), so.get(x.get('strategy', 'Z'), 99), -(x.get('_tie_score', 0))))
+    # v6.6.46: 五级二次评估 — _tie_score相同时，按量比→换手率→涨跌幅继续打破平局
+    # SKILL.md五级: ①策略优先级(已独立排序键) ②量比高者优先 ③换手率中等优先(5-15%最佳) ④涨跌幅按策略 ⑤板块热度(已入_tie_score)
+    def _tie_key(c):
+        vr = c.get('volume_ratio') or 0
+        to = c.get('turnover') or 0
+        # 换手率中等优先: 离10%越近越好(5-15%区间内最佳)
+        to_penalty = abs(to - 10) if to > 0 else 99
+        return (-c.get('score', 0), so.get(c.get('strategy', 'Z'), 99), -(c.get('_tie_score', 0)),
+                -vr, to_penalty)
+    candidates.sort(key=_tie_key)
     return candidates
 
 def step19_shortfall_handling(candidates):
