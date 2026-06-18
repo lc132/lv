@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.6.43"
+BUILTIN_VERSION = "v6.6.44"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -810,6 +810,7 @@ HARDCODED_INDUSTRY = {
 def step11_hard_exclude(candidates, all_holdings_codes):
     er = Counter()
     recent_7d_dates = {}  # v6.6.37: 按日期去重，统计7日内推荐天数
+    recent_7d_strategies = {}  # v6.6.44: 记录7日内每日的策略 {code: {date: strategy, ...}}
     c7 = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=7)).strftime('%Y-%m-%d')
     for f in sorted(os.listdir('/workspace')):
         if f.startswith('推荐历史_') and f.endswith('.json'):
@@ -818,7 +819,9 @@ def step11_hard_exclude(candidates, all_holdings_codes):
                     code = r.get('code', '')
                     if code not in recent_7d_dates:
                         recent_7d_dates[code] = set()
+                        recent_7d_strategies[code] = {}
                     recent_7d_dates[code].add(r.get('date', ''))
+                    recent_7d_strategies[code][r.get('date', '')] = r.get('strategy', '?')
     # 转换为天数计数
     recent_7d_count = {code: len(dates) for code, dates in recent_7d_dates.items()}
     passed, excluded = [], []
@@ -828,6 +831,8 @@ def step11_hard_exclude(candidates, all_holdings_codes):
         # v6.6.37: 7日内推荐天数（按日期去重），不排除，仅标注
         if code in recent_7d_count and code not in all_holdings_codes:
             c['_recent_7d'] = recent_7d_count[code]
+            # v6.6.44: 附带历史策略信息，按日期排序
+            c['_recent_7d_strategies'] = recent_7d_strategies.get(code, {})
         if code in all_holdings_codes:
             reason = "当前持仓"; c['_holding'] = True
         elif code.startswith('688'): reason = "科创板"
@@ -1166,6 +1171,17 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, er):
             entry = calc_entry_price(c)
             sl = round(entry * 0.96, 2); tp = round(entry * 1.05, 2)
             r7d = str(c.get('_recent_7d')) if c.get('_recent_7d') else ""
+            # v6.6.44: 7日列附带历史策略标注
+            r7s = c.get('_recent_7d_strategies', {})
+            if r7d and r7s:
+                # 按日期排序，取策略列表（去重）如 "1(A,B)" 表示1天前，策略A/B
+                sorted_dates = sorted(r7s.keys())
+                strats = [r7s[d] for d in sorted_dates]
+                # 去重并保持顺序
+                seen = set(); uniq_s = []
+                for s_ in strats:
+                    if s_ not in seen: seen.add(s_); uniq_s.append(s_)
+                r7d = f"{r7d}({','.join(uniq_s)})"
             url = f"https://quote.eastmoney.com/concept/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/concept/sz{code}.html"
             lines.append(f"| {idx} | {s} | [{name}]({url}) | {code} | {ind} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} |")
     sd = Counter(c.get('strategy') for c in candidates)
@@ -1218,6 +1234,15 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisi
         entry = calc_entry_price(c)
         sl = round(entry * 0.96, 2); tp = round(entry * 1.05, 2)
         r7d_html = str(c.get('_recent_7d')) if c.get('_recent_7d') else ""
+        # v6.6.44: 7日列附带历史策略标注
+        r7s = c.get('_recent_7d_strategies', {})
+        if r7d_html and r7s:
+            sorted_dates = sorted(r7s.keys())
+            strats = [r7s[d] for d in sorted_dates]
+            seen = set(); uniq_s = []
+            for s_ in strats:
+                if s_ not in seen: seen.add(s_); uniq_s.append(s_)
+            r7d_html = f"{r7d_html} ({','.join(uniq_s)})"
         chg_cls = "up" if chg >= 0 else "down"
         conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
         scl = f"strat_{s.lower()}"
