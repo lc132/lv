@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.7.6
-35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 7项漏洞修复
+A股每日盘前短线标的智能筛选 v6.7.7
+35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | SKILL.md全面同步
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.7.6"
+BUILTIN_VERSION = "v6.7.7"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1504,14 +1504,14 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 <section><h2>策略说明</h2><table>
 <thead><tr><th style="width:18%">策略</th><th style="width:48%">条件</th><th style="width:16%">仓位(震荡)</th><th style="width:18%">仓位(弱市)</th></tr></thead>
 <tbody>
-<tr><td><span class="badge strat_a">A动量延续</span></td><td style="white-space:normal;word-break:break-all">涨幅3-7% + 量比1.5-3.0 + MA5>MA10>MA20</td><td>12-17%</td><td>0%(关闭)</td></tr>
-<tr><td><span class="badge strat_b">B超跌反弹</span></td><td style="white-space:normal;word-break:break-all">连跌≥3日 + RSI<35 + KDJ J拐头 + MA20支撑</td><td>10-13%</td><td>12-15%</td></tr>
-<tr><td><span class="badge strat_c">C事件驱动</span></td><td style="white-space:normal;word-break:break-all">涨1-3%+量比>1.0或财报季</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_a">A动量延续</span></td><td style="white-space:normal;word-break:break-all">涨3-7%+量比1.5-3.0+弱市关闭</td><td>12-17%</td><td>0%(关闭)</td></tr>
+<tr><td><span class="badge strat_b">B超跌反弹</span></td><td style="white-space:normal;word-break:break-all">涨-9.5~-3%+振幅>3%或下影线</td><td>10-13%</td><td>12-15%</td></tr>
+<tr><td><span class="badge strat_c">C事件驱动</span></td><td style="white-space:normal;word-break:break-all">涨1-3%+量比≥1.0或财报季</td><td>8-10%</td><td>5-8%</td></tr>
 <tr><td><span class="badge strat_d">D回调企稳</span></td><td style="white-space:normal;word-break:break-all">涨3-6%+振幅2-8%+阳线</td><td>12-15%</td><td>8-12%</td></tr>
 <tr><td><span class="badge strat_e">E资金埋伏</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>3000万</td><td>5-8%</td><td>3-5%</td></tr>
-<tr><td><span class="badge strat_f">F北向资金</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>5000万+持续3日</td><td>3-5%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_f">F北向资金</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>5000万+近5日持续≥3日</td><td>3-5%</td><td>3-5%</td></tr>
 <tr><td><span class="badge strat_g">G横盘突破</span></td><td style="white-space:normal;word-break:break-all">涨2-3%+振幅1.5-6%+量比>1.5阳线突破</td><td>8-10%</td><td>5-8%</td></tr>
-<tr><td><span class="badge strat_h">H地量见底</span></td><td style="white-space:normal;word-break:break-all">量比<0.5+跌幅<3%+锤子线/十字星阳线</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_h">H地量见底</span></td><td style="white-space:normal;word-break:break-all">涨-3~1%+量比<0.5+锤子线/十字星阳线</td><td>5-8%</td><td>3-5%</td></tr>
 </tbody></table></section></div>
 <div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p style="color:#fb923c;margin-top:.3rem">★ 7日 = 近7日内已推荐标的（橙色高亮行），可持续关注但不建议重复建仓</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
     
