@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.8.2
-36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 漏洞修复(main_inflow兜底+区间裸奔+降级门控)
+A股每日盘前短线标的智能筛选 v6.8.3
+36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 继续修复(新闻假阳性+硬排除+信号过滤+外围+进场价)
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.8.2"
+BUILTIN_VERSION = "v6.8.3"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -262,6 +262,7 @@ def step3_external_markets():
     global position_pct, market_condition
     try:
         all_down = True
+        api_failures = 0
         for code in [".DJI", ".INX", ".IXIC"]:
             try:
                 url = f"https://hq.sinajs.cn/list=gb_{code}"
@@ -271,7 +272,10 @@ def step3_external_markets():
                 if '=""' in text: all_down = False; break
                 chg = float(text.split('"')[1].split(',')[1]) if ',' in text.split('"')[1] else 0
                 if chg > -2: all_down = False; break
-            except: all_down = False; break
+            except: api_failures += 1; continue  # 单指数失败不中断，继续检查其他
+        if api_failures >= 2:
+            log_alert("WARNING", "外围市场", f"新浪API {api_failures}/3 不可达，跳过美股检测")
+            all_down = False  # 数据不可达时不触发弱市
         if all_down: position_pct = min(position_pct, 30); market_condition = "弱市(美股暴跌)"
     except: pass
 
@@ -940,6 +944,10 @@ def step11_hard_exclude(candidates, all_holdings_codes):
         elif 'ST' in c.get('name', ''): reason = "ST/*ST"
         elif chg > 7: reason = f"涨幅>7%"
         elif close <= 0: reason = "停牌"
+        # v6.8.3: 补充硬排除条件
+        elif c.get('pe') is not None and c.get('pe', 0) < 0: reason = "PE负值(亏损)"
+        elif c.get('market_cap') is not None and c.get('market_cap', 0) < 10: reason = "市值<10亿"
+        elif c.get('amount') is not None and c.get('amount', 0) < 1000: reason = "成交额<1000万"
         if reason: er[reason.split('(')[0]] += 1; excluded.append(c)
         else: passed.append(c)
     # 统计7日内推荐数量（仅统计通过且被标注的）
@@ -951,20 +959,32 @@ def step11_hard_exclude(candidates, all_holdings_codes):
 # 步骤12：信号过滤
 # ============================================================
 def step12_signal_filter(candidates):
+    """v6.8.3: 补充信号过滤条件（8项）"""
     passed, excluded = [], []
     for c in candidates:
         chg = c.get('change_pct', 0); close = c.get('close', 0); op = c.get('open', 0)
         high = c.get('high', 0); low = c.get('low', 0); amp = c.get('amplitude', 0)
         vr = c.get('volume_ratio'); to = c.get('turnover', 0)
         reason = None
+        # 1. 假动量：高开>3%后回落超2%
         if op > 0 and c.get('prev_close', op) > 0:
             pc = c.get('prev_close', op)
             if (op - pc) / pc > 0.03 and close < op * 0.98: reason = "假动量"
+        # 2. 诱多：冲高>5%后回落至开盘附近
         if not reason and high > 0 and op > 0:
             pc = c.get('prev_close', 0)
             if pc > 0 and (high - pc) / pc > 0.05 and close < op * 1.01: reason = "诱多"
+        # 3. 缩量涨停：涨幅>5%+量比<0.5
         if not reason and chg > 5 and vr is not None and vr < 0.5: reason = "缩量涨停"
+        # 4. 振幅过大：>15%
         if not reason and amp > 15: reason = f"振幅>{amp:.1f}%"
+        # 5. 跌停板边缘：chg<-9%+振幅>12%
+        if not reason and chg < -9 and amp > 12: reason = "跌停板异动"
+        # 6. 缩量下跌：chg<-3%+量比<0.3
+        if not reason and chg < -3 and vr is not None and vr < 0.3: reason = "缩量下跌"
+        # 7. 高换手低涨幅：换手>20%+涨跌幅<2%
+        if not reason and to > 20 and abs(chg) < 2: reason = "高换手低涨幅"
+        # 8. 首阴标记（不排除，仅加分）
         if not reason and -3 < chg < 0 and to > 3: c['_first_yin'] = True
         if reason: excluded.append(c)
         else: passed.append(c)
@@ -1100,7 +1120,7 @@ def step17_industry_limit(candidates):
     return final
 
 def step18_news_screening(candidates):
-    """步骤18：新闻筛查 — 对最终标的检测近5日利空新闻"""
+    """步骤18：新闻筛查 — 对最终标的检测近5日利空新闻（v6.8.3: 假阳性过滤+东方财富优先）"""
     if not candidates:
         return candidates, 0
     
@@ -1112,10 +1132,17 @@ def step18_news_screening(candidates):
         '强制退市', '破产重整', '资不抵债', '审计非标',
         '违规担保', '资金占用', '重组失败', '定增终止', 'ST warning'
     ]
+    # 假阳性否定词：匹配到关键词但上下文中包含这些词时忽略
+    FALSE_POSITIVE_NEGATORS = [
+        '终止减持', '不减持', '解除质押', '回复', '整改完成', '撤销',
+        '上调', '大幅增长', '扭亏', '摘帽', '恢复正常', '已消除',
+        '不立案', '不处罚', '不予', '驳回', '和解', '撤回',
+        '募集资金', '增持', '回购', '承诺不'
+    ]
     
     excluded = []
     passed = []
-    # 仅对评分前20只做个体搜索（最多40秒）
+    # 仅对评分前20只做个体搜索
     search_limit = min(20, len(candidates))
     sorted_cand = sorted(candidates, key=lambda c: -c.get('score', 0))
     
@@ -1129,44 +1156,51 @@ def step18_news_screening(candidates):
         has_neg = False
         neg_reason = ''
         
-        # 方式1: Bing搜索（主方案）
+        # 方式1: 东方财富新闻API（优先，标题匹配更精准）
         try:
-            query = f'{name} {code} 利空 公告'
-            url = f'https://www.bing.com/search?q={urllib.parse.quote(query)}'
+            market = '1' if code.startswith('6') else '0'
+            url = f'https://push2.eastmoney.com/api/qt/stock/news/get?secid={market}.{code}&pageNum=1&pageSize=5&_={int(time.time()*1000)}'
             req = urllib.request.Request(url, headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept-Language': 'zh-CN,zh;q=0.9'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'Referer': 'https://www.eastmoney.com/'
             })
             with urllib.request.urlopen(req, timeout=4) as resp:
-                html = resp.read().decode('utf-8', errors='ignore')
-                for kw in NEGATIVE_KW:
-                    if kw in html:
-                        has_neg = True
-                        neg_reason = kw
+                data = json.loads(resp.read().decode('utf-8'))
+                news_list = data.get('data', {}).get('list', []) if isinstance(data, dict) else []
+                for news in news_list:
+                    title = news.get('title', '') + news.get('summary', '')
+                    for kw in NEGATIVE_KW:
+                        if kw not in title:
+                            continue
+                        # 假阳性过滤：检查否定词
+                        is_false_positive = any(neg in title for neg in FALSE_POSITIVE_NEGATORS)
+                        if not is_false_positive:
+                            has_neg = True
+                            neg_reason = kw
+                            break
+                    if has_neg:
                         break
         except Exception:
             pass
         
-        # 方式2: 东方财富新闻API（备用）
+        # 方式2: Bing搜索（备用，带假阳性过滤）
         if not has_neg:
             try:
-                market = '1' if code.startswith('6') else '0'
-                url = f'https://push2.eastmoney.com/api/qt/stock/news/get?secid={market}.{code}&pageNum=1&pageSize=5&_={int(time.time()*1000)}'
+                query = f'{name} {code} 利空 公告'
+                url = f'https://www.bing.com/search?q={urllib.parse.quote(query)}'
                 req = urllib.request.Request(url, headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                    'Referer': 'https://www.eastmoney.com/'
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept-Language': 'zh-CN,zh;q=0.9'
                 })
                 with urllib.request.urlopen(req, timeout=4) as resp:
-                    data = json.loads(resp.read().decode('utf-8'))
-                    news_list = data.get('data', {}).get('list', []) if isinstance(data, dict) else []
-                    for news in news_list:
-                        title = news.get('title', '') + news.get('summary', '')
-                        for kw in NEGATIVE_KW:
-                            if kw in title:
-                                has_neg = True
-                                neg_reason = kw
-                                break
-                        if has_neg:
+                    html = resp.read().decode('utf-8', errors='ignore')
+                    for kw in NEGATIVE_KW:
+                        if kw not in html:
+                            continue
+                        is_false_positive = any(neg in html for neg in FALSE_POSITIVE_NEGATORS)
+                        if not is_false_positive:
+                            has_neg = True
+                            neg_reason = kw
                             break
             except Exception:
                 pass
@@ -1281,6 +1315,7 @@ def calc_entry_price(c):
     
     # 根据量比调整预期（量比越高，次日惯性越强）
     vol_adj = min(vol_ratio / 1.5, 1.5) if vol_ratio > 0 else 1.0
+    atr_pct = min(atr_pct, 0.08)  # v6.8.3: 上限8%，避免极端值导致进场价虚高
     
     if strategy == 'A':
         # 动量延续：强势股次日大概率高开
