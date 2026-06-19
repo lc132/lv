@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.8.0
-36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 新增步骤18新闻筛查
+A股每日盘前短线标的智能筛选 v6.8.1
+36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 清理无用条件
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.8.0"
+BUILTIN_VERSION = "v6.8.1"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -932,7 +932,7 @@ def step11_hard_exclude(candidates, all_holdings_codes):
             # v6.6.44: 附带历史策略信息，按日期排序
             c['_recent_7d_strategies'] = recent_7d_strategies.get(code, {})
         if code in all_holdings_codes:
-            reason = "当前持仓"; c['_holding'] = True
+            reason = "当前持仓"
         elif code.startswith('688'): reason = "科创板"
         elif code.startswith('8'): reason = "北交所"
         elif close < 5: reason = f"股价<5元"
@@ -940,11 +940,6 @@ def step11_hard_exclude(candidates, all_holdings_codes):
         elif 'ST' in c.get('name', ''): reason = "ST/*ST"
         elif chg > 7: reason = f"涨幅>7%"
         elif close <= 0: reason = "停牌"
-        mi = c.get('main_inflow')
-        if not reason and mi and mi < -10000:
-            amt = c.get('amount', 0)
-            if amt > 0 and abs(mi) / (amt / 10000) > 0.15:
-                c['_l3_warning'] = "⚠️主力净流出>1亿占成交额>15%"
         if reason: er[reason.split('(')[0]] += 1; excluded.append(c)
         else: passed.append(c)
     # 统计7日内推荐数量（仅统计通过且被标注的）
@@ -1002,15 +997,11 @@ def step13_strategy_match(candidates):
                         reason += f" ⚠假突破(上影{round(upper_shadow/lower_shadow,1)}x)"
         # ── B 超跌反弹 ──
         if not s and -9.5 <= chg <= -3:
-            # v6.6.45: 最大跌幅限制 — 当日跌幅≤-9.5%或振幅>15%且跌幅<-7%→跳过
-            if chg <= -9.5 or (amp > 15 and chg < -7):
-                continue  # 跳过该标的，不匹配任何策略
             if amp > 3 or (low > 0 and close > low * 1.005):
                 s = "B"; reason = f"超跌反弹:跌{chg:.1f}%+振幅{amp:.1f}%"; score = 7
-        # ── C 事件驱动 (v6.7.1: 区间收窄至1-3%，避免吞没D/E/F/G) ──
-        if not s and 1 <= chg <= 3:
+        # ── C 事件驱动 (v6.8.1: 区间收窄至1-2%，2-3%让给G横盘突破) ──
+        if not s and 1 <= chg < 2:
             is_earnings = beijing_now.month in (1, 3, 4, 8, 10)
-            vr_ok = vr is not None and vr >= 1.2
             if is_earnings:
                 s = "C"; reason = f"事件驱动(财报季):涨{chg:.1f}%"; score = 8
             elif vr is not None and vr >= 1.0:
@@ -1053,7 +1044,7 @@ def step13_strategy_match(candidates):
                     is_hammer = True
             if vr is not None and vr < 0.5 and (is_hammer or (close > 0 and body / close < 0.005)):
                 s = "H"; reason = f"地量见底:涨{chg:.1f}%+量比{vr:.1f}+锤子线"; score = 5
-        if s: c['strategy'] = s; c['reason'] = reason; c['score'] = score; matched.append(c)
+        if s: c['strategy'] = s; c['score'] = score; matched.append(c)
     log_alert("INFO", "策略匹配", f"匹配{len(matched)}只")
     return matched
 
@@ -1172,7 +1163,6 @@ def step18_news_screening(candidates):
                 pass
         
         if has_neg:
-            c['_news_excluded'] = True
             c['_news_reason'] = neg_reason
             excluded.append(c)
         else:
@@ -1217,7 +1207,7 @@ def step16_comprehensive_score(candidates):
         s = c.get('strategy', 'Z')
         if s == 'A': cs = max(0, 1.0 - abs(chg - 5) / 4.0)    # A偏好5%动量
         elif s == 'B': cs = max(0, 1.0 - abs(chg + 5) / 5.0)
-        elif s == 'C': cs = max(0, 1.0 - abs(chg - 2) / 2.0)   # C偏好1-3%中枢
+        elif s == 'C': cs = max(0, 1.0 - abs(chg - 1.5) / 1.0) # C偏好1-2%中枢
         elif s == 'D': cs = max(0, 1.0 - abs(chg - 4.5) / 3.0) # D偏好4.5%突破
         elif s == 'E': cs = max(0, 1.0 - abs(chg - 0.5) / 1.0) # E偏好微涨吸筹
         elif s == 'F': cs = max(0, 1.0 - abs(chg - 0.5) / 1.0) # F偏好微涨吸筹
@@ -1602,7 +1592,7 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 <tbody>
 <tr><td><span class="badge strat_a">A动量延续</span></td><td style="white-space:normal;word-break:break-all">涨3-7%+量比1.5-3.0+弱市关闭</td><td>12-17%</td><td>0%(关闭)</td></tr>
 <tr><td><span class="badge strat_b">B超跌反弹</span></td><td style="white-space:normal;word-break:break-all">涨-9.5~-3%+振幅>3%或下影线</td><td>10-13%</td><td>12-15%</td></tr>
-<tr><td><span class="badge strat_c">C事件驱动</span></td><td style="white-space:normal;word-break:break-all">涨1-3%+量比≥1.0或财报季</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_c">C事件驱动</span></td><td style="white-space:normal;word-break:break-all">涨1-2%+量比≥1.0或财报季</td><td>8-10%</td><td>5-8%</td></tr>
 <tr><td><span class="badge strat_d">D回调企稳</span></td><td style="white-space:normal;word-break:break-all">涨3-6%+振幅2-8%+阳线</td><td>12-15%</td><td>8-12%</td></tr>
 <tr><td><span class="badge strat_e">E资金埋伏</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>3000万</td><td>5-8%</td><td>3-5%</td></tr>
 <tr><td><span class="badge strat_f">F北向资金</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>5000万+近5日持续≥3日</td><td>3-5%</td><td>3-5%</td></tr>
