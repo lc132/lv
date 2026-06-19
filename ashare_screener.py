@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.8.3
-36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 继续修复(新闻假阳性+硬排除+信号过滤+外围+进场价)
+A股每日盘前短线标的智能筛选 v6.8.4
+36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | SKILL.md全面同步
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.8.3"
+BUILTIN_VERSION = "v6.8.4"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1420,8 +1420,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
         "| 阶段 | 数量 | 排除 | 说明 |",
         "|------|------|------|------|",
         f"| ①原始标的池 | {total_raw} | - | 全市场活跃TOP500 |",
-        f"| ②硬排除 | {ae} | {total_raw - ae} | 31项L1/L2/L3 |",
-        f"| ③信号过滤 | {asig} | {ae - asig} | 14项信号质检 |",
+        f"| ②硬排除 | {ae} | {total_raw - ae} | 11项(持仓/科创/北交/低价/高价/ST/涨幅/停牌/PE/市值/成交额) |",
+        f"| ③信号过滤 | {asig} | {ae - asig} | 8项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴) |",
         f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGH八策略 |",
         f"| ⑤行业+同策略限制 | {aind} | {astr - aind} | 同行业≤3只+同策略≤30% |",
         f"| ⑥新闻筛查 | {aind - anew} | {anew} | Bing/东方财富双源利空检测 |",
