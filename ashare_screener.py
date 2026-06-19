@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.6.50
+A股每日盘前短线标的智能筛选 v6.6.51
 35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.6.50"
+BUILTIN_VERSION = "v6.6.51"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1200,8 +1200,9 @@ def calc_entry_price(c):
             # 收盘在振幅中间：中性，次日平开或小幅高开0.3-0.8%
             entry = close * (1 + atr_pct * 0.25)
         else:
-            # 收盘在振幅下1/3：尾盘回落，次日可能低开，在收盘价附近
-            entry = close * (1 + max(gap, 0.003))
+            # 收盘在振幅下1/3：尾盘回落，次日可能跟随当日缺口方向
+            # 缺口方向折半衰减，不强制正溢价（v6.6.51修复）
+            entry = close * (1 + gap * 0.5)
         return round(entry, 2)
     
     elif strategy == 'B':
