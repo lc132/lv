@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.6.51
-35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额
+A股每日盘前短线标的智能筛选 v6.7.0
+35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 新增G横盘突破+H地量见底
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.6.51"
+BUILTIN_VERSION = "v6.7.0"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1059,6 +1059,23 @@ def step13_strategy_match(candidates):
                                     break
                 if nb_days >= 3:
                     s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi:.0f}万+持续{nb_days}日"; score = 5
+        # ── G 横盘突破 (v6.7.0 新增) ──
+        if not s and 2 <= chg <= 6 and close > op:
+            # 当日振幅小(横盘特征) + 量比放大(突破信号) + 阳线突破
+            if amp is not None and 1.5 <= amp <= 6 and vr is not None and vr >= 1.5:
+                s = "G"; reason = f"横盘突破:涨{chg:.1f}%+振幅{amp:.1f}%+量比{vr:.1f}"; score = 8
+        # ── H 地量见底 (v6.7.0 新增) ──
+        if not s and -3 <= chg <= 1 and close >= op:
+            # 地量(量比<0.5) + 下影线(卖压衰竭) + 阳线企稳
+            is_hammer = False
+            if high > low and low > 0:
+                body = abs(close - op)
+                upper_shadow = high - max(close, op)
+                lower_shadow = min(close, op) - low
+                if lower_shadow > body * 1.5:  # 下影线>实体×1.5
+                    is_hammer = True
+            if vr is not None and vr < 0.5 and (is_hammer or (close > 0 and body / close < 0.002)):
+                s = "H"; reason = f"地量见底:涨{chg:.1f}%+量比{vr:.1f}+锤子线"; score = 5
         if s: c['strategy'] = s; c['reason'] = reason; c['score'] = score; matched.append(c)
     log_alert("INFO", "策略匹配", f"匹配{len(matched)}只")
     return matched
@@ -1083,7 +1100,7 @@ def step14_scoring(candidates):
 
 def step17_industry_limit(candidates):
     # v6.6.46: 保留 step16 综合评分排序(_tie_score)，五级二次评估打破平局
-    so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5}
+    so = {'A': 0, 'B': 1, 'C': 2, 'G': 3, 'D': 4, 'E': 5, 'H': 6, 'F': 7}
     def _tie_key(c):
         vr = c.get('volume_ratio') or 0
         to = c.get('turnover') or 0
@@ -1107,11 +1124,11 @@ def step17_industry_limit(candidates):
     return final
 
 def step16_comprehensive_score(candidates):
-    so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5}
-    # v6.6.38: 板块联动检测 — 同板块≥3只A/D → 板块加分
+    so = {'A': 0, 'B': 1, 'C': 2, 'G': 3, 'D': 4, 'E': 5, 'H': 6, 'F': 7}
+    # v6.6.38: 板块联动检测 — 同板块≥3只A/D/G → 板块加分
     sector_ad = defaultdict(list)
     for c in candidates:
-        if c.get('strategy') in ('A', 'D'):
+        if c.get('strategy') in ('A', 'D', 'G'):
             sector_ad[c.get('industry', '')].append(c)
     sector_bonus = {}
     for ind, clist in sector_ad.items():
@@ -1130,6 +1147,8 @@ def step16_comprehensive_score(candidates):
         if s in ('A', 'E'): cs = max(0, 1.0 - abs(chg - 3) / 7.0)
         elif s == 'B': cs = max(0, 1.0 - abs(chg + 5) / 5.0)
         elif s == 'F': cs = max(0, 1.0 - abs(chg - 1.5) / 3.0)  # F偏好小幅上涨
+        elif s == 'G': cs = max(0, 1.0 - abs(chg - 4) / 4.0)   # G偏好中幅突破
+        elif s == 'H': cs = max(0, 1.0 - abs(chg - 0) / 3.0)   # H偏好企稳不涨
         else: cs = max(0, 1.0 - abs(chg - 2) / 8.0)
         # v6.6.38: 均线粘合发散增强 — 振幅<3%+量比>1.2 → 疑似粘合发散
         amp = c.get('amplitude', 0) or 0
@@ -1257,6 +1276,24 @@ def calc_entry_price(c):
             entry = close * 0.995
         return round(entry, 2)
     
+    elif strategy == 'G':
+        # 横盘突破(v6.7.0): 放量突破平台，次日大概率高开惯性冲高
+        # 在收盘价上方0.5%挂单，追涨为主
+        if high > close and close > 0:
+            entry = close + (high - close) * 0.3
+        else:
+            entry = close * 1.005
+        return round(entry, 2)
+    
+    elif strategy == 'H':
+        # 地量见底(v6.7.0): 卖压衰竭，次日平开或微幅高开
+        # 在收盘价附近挂单，不追高
+        if high > low and low > 0:
+            entry = low + (close - low) * 0.4
+        else:
+            entry = close * 1.002
+        return round(entry, 2)
+    
     return round(close, 2)
 
 # ============================================================
@@ -1276,7 +1313,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, er):
         f"| ①原始标的池 | {total_raw} | - | 全市场活跃TOP500 |",
         f"| ②硬排除 | {ae} | {total_raw - ae} | 31项L1/L2/L3 |",
         f"| ③信号过滤 | {asig} | {ae - asig} | 14项信号质检 |",
-        f"| ④策略匹配 | {astr} | {asig - astr} | ABCDE五策略 |",
+        f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGH八策略 |",
         f"| ⑤行业+同策略限制 | {aind} | {astr - aind} | 同行业≤3只+同策略≤60% |",
         f"| ⑥最终推荐 | {len(candidates)} | {aind - len(candidates)} | 评分门控+二次评估 |", "",
     ]
@@ -1308,10 +1345,10 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, er):
             url = f"https://quote.eastmoney.com/concept/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/concept/sz{code}.html"
             lines.append(f"| {idx} | {s} | [{name}]({url}) | {code} | {ind} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} |")
     sd = Counter(c.get('strategy') for c in candidates)
-    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金'}
-    sl = {'A': 'A动量', 'B': 'B超跌', 'C': 'C事件', 'D': 'D回调', 'E': 'E资金', 'F': 'F北向'}
+    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底'}
+    sl = {'A': 'A动量', 'B': 'B超跌', 'C': 'C事件', 'D': 'D回调', 'E': 'E资金', 'F': 'F北向', 'G': 'G横盘', 'H': 'H地量'}
     lines.append("\n## 策略分布")
-    for s in ['A', 'B', 'C', 'D', 'E', 'F']:
+    for s in ['A', 'B', 'C', 'G', 'D', 'E', 'H', 'F']:
         if sd.get(s, 0) > 0: lines.append(f"- {s} {sn.get(s, '')}: {sd[s]}只")
     lines.append("\n## 硬排除 TOP5")
     for r, cnt in er.most_common(5): lines.append(f"- {r}: {cnt}只")
@@ -1328,8 +1365,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisi
     os.makedirs(hd, exist_ok=True)
     hp = f"{hd}/ashare-screening-{pred_yyyymmdd}.html"
     sd = Counter(c.get('strategy') for c in candidates)
-    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金'}
-    sc = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4'}
+    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底'}
+    sc = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'G': '#10b981', 'D': '#f59e0b', 'E': '#ec4899', 'H': '#f97316', 'F': '#06b6d4'}
     fc = len(candidates)
     
     # 指数卡片HTML
@@ -1380,7 +1417,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisi
     seg_html = ""; legend_html = ""
     total_m = sum(sd.values())
     if total_m > 0:
-        for s in ['A', 'B', 'C', 'D', 'E', 'F']:
+        for s in ['A', 'B', 'C', 'G', 'D', 'E', 'H', 'F']:
             cnt = sd.get(s, 0)
             if cnt > 0:
                 pct = cnt / total_m * 100
@@ -1403,7 +1440,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisi
         funnel_html += f'<div class="funnel-step {cls}" style="width:{w}%">{name}: {count}只</div>'
     
     strat_bars = ""
-    for s in ['A', 'B', 'C', 'D', 'E', 'F']:
+    for s in ['A', 'B', 'C', 'G', 'D', 'E', 'H', 'F']:
         cnt = sd.get(s, 0)
         bp = cnt / max(max(sd.values()), 1) * 100
         strat_bars += f'<div class="bar-row"><div class="bar-label">{s} {sn.get(s, "")}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%;background:{sc[s]}">{cnt}</div></div></div>'
@@ -1452,9 +1489,9 @@ td{{padding:.4rem .5rem;border-bottom:1px solid #334155;white-space:nowrap}}
 tr:hover{{background:#2d3b4f}}
 .badge{{padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:bold}}
 .strat_a{{background:#14532d;color:#22c55e}}.strat_b{{background:#1e3a5f;color:#3b82f6}}.strat_c{{background:#3b1f6e;color:#8b5cf6}}
-.strat_d{{background:#5c3d0e;color:#f59e0b}}.strat_e{{background:#5c1648;color:#ec4899}}.strat_f{{background:#0f4c5c;color:#06b6d4}}
+.strat_d{{background:#5c3d0e;color:#f59e0b}}.strat_e{{background:#5c1648;color:#ec4899}}.strat_f{{background:#0f4c5c;color:#06b6d4}}.strat_g{{background:#0e4c3d;color:#10b981}}.strat_h{{background:#4c1d0e;color:#f97316}}
 tr.strat_a{{background:rgba(34,197,94,0.05)}}tr.strat_b{{background:rgba(59,130,246,0.05)}}tr.strat_c{{background:rgba(139,92,246,0.05)}}
-tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72,153,0.05)}}tr.strat_f{{background:rgba(6,182,212,0.05)}}
+tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72,153,0.05)}}tr.strat_f{{background:rgba(6,182,212,0.05)}}tr.strat_g{{background:rgba(16,185,129,0.05)}}tr.strat_h{{background:rgba(249,115,22,0.05)}}
 tr.recent-7d{{background:rgba(251,146,60,0.12)}} tr.recent-7d:hover{{background:rgba(251,146,60,0.2)}}
 .conf{{font-weight:bold}}.conf.high{{color:#22c55e}}.conf.mid{{color:#f59e0b}}.conf.low{{color:#ef4444}}
 .entry{{color:#38bdf8;font-weight:bold}}
@@ -1495,6 +1532,8 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 <tr><td><span class="badge strat_d">D回调企稳</span></td><td style="white-space:normal;word-break:break-all">20日新高回调MA20 + 缩量站回MA5放量</td><td>12-15%</td><td>8-12%</td></tr>
 <tr><td><span class="badge strat_e">E资金埋伏</span></td><td style="white-space:normal;word-break:break-all">北向连续净买 + 主力流入>3000万 + 涨幅<2%</td><td>5-8%</td><td>3-5%</td></tr>
 <tr><td><span class="badge strat_f">F北向资金</span></td><td style="white-space:normal;word-break:break-all">主力流入>5000万+持续3日+涨幅<3%</td><td>3-5%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_g">G横盘突破</span></td><td style="white-space:normal;word-break:break-all">振幅1.5-6%+量比>1.5+涨幅2-6%阳线突破</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_h">H地量见底</span></td><td style="white-space:normal;word-break:break-all">量比<0.5+跌幅<3%+锤子线/十字星阳线</td><td>5-8%</td><td>3-5%</td></tr>
 </tbody></table></section></div>
 <div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p style="color:#fb923c;margin-top:.3rem">★ 7日 = 近7日内已推荐标的（橙色高亮行），可持续关注但不建议重复建仓</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
     
@@ -1571,7 +1610,7 @@ def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, sd):
     try:
         fc = len(candidates)
         sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金'}
-        ss = " | ".join([f"{s}{sn.get(s,'')}:{sd.get(s,0)}只" for s in ['A','B','C','D','E','F'] if sd.get(s, 0) > 0]) or "无推荐标的"
+        ss = " | ".join([f"{s}{sn.get(s,'')}:{sd.get(s,0)}只" for s in ['A','B','C','G','D','E','H','F'] if sd.get(s, 0) > 0]) or "无推荐标的"
         pb = "https://lc132.github.io/lv"
         pr = f"{pb}/ashare-screening-{pred_yyyymmdd}/ashare-screening-{pred_yyyymmdd}.html"
         card = {"msg_type": "interactive", "card": {
@@ -1688,8 +1727,8 @@ def main():
     print("=" * 60)
     print(f"prediction_date={prediction_date} (数据来源:{data_date})")
     print(f"①原始:N={total_raw} → ②硬排除:N={ae} → ③信号过滤:N={asig} → ④策略:N={astr} → ⑤行业限制:N={aind} → ★ 最终:N={fc}")
-    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金'}
-    print(f"策略分布: " + " ".join([f"{s}:{sd.get(s,0)}" for s in ['A','B','C','D','E','F']]))
+    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底'}
+    print(f"策略分布: " + " ".join([f"{s}:{sd.get(s,0)}" for s in ['A','B','C','G','D','E','H','F']]))
     print(f"排除TOP5: " + " ".join([f"{r}:{c}只" for r, c in er.most_common(5)]))
     print("=" * 60)
     
