@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.6.49
-35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 65条硬编码修正 | 7日推荐标注 | 指数涨跌金额
+A股每日盘前短线标的智能筛选 v6.6.50
+35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.6.49"
+BUILTIN_VERSION = "v6.6.50"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -896,6 +896,10 @@ HARDCODED_INDUSTRY = {
     '301528': '机械设备',  # 多浦乐（超声检测设备，在301500-301599段但非汽车）
     '002125': '电力设备',  # 湘潭电化（电池材料/电解二氧化锰，在002100-002199段但非医药生物）
     '002194': '通信',      # 武汉凡谷（射频器件/通信设备，在002100-002199段但非医药生物）
+    # v6.6.50: 3只行业修正（基于2026-06-19筛选结果第四轮校对）
+    '600366': '有色金属',  # 宁波韵升（稀土永磁/钕铁硼，在600300-600399段但非基础化工）
+    '300174': '基础化工',  # 元力股份（活性炭，在300100-300199段但非汽车）
+    '300145': '机械设备',  # 南方泵业（不锈钢离心泵，在300100-300199段但非汽车）
 }
 
 # ============================================================
