@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.7.7
-35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | SKILL.md全面同步
+A股每日盘前短线标的智能筛选 v6.8.0
+36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 新增步骤18新闻筛查
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.7.7"
+BUILTIN_VERSION = "v6.8.0"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1099,6 +1099,101 @@ def step17_industry_limit(candidates):
     log_alert("INFO", "行业限制", f"通过{len(final)}只 (原始{len(candidates)}只)")
     return final
 
+def step18_news_screening(candidates):
+    """步骤18：新闻筛查 — 对最终标的检测近5日利空新闻"""
+    if not candidates:
+        return candidates, 0
+    
+    NEGATIVE_KW = [
+        '立案调查', '行政处罚', '监管函', '问询函', '业绩修正', '预亏', '预减',
+        '大股东减持', '控股股东减持', '质押平仓', '商誉减值', '退市风险',
+        '重大诉讼', '债务违约', '暂停上市', '终止上市', '限售股解禁',
+        '业绩变脸', '财务造假', '信披违规', '内幕交易', '操纵市场',
+        '强制退市', '破产重整', '资不抵债', '审计非标',
+        '违规担保', '资金占用', '重组失败', '定增终止', 'ST warning'
+    ]
+    
+    excluded = []
+    passed = []
+    # 仅对评分前20只做个体搜索（最多40秒）
+    search_limit = min(20, len(candidates))
+    sorted_cand = sorted(candidates, key=lambda c: -c.get('score', 0))
+    
+    for i, c in enumerate(sorted_cand):
+        if i >= search_limit:
+            passed.append(c)
+            continue
+        
+        code = c.get('code', '')
+        name = c.get('name', '')
+        has_neg = False
+        neg_reason = ''
+        
+        # 方式1: Bing搜索（主方案）
+        try:
+            query = f'{name} {code} 利空 公告'
+            url = f'https://www.bing.com/search?q={urllib.parse.quote(query)}'
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept-Language': 'zh-CN,zh;q=0.9'
+            })
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                html = resp.read().decode('utf-8', errors='ignore')
+                for kw in NEGATIVE_KW:
+                    if kw in html:
+                        has_neg = True
+                        neg_reason = kw
+                        break
+        except Exception:
+            pass
+        
+        # 方式2: 东方财富新闻API（备用）
+        if not has_neg:
+            try:
+                market = '1' if code.startswith('6') else '0'
+                url = f'https://push2.eastmoney.com/api/qt/stock/news/get?secid={market}.{code}&pageNum=1&pageSize=5&_={int(time.time()*1000)}'
+                req = urllib.request.Request(url, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                    'Referer': 'https://www.eastmoney.com/'
+                })
+                with urllib.request.urlopen(req, timeout=4) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+                    news_list = data.get('data', {}).get('list', []) if isinstance(data, dict) else []
+                    for news in news_list:
+                        title = news.get('title', '') + news.get('summary', '')
+                        for kw in NEGATIVE_KW:
+                            if kw in title:
+                                has_neg = True
+                                neg_reason = kw
+                                break
+                        if has_neg:
+                            break
+            except Exception:
+                pass
+        
+        if has_neg:
+            c['_news_excluded'] = True
+            c['_news_reason'] = neg_reason
+            excluded.append(c)
+        else:
+            passed.append(c)
+    
+    # 剩余未搜索的直接通过
+    for c in sorted_cand[search_limit:]:
+        if c not in excluded:
+            passed.append(c)
+    
+    nex = len(excluded)
+    if nex > 0:
+        details = ", ".join(f"{c.get('name','')}({c.get('_news_reason','?')})" for c in excluded[:5])
+        if nex > 5:
+            details += f" 等{nex}只"
+        log_alert("WARNING", "新闻筛查", f"排除{nex}只: {details}")
+    else:
+        log_alert("INFO", "新闻筛查", "全部通过，未发现利空")
+    
+    return passed, nex
+
 def step16_comprehensive_score(candidates):
     so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7}
     # v6.6.38: 板块联动检测 — 同板块≥3只A/D/G → 板块加分
@@ -1278,7 +1373,7 @@ def calc_entry_price(c):
 # ============================================================
 # 步骤20：Markdown输出
 # ============================================================
-def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, er):
+def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er):
     mp = f"/workspace/短线标的_{prediction_date}.md"
     lines = [
         f"# A股短线标的筛选报告 — {prediction_date}", "",
@@ -1286,7 +1381,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, er):
         f"- **市场环境**: {market_condition}  |  **建议仓位**: {position_pct}%",
         f"- **数据来源**: 腾讯qt(一级) / 新浪(二级) / pytdx(三级)",
         f"- **规则版本**: {file_version}", "",
-        "## 筛选管道（6级漏斗）", "",
+        "## 筛选管道（7级漏斗）", "",
         "| 阶段 | 数量 | 排除 | 说明 |",
         "|------|------|------|------|",
         f"| ①原始标的池 | {total_raw} | - | 全市场活跃TOP500 |",
@@ -1294,7 +1389,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, er):
         f"| ③信号过滤 | {asig} | {ae - asig} | 14项信号质检 |",
         f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGH八策略 |",
         f"| ⑤行业+同策略限制 | {aind} | {astr - aind} | 同行业≤3只+同策略≤30% |",
-        f"| ⑥最终推荐 | {len(candidates)} | {aind - len(candidates)} | 评分门控+二次评估 |", "",
+        f"| ⑥新闻筛查 | {aind - anew} | {anew} | Bing/东方财富双源利空检测 |",
+        f"| ★最终推荐 | {len(candidates)} | {aind - anew - len(candidates)} | 评分门控+降级 |", "",
     ]
     if candidates:
         lines.append("## 推荐标的\n")
@@ -1338,7 +1434,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, er):
 # ============================================================
 # 步骤20B：HTML报告（v6.6.27 含指数行情）
 # ============================================================
-def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisis_alerts):
+def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts):
     hd = f"/workspace/ashare-screening-{pred_yyyymmdd}"
     os.makedirs(hd, exist_ok=True)
     hp = f"{hd}/ashare-screening-{pred_yyyymmdd}.html"
@@ -1495,7 +1591,7 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 <div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">策略分布</h3><div class="seg-bar">{seg_html if seg_html else '<div style="color:#94a3b8;text-align:center;padding:1rem">无推荐标的</div>'}</div><div class="legend">{legend_html}</div></div>
 <div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">硬排除TOP5</h3>{bar_html if bar_html else '<div style="color:#94a3b8">无排除记录</div>'}</div>
 <div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">各策略数量</h3>{strat_bars if strat_bars else '<div style="color:#94a3b8">无匹配</div>'}</div>
-<div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">概述</h3><div style="font-size:.8rem;color:#cbd5e1">全市场→{total_raw}只入围→{ae}只通过硬排除→{asig}只通过信号过滤→{astr}只匹配策略→{aind}只通过行业限制→<strong style="color:#38bdf8">最终{fc}只</strong></div></div>
+<div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">概述</h3><div style="font-size:.8rem;color:#cbd5e1">全市场→{total_raw}只入围→{ae}只通过硬排除→{asig}只通过信号过滤→{astr}只匹配策略→{aind}只通过行业限制→{aind - anew}只通过新闻筛查→<strong style="color:#38bdf8">最终{fc}只</strong></div></div>
 </div></section>
 <section><h2>系统告警</h2><div class="alert-list">{alerts_html}</div></section>
 <section><h2>最终推荐标的</h2><div style="overflow-x:auto"><table>
@@ -1583,7 +1679,7 @@ def step26_github_sync(mp, hd, candidates):
 # ============================================================
 # 步骤27：飞书推送
 # ============================================================
-def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, sd):
+def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, anew, sd):
     if not FEISHU_WEBHOOK: log_alert("WARNING", "飞书推送", "无Webhook"); return
     try:
         fc = len(candidates)
@@ -1596,7 +1692,7 @@ def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, sd):
             "elements": [
                 {"tag": "div", "text": {"tag": "lark_md", "content": f"**数据来源**: {data_date}  |  **市场环境**: {market_condition}  |  **建议仓位**: {position_pct}%"}},
                 {"tag": "hr"},
-                {"tag": "div", "text": {"tag": "lark_md", "content": f"原始: **{total_raw}**只 → 硬排: **{ae}**只 → 信号: **{asig}**只 → 策略: **{astr}**只 → 行业: **{aind}**只 → ★ 最终: **{fc}**只"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": f"原始: **{total_raw}**只 → 硬排: **{ae}**只 → 信号: **{asig}**只 → 策略: **{astr}**只 → 行业: **{aind}**只 → 新闻: **{aind - anew}**只 → ★ 最终: **{fc}**只"}},
                 {"tag": "hr"},
                 {"tag": "div", "text": {"tag": "lark_md", "content": f"**策略分布**: {ss}"}},
                 {"tag": "hr"},
@@ -1690,12 +1786,13 @@ def main():
     print("\n[步骤14] 评分..."); scored = step14_scoring(sm)
     print("\n[步骤16] 综合评分..."); ranked = step16_comprehensive_score(scored)
     print("\n[步骤17] 行业限制..."); ail = step17_industry_limit(ranked); aind = len(ail)
+    print("\n[步骤18] 新闻筛查..."); ail, anew = step18_news_screening(ail)
     print("\n[步骤19] 降级..."); final = step19_shortfall_handling(ail); fc = len(final)
     sd = Counter(c.get('strategy') for c in final)
     
-    print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, aind, er)
+    print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, aind, anew, er)
     print("\n[步骤20B] HTML..."); hd = f"/workspace/ashare-screening-{pred_yyyymmdd}"
-    step20B_generate_html(final, total_raw, ae, asig, astr, aind, er, crisis_alerts)
+    step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts)
     
     print("\n[步骤21] 验证..."); step21_final_verify(mp, fc)
     print("\n[步骤22] 推荐历史..."); step22_write_history(final)
@@ -1704,7 +1801,7 @@ def main():
     print("📊 筛选概况")
     print("=" * 60)
     print(f"prediction_date={prediction_date} (数据来源:{data_date})")
-    print(f"①原始:N={total_raw} → ②硬排除:N={ae} → ③信号过滤:N={asig} → ④策略:N={astr} → ⑤行业限制:N={aind} → ★ 最终:N={fc}")
+    print(f"①原始:N={total_raw} → ②硬排除:N={ae} → ③信号过滤:N={asig} → ④策略:N={astr} → ⑤行业限制:N={aind} → ⑥新闻筛查:N={aind - anew} → ★ 最终:N={fc}")
     sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底'}
     print(f"策略分布: " + " ".join([f"{s}:{sd.get(s,0)}" for s in ['A','B','C','D','E','F','G','H']]))
     print(f"排除TOP5: " + " ".join([f"{r}:{c}只" for r, c in er.most_common(5)]))
@@ -1715,7 +1812,7 @@ def main():
         for a in crisis_alerts: print(f"  {a}")
     
     print("\n[步骤26] GitHub同步..."); step26_github_sync(mp, hd, final)
-    print("\n[步骤27] 飞书推送..."); step27_feishu_push(final, total_raw, ae, asig, astr, aind, sd)
+    print("\n[步骤27] 飞书推送..."); step27_feishu_push(final, total_raw, ae, asig, astr, aind, anew, sd)
     print(f"\n✅ 完成！ {mp}")
     return final, mp
 
