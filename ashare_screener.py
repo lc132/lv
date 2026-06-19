@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.7.5
-35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 8策略HTML报告排序修复
+A股每日盘前短线标的智能筛选 v6.7.6
+35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 7项漏洞修复
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.7.5"
+BUILTIN_VERSION = "v6.7.6"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -33,7 +33,7 @@ DEFAULT_PARAMS = {
     "win_rate_drop_threshold": 10, "limit_down_threshold": 100,
     "max_adjust_params": 3, "confidence_position_enabled": True,
     "max_holding_days": 5, "circuit_breaker_threshold_pct": 3.0,
-    "strategy_concentration_pct": 60, "do_t_success_reset_count": 3,
+    "strategy_concentration_pct": 30, "do_t_success_reset_count": 3,
     "conversion_rate_window_days": 10, "conversion_rate_threshold": 0.3,
     "conversion_rate_restore": 0.6, "conversion_rate_consecutive_days": 3,
     "data_tier_l2_skip_on_unavailable": True,
@@ -961,7 +961,7 @@ def step12_signal_filter(candidates):
         chg = c.get('change_pct', 0); close = c.get('close', 0); op = c.get('open', 0)
         high = c.get('high', 0); low = c.get('low', 0); amp = c.get('amplitude', 0)
         vr = c.get('volume_ratio'); to = c.get('turnover', 0)
-        reason = None; sa = 0
+        reason = None
         if op > 0 and c.get('prev_close', op) > 0:
             pc = c.get('prev_close', op)
             if (op - pc) / pc > 0.03 and close < op * 0.98: reason = "假动量"
@@ -970,14 +970,14 @@ def step12_signal_filter(candidates):
             if pc > 0 and (high - pc) / pc > 0.05 and close < op * 1.01: reason = "诱多"
         if not reason and chg > 5 and vr is not None and vr < 0.5: reason = "缩量涨停"
         if not reason and amp > 15: reason = f"振幅>{amp:.1f}%"
-        if not reason and -3 < chg < 0 and to > 3: c['_first_yin'] = True; sa += 1
+        if not reason and -3 < chg < 0 and to > 3: c['_first_yin'] = True
         if reason: excluded.append(c)
-        else: c['_signal_score_adj'] = sa; passed.append(c)
+        else: passed.append(c)
     log_alert("INFO", "信号过滤", f"通过{len(passed)}只 排除{len(excluded)}只")
     return passed, excluded
 
 # ============================================================
-# 步骤13：五策略匹配
+# 步骤13：八策略匹配（ABCDEFGH按优先级顺序）
 # ============================================================
 def step13_strategy_match(candidates):
     matched = []
@@ -1002,11 +1002,8 @@ def step13_strategy_match(candidates):
                         reason += f" ⚠假突破(上影{round(upper_shadow/lower_shadow,1)}x)"
         # ── B 超跌反弹 ──
         if not s and -9.5 <= chg <= -3:
-            # v6.6.45: 最大跌幅限制 — 当日跌幅>9.5%可能暴雷，排除（chg本身在[-9.5,-3]区间，检测边界）
-            # 同时检查是否从近期高点累计跌幅>30%（通过振幅辅助判断）
-            c['_excluded_max_decline'] = False
+            # v6.6.45: 最大跌幅限制 — 当日跌幅≤-9.5%或振幅>15%且跌幅<-7%→跳过
             if chg <= -9.5 or (amp > 15 and chg < -7):
-                c['_excluded_max_decline'] = True
                 continue  # 跳过该标的，不匹配任何策略
             if amp > 3 or (low > 0 and close > low * 1.005):
                 s = "B"; reason = f"超跌反弹:跌{chg:.1f}%+振幅{amp:.1f}%"; score = 7
@@ -1067,8 +1064,6 @@ def step14_scoring(candidates):
     for c in candidates:
         sc = c.get('score', 0) * 2
         if c.get('_first_yin'): sc += 1
-        if c.get('_signal_score_adj'): sc += c['_signal_score_adj']
-        if c.get('_l3_warning'): sc -= 2
         if c.get('_fake_breakout'): sc -= 3  # v6.6.38: A策略假突破惩罚
         c['score'] = max(0, sc)
         s = c['score']
@@ -1298,7 +1293,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, er):
         f"| ②硬排除 | {ae} | {total_raw - ae} | 31项L1/L2/L3 |",
         f"| ③信号过滤 | {asig} | {ae - asig} | 14项信号质检 |",
         f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGH八策略 |",
-        f"| ⑤行业+同策略限制 | {aind} | {astr - aind} | 同行业≤3只+同策略≤60% |",
+        f"| ⑤行业+同策略限制 | {aind} | {astr - aind} | 同行业≤3只+同策略≤30% |",
         f"| ⑥最终推荐 | {len(candidates)} | {aind - len(candidates)} | 评分门控+二次评估 |", "",
     ]
     if candidates:
@@ -1330,7 +1325,6 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, er):
             lines.append(f"| {idx} | {s} | [{name}]({url}) | {code} | {ind} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} |")
     sd = Counter(c.get('strategy') for c in candidates)
     sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底'}
-    sl = {'A': 'A动量', 'B': 'B超跌', 'C': 'C事件', 'D': 'D回调', 'E': 'E资金', 'F': 'F北向', 'G': 'G横盘', 'H': 'H地量'}
     lines.append("\n## 策略分布")
     for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']:
         if sd.get(s, 0) > 0: lines.append(f"- {s} {sn.get(s, '')}: {sd[s]}只")
