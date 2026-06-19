@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.8.1
-36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 清理无用条件
+A股每日盘前短线标的智能筛选 v6.8.2
+36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 漏洞修复(main_inflow兜底+区间裸奔+降级门控)
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.8.1"
+BUILTIN_VERSION = "v6.8.2"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -978,7 +978,7 @@ def step13_strategy_match(candidates):
     matched = []
     for c in candidates:
         chg = c.get('change_pct', 0); amp = c.get('amplitude', 0)
-        amt = c.get('amount', 0); vr = c.get('volume_ratio')
+        amt = c.get('amount', 0); vr = c.get('volume_ratio'); to = c.get('turnover', 0)
         close = c.get('close', 0); op = c.get('open', 0)
         high = c.get('high', 0); low = c.get('low', 0)
         s = None; reason = ""; score = 0
@@ -999,22 +999,26 @@ def step13_strategy_match(candidates):
         if not s and -9.5 <= chg <= -3:
             if amp > 3 or (low > 0 and close > low * 1.005):
                 s = "B"; reason = f"超跌反弹:跌{chg:.1f}%+振幅{amp:.1f}%"; score = 7
-        # ── C 事件驱动 (v6.8.1: 区间收窄至1-2%，2-3%让给G横盘突破) ──
+        # ── C 事件驱动 (v6.8.2: vr=None时用换手率≥2%兜底) ──
         if not s and 1 <= chg < 2:
             is_earnings = beijing_now.month in (1, 3, 4, 8, 10)
             if is_earnings:
                 s = "C"; reason = f"事件驱动(财报季):涨{chg:.1f}%"; score = 8
             elif vr is not None and vr >= 1.0:
                 s = "C"; reason = f"事件驱动:涨{chg:.1f}%+量比{vr:.1f}"; score = 7
-        # ── D 回调企稳 (v6.7.1: 区间收窄至3-6%，与C/G形成互补) ──
-        if not s and 3 <= chg <= 6:
+            elif vr is None and to is not None and to >= 2 and close > op:
+                s = "C"; reason = f"事件驱动(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 6
+        # ── D 回调企稳 (v6.8.2: 弱市时上限扩展至7%兜底A策略关闭后的(6,7]区间) ──
+        if not s and 3 <= chg <= (7 if market_condition == "弱市" else 6):
             if 2 <= amp <= 8 and close > op:
                 s = "D"; reason = f"回调企稳:涨{chg:.1f}%+阳线+振幅{amp:.1f}%"; score = 8
-        # ── E 资金埋伏 ──
+        # ── E 资金埋伏 (v6.8.2: main_inflow为None时降级为量比+换手率兜底) ──
         if not s and 0 <= chg <= 1:
             mi = c.get('main_inflow')
             if mi is not None and mi > 3000:
                 s = "E"; reason = f"资金埋伏:涨{chg:.1f}%+主力流入{mi:.0f}万"; score = 6
+            elif mi is None and vr is not None and vr >= 1.2 and to is not None and to >= 2 and close > op:
+                s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%"; score = 5
         # ── F 北向资金（E→F升级：主力>5000万+持续≥3日）──
         if s == "E":
             mi = c.get('main_inflow')
@@ -1030,20 +1034,25 @@ def step13_strategy_match(candidates):
                                     break
                 if nb_days >= 3:
                     s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi:.0f}万+持续{nb_days}日"; score = 5
-        # ── G 横盘突破 (v6.7.2: 收窄至2-3%避免与D重叠，D先匹配3-6%) ──
+        # ── G 横盘突破 (v6.8.2: vr=None时用换手率≥3%兜底) ──
         if not s and 2 <= chg < 3 and close > op:
-            if amp is not None and 1.5 <= amp <= 6 and vr is not None and vr >= 1.5:
-                s = "G"; reason = f"横盘突破:涨{chg:.1f}%+振幅{amp:.1f}%+量比{vr:.1f}"; score = 8
-        # ── H 地量见底 (v6.7.0) ──
+            if amp is not None and 1.5 <= amp <= 6:
+                if vr is not None and vr >= 1.5:
+                    s = "G"; reason = f"横盘突破:涨{chg:.1f}%+振幅{amp:.1f}%+量比{vr:.1f}"; score = 8
+                elif vr is None and to is not None and to >= 3:
+                    s = "G"; reason = f"横盘突破(代理):涨{chg:.1f}%+振幅{amp:.1f}%+换手{to:.1f}%"; score = 7
+        # ── H 地量见底 (v6.8.2: body=0时增加最小影线要求+vr=None兜底) ──
         if not s and -3 <= chg <= 1 and close >= op:
             is_hammer = False
             if high > low and low > 0:
                 body = abs(close - op)
                 lower_shadow = min(close, op) - low
-                if lower_shadow > body * 1.5:
+                min_shadow = max(body * 1.5, 0.001 * close)  # body=0时至少0.1%影线
+                if lower_shadow >= min_shadow:
                     is_hammer = True
-            if vr is not None and vr < 0.5 and (is_hammer or (close > 0 and body / close < 0.005)):
-                s = "H"; reason = f"地量见底:涨{chg:.1f}%+量比{vr:.1f}+锤子线"; score = 5
+            vr_ok = (vr is not None and vr < 0.5) or (vr is None and to is not None and to < 0.5)
+            if vr_ok and (is_hammer or (close > 0 and body / close < 0.005)):
+                s = "H"; reason = f"地量见底:涨{chg:.1f}%+量比{vr or 0:.1f}+锤子线"; score = 5
         if s: c['strategy'] = s; c['score'] = score; matched.append(c)
     log_alert("INFO", "策略匹配", f"匹配{len(matched)}只")
     return matched
@@ -1232,9 +1241,10 @@ def step16_comprehensive_score(candidates):
     return candidates
 
 def step19_shortfall_handling(candidates):
+    """v6.8.2: 放宽门控——1只≥★★, 2只≥★, 避免E/F/H策略标的被误杀"""
     if len(candidates) >= 3: return candidates
-    elif len(candidates) == 2: return [c for c in candidates if c.get('confidence', '★') >= '★★']
-    elif len(candidates) == 1: return [c for c in candidates if c.get('confidence', '★') >= '★★★']
+    elif len(candidates) == 2: return [c for c in candidates if c.get('confidence', '★') >= '★']
+    elif len(candidates) == 1: return [c for c in candidates if c.get('confidence', '★') >= '★★']
     return []
 
 # ============================================================
