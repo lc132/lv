@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.7.3
-35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 8策略ABCDEFGH独立代码块
+A股每日盘前短线标的智能筛选 v6.7.4
+35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 8策略ABCDEFGH全局按优先级排序
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.7.3"
+BUILTIN_VERSION = "v6.7.4"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1099,6 +1099,8 @@ def step17_industry_limit(candidates):
     for g in sg.values():
         g.sort(key=_tie_key)
         final.extend(g[:max_s])
+    # v6.7.4: 全局按策略优先级排序（A→H），同策略按评分降序
+    final.sort(key=lambda c: (so.get(c.get('strategy', 'Z'), 99), -c.get('score', 0)))
     log_alert("INFO", "行业限制", f"通过{len(final)}只 (原始{len(candidates)}只)")
     return final
 
