@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.7.4
-35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 8策略ABCDEFGH全局按优先级排序
+A股每日盘前短线标的智能筛选 v6.7.5
+35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 8策略HTML报告排序修复
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.7.4"
+BUILTIN_VERSION = "v6.7.5"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1401,7 +1401,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisi
     seg_html = ""; legend_html = ""
     total_m = sum(sd.values())
     if total_m > 0:
-        for s in ['A', 'B', 'C', 'G', 'D', 'E', 'H', 'F']:
+        for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']:
             cnt = sd.get(s, 0)
             if cnt > 0:
                 pct = cnt / total_m * 100
@@ -1415,7 +1415,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisi
         bar_html += f'<div class="bar-row"><div class="bar-label">{r}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%">{cnt}</div></div></div>'
     
     stages = [("原始标的池", total_raw), ("硬排除(31项)", ae), ("信号过滤(14项)", asig),
-              ("策略匹配(5策略)", astr), ("行业+同策略限制", aind), ("最终推荐", fc)]
+              ("策略匹配(8策略)", astr), ("行业+同策略限制", aind), ("最终推荐", fc)]
     max_f = max(s[1] for s in stages)
     funnel_html = ""
     for i, (name, count) in enumerate(stages):
@@ -1424,7 +1424,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, er, crisi
         funnel_html += f'<div class="funnel-step {cls}" style="width:{w}%">{name}: {count}只</div>'
     
     strat_bars = ""
-    for s in ['A', 'B', 'C', 'G', 'D', 'E', 'H', 'F']:
+    for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']:
         cnt = sd.get(s, 0)
         bp = cnt / max(max(sd.values()), 1) * 100
         strat_bars += f'<div class="bar-row"><div class="bar-label">{s} {sn.get(s, "")}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%;background:{sc[s]}">{cnt}</div></div></div>'
