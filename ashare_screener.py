@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.7.1
-35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 8策略ABCDEFGH字母排序+区间互斥
+A股每日盘前短线标的智能筛选 v6.7.2
+35步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 8策略ABCDEFGH区间互斥修复
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.7.1"
+BUILTIN_VERSION = "v6.7.2"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1022,14 +1022,8 @@ def step13_strategy_match(candidates):
         if not s and 3 <= chg <= 6:
             if 2 <= amp <= 8 and close > op:
                 s = "D"; reason = f"回调企稳:涨{chg:.1f}%+阳线+振幅{amp:.1f}%"; score = 8
-        # ── E 资金埋伏 (v6.7.1: 区间收窄至0-1%，与C互补) ──
-        if not s and 0 <= chg <= 1:
-            mi = c.get('main_inflow')
-            if mi is not None and mi > params.get('northbound_threshold', 3000):
-                s = "E"; reason = f"资金埋伏:涨{chg:.1f}%+主力流入{mi:.0f}万"; score = 6
-            elif amt > 3e8 and amp > 0.5:
-                s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+成交额{amt/1e8:.1f}亿"; score = 5
-        # ── F 北向资金 (v6.7.1: 区间收窄至0-1%，与E互补) ──
+        # ── E 资金埋伏 (v6.7.2: 去掉fallback，F优先匹配) ──
+        # F先于E匹配（F条件更严格=持续资金+高阈值），F未触发时降级为E
         if not s and 0 <= chg <= 1:
             mi = c.get('main_inflow')
             if mi is not None and mi > 5000:
@@ -1044,8 +1038,10 @@ def step13_strategy_match(candidates):
                                     break
                 if nb_days >= 3:
                     s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi:.0f}万+持续{nb_days}日"; score = 5
-        # ── G 横盘突破 (v6.7.0) ──
-        if not s and 2 <= chg <= 6 and close > op:
+            if not s and mi is not None and mi > 3000:
+                s = "E"; reason = f"资金埋伏:涨{chg:.1f}%+主力流入{mi:.0f}万"; score = 6
+        # ── G 横盘突破 (v6.7.2: 收窄至2-3%避免与D重叠，D先匹配3-6%) ──
+        if not s and 2 <= chg < 3 and close > op:
             if amp is not None and 1.5 <= amp <= 6 and vr is not None and vr >= 1.5:
                 s = "G"; reason = f"横盘突破:涨{chg:.1f}%+振幅{amp:.1f}%+量比{vr:.1f}"; score = 8
         # ── H 地量见底 (v6.7.0) ──
@@ -1056,7 +1052,7 @@ def step13_strategy_match(candidates):
                 lower_shadow = min(close, op) - low
                 if lower_shadow > body * 1.5:
                     is_hammer = True
-            if vr is not None and vr < 0.5 and (is_hammer or (close > 0 and body / close < 0.002)):
+            if vr is not None and vr < 0.5 and (is_hammer or (close > 0 and body / close < 0.005)):
                 s = "H"; reason = f"地量见底:涨{chg:.1f}%+量比{vr:.1f}+锤子线"; score = 5
         if s: c['strategy'] = s; c['reason'] = reason; c['score'] = score; matched.append(c)
     log_alert("INFO", "策略匹配", f"匹配{len(matched)}只")
@@ -1072,7 +1068,6 @@ def step14_scoring(candidates):
         if c.get('_signal_score_adj'): sc += c['_signal_score_adj']
         if c.get('_l3_warning'): sc -= 2
         if c.get('_fake_breakout'): sc -= 3  # v6.6.38: A策略假突破惩罚
-        if c.get('_c_downgrade'): sc -= 2    # v6.6.38: C策略量价不足降级
         c['score'] = max(0, sc)
         s = c['score']
         if s >= 18: c['confidence'] = '★★★'
@@ -1095,7 +1090,7 @@ def step17_industry_limit(candidates):
     for g in ig.values():
         g.sort(key=_tie_key)
         limited.extend(g[:3])
-    max_s = max(1, len(limited) * params.get('strategy_concentration_pct', 60) // 100)
+    max_s = max(1, len(limited) * params.get('strategy_concentration_pct', 30) // 100)
     sg = defaultdict(list)
     for c in limited: sg[c.get('strategy', 'Z')].append(c)
     final = []
@@ -1132,7 +1127,7 @@ def step16_comprehensive_score(candidates):
         elif s == 'D': cs = max(0, 1.0 - abs(chg - 4.5) / 3.0) # D偏好4.5%突破
         elif s == 'E': cs = max(0, 1.0 - abs(chg - 0.5) / 1.0) # E偏好微涨吸筹
         elif s == 'F': cs = max(0, 1.0 - abs(chg - 0.5) / 1.0) # F偏好微涨吸筹
-        elif s == 'G': cs = max(0, 1.0 - abs(chg - 4) / 4.0)   # G偏好中幅突破
+        elif s == 'G': cs = max(0, 1.0 - abs(chg - 2.5) / 1.0) # G偏好2-3%突破
         elif s == 'H': cs = max(0, 1.0 - abs(chg - 0) / 3.0)   # H偏好企稳不涨
         else: cs = 0.5
         # v6.6.38: 均线粘合发散增强 — 振幅<3%+量比>1.2 → 疑似粘合发散
@@ -1517,7 +1512,7 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 <tr><td><span class="badge strat_d">D回调企稳</span></td><td style="white-space:normal;word-break:break-all">涨3-6%+振幅2-8%+阳线</td><td>12-15%</td><td>8-12%</td></tr>
 <tr><td><span class="badge strat_e">E资金埋伏</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>3000万</td><td>5-8%</td><td>3-5%</td></tr>
 <tr><td><span class="badge strat_f">F北向资金</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>5000万+持续3日</td><td>3-5%</td><td>3-5%</td></tr>
-<tr><td><span class="badge strat_g">G横盘突破</span></td><td style="white-space:normal;word-break:break-all">振幅1.5-6%+量比>1.5+涨幅2-6%阳线突破</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_g">G横盘突破</span></td><td style="white-space:normal;word-break:break-all">涨2-3%+振幅1.5-6%+量比>1.5阳线突破</td><td>8-10%</td><td>5-8%</td></tr>
 <tr><td><span class="badge strat_h">H地量见底</span></td><td style="white-space:normal;word-break:break-all">量比<0.5+跌幅<3%+锤子线/十字星阳线</td><td>5-8%</td><td>3-5%</td></tr>
 </tbody></table></section></div>
 <div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p style="color:#fb923c;margin-top:.3rem">★ 7日 = 近7日内已推荐标的（橙色高亮行），可持续关注但不建议重复建仓</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
