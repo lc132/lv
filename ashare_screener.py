@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.8.7
-36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 67条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 10项漏洞修复
+A股每日盘前短线标的智能筛选 v6.8.8
+36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 67条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 11项漏洞修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.8.7"
+BUILTIN_VERSION = "v6.8.8"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -489,7 +489,7 @@ def step10A_fetch_all_stocks():
     # Tier 1: 腾讯API (v6.6.28 一级数据源)
     try:
         codes = []
-        for i in range(600000, 606000): codes.append(f"sh{i}")
+        for i in range(600000, 610000): codes.append(f"sh{i}")  # v6.8.8: 扩展至610000覆盖预留段
         for i in range(1, 5000): codes.append(f"sz{i:06d}")
         for i in range(300000, 302000): codes.append(f"sz{i}")
         # 注：688xxx(科创板)未纳入拉取，step11硬排除科创板，拉取也无意义
@@ -949,10 +949,10 @@ def step11_hard_exclude(candidates, all_holdings_codes):
         elif c.get('name', '').startswith('ST') or c.get('name', '').startswith('*ST'): reason = "ST/*ST"
         elif chg > 7: reason = f"涨幅>7%"
         elif close <= 0: reason = "停牌"
-        # v6.8.3: 补充硬排除条件
-        elif c.get('pe') is not None and c.get('pe', 0) < 0: reason = "PE负值(亏损)"
-        elif c.get('market_cap') is not None and c.get('market_cap', 0) < 10: reason = "市值<10亿"
-        elif c.get('amount') is not None and c.get('amount', 0) < 1000: reason = "成交额<1000万"
+        # v6.8.8: 修复字段名 — pe→pe_ttm, market_cap→total_cap, amount阈值1000→10_000_000
+        elif c.get('pe_ttm') is not None and c.get('pe_ttm', 0) < 0: reason = "PE负值(亏损)"
+        elif c.get('total_cap') is not None and c.get('total_cap', 0) < 1_000_000_000: reason = "市值<10亿"
+        elif c.get('amount') is not None and c.get('amount', 0) < 10_000_000: reason = "成交额<1000万"
         if reason: er[reason.split('(')[0]] += 1; excluded.append(c)
         else: passed.append(c)
     # 统计7日内推荐数量（仅统计通过且被标注的）
@@ -1007,8 +1007,10 @@ def step13_strategy_match(candidates):
         close = c.get('close', 0); op = c.get('open', 0)
         high = c.get('high', 0); low = c.get('low', 0)
         s = None; reason = ""; score = 0
-        # ── A 动量延续 ──
-        if market_condition != "弱市" and 3 <= chg <= 7:
+        # ── A 动量延续 (v6.8.8: 极端上涨市关闭+读取strategy_a_weak_market参数) ──
+        a_weak_closed = params.get('strategy_a_weak_market', 'closed') == 'closed'
+        a_extreme = market_condition == "强市(极端上涨/降仓防追高)"
+        if (not a_weak_closed or market_condition != "弱市") and not a_extreme and 3 <= chg <= 7:
             if vr is not None and 1.5 <= vr <= 3.0:
                 s = "A"; reason = f"动量延续:涨{chg:.1f}%+量比{vr:.1f}"; score = 10
                 # v6.6.38: 假突破过滤 — 上影线:下影线>2:1 → 降置信减3分
@@ -1044,8 +1046,9 @@ def step13_strategy_match(candidates):
                 s = "E"; reason = f"资金埋伏:涨{chg:.1f}%+主力流入{mi:.0f}万"; score = 6
             elif mi is None and vr is not None and vr >= 1.2 and to is not None and to >= 2 and close > op:
                 s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%"; score = 5
-        # ── F 北向资金（E→F升级：主力>5000万+持续≥3日）──
-        if s == "E":
+        # ── F 北向资金（v6.8.8: main_inflow全数据源为None→死码，条件永久禁用）──
+        # 待接入主力资金流向API后删除 "and False" 即可激活
+        if s == "E" and False:
             mi = c.get('main_inflow')
             if mi is not None and mi > 5000:
                 nb_days = 0
@@ -1077,7 +1080,7 @@ def step13_strategy_match(candidates):
                     is_hammer = True
             vr_ok = (vr is not None and vr < 0.5) or (vr is None and to is not None and to < 0.5)
             if vr_ok and (is_hammer or (close > 0 and body / close < 0.005)):
-                s = "H"; reason = f"地量见底:涨{chg:.1f}%+量比{vr or 0:.1f}+锤子线"; score = 5
+                s = "H"; reason = f"地量见底:{chg:+.1f}%+量比{vr or 0:.1f}+锤子线"; score = 5
         if s: c['strategy'] = s; c['score'] = score; matched.append(c)
     log_alert("INFO", "策略匹配", f"匹配{len(matched)}只")
     return matched
@@ -1147,12 +1150,12 @@ def step18_news_screening(candidates):
     
     excluded = []
     passed = []
-    # 仅对评分前20只做个体搜索
+    # v6.8.8: 仅对评分前20只做个体搜索，保持原始策略优先级排序
     search_limit = min(20, len(candidates))
-    sorted_cand = sorted(candidates, key=lambda c: -c.get('score', 0))
+    top20_codes = {c['code'] for c in sorted(candidates, key=lambda c: -c.get('score', 0))[:search_limit]}
     
-    for i, c in enumerate(sorted_cand):
-        if i >= search_limit:
+    for c in candidates:
+        if c.get('code', '') not in top20_codes:
             passed.append(c)
             continue
         
@@ -1458,7 +1461,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
                 seen = set(); uniq_s = []
                 for s_ in strats:
                     if s_ not in seen: seen.add(s_); uniq_s.append(s_)
-                r7d = f"{r7d}({','.join(uniq_s)})"
+                r7d = f"{r7d} ({','.join(uniq_s)})"
             url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
             lines.append(f"| {idx} | {s} | [{name}]({url}) | {code} | {ind} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} |")
     sd = Counter(c.get('strategy') for c in candidates)
@@ -1518,7 +1521,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             seen = set(); uniq_s = []
             for s_ in strats:
                 if s_ not in seen: seen.add(s_); uniq_s.append(s_)
-            r7d_html = f"{r7d_html} ({','.join(uniq_s)})"
+            r7d_html = f"{r7d_html} ({','.join(uniq_s)})"  # v6.8.8: 与MD格式统一
         chg_cls = "up" if chg >= 0 else "down"
         conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
         scl = f"strat_{s.lower()}"
@@ -1698,6 +1701,12 @@ def step26_github_sync(mp, hd, candidates):
                     if len(d) == 8 and d < c15:
                         pf = os.path.join(rd, f)
                         if os.path.exists(pf): os.remove(pf)
+            # v6.8.8: 清理超过15天的HTML报告目录
+            if f.startswith('ashare-screening-'):
+                d = f.replace('ashare-screening-', '')
+                if len(d) == 8 and d < c15:
+                    pf = os.path.join(rd, f)
+                    if os.path.exists(pf): shutil.rmtree(pf, ignore_errors=True)
         shutil.copy(mp, os.path.join(rd, f"短线标的_{prediction_date}.md"))
         hn = f"ashare-screening-{pred_yyyymmdd}"
         dst = os.path.join(rd, hn)
@@ -1827,7 +1836,7 @@ def main():
     print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael); asig = len(asl)
     print("\n[步骤13] 策略匹配..."); sm = step13_strategy_match(asl); astr = len(sm)
     print("\n[步骤14] 评分..."); scored = step14_scoring(sm)
-    print("\n[步骤16] 综合评分..."); ranked = step16_comprehensive_score(scored)
+    print("\n[步骤15·16] 综合评分+平局打破..."); ranked = step16_comprehensive_score(scored)
     print("\n[步骤17] 行业限制..."); ail = step17_industry_limit(ranked); aind = len(ail)
     print("\n[步骤18] 新闻筛查..."); ail, anew = step18_news_screening(ail)
     print("\n[步骤19] 降级..."); final = step19_shortfall_handling(ail); fc = len(final)
