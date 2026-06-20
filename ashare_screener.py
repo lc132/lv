@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.8.6
-36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 67条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 17项漏洞修复
+A股每日盘前短线标的智能筛选 v6.8.7
+36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 67条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 10项漏洞修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.8.6"
+BUILTIN_VERSION = "v6.8.7"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
 file_version = BUILTIN_VERSION; params = {}
 market_condition = "震荡"; position_pct = 55
 index_data = {}  # 三大指数行情(供HTML使用)
+MIN_POSITION_PCT = 20  # v6.8.7: 全局仓位下限
 
 def _load_credential(env_key, file_path, fallback=""):
     if env_key in os.environ: return os.environ[env_key]
@@ -228,7 +229,6 @@ def step1_holiday_check():
         return True  # 数据日节假日→跳过
     if prediction_date in h:
         # prediction_date是节假日，推进到下一个交易日
-        from datetime import timedelta
         old_pred = prediction_date
         pd_dt = datetime.strptime(prediction_date, '%Y-%m-%d')
         for _ in range(10):
@@ -251,8 +251,8 @@ def step2_extreme_market():
     sh = idx.get("sh000001", {})
     cur = sh.get("price", 0); chg = sh.get("change_pct", 0)
     log_alert("INFO", "极端行情", f"上证{cur:.0f} 涨跌{chg:.2f}%")
-    if chg < -3: return True
-    if chg > 3: position_pct = 30; market_condition = "强市(动量延续)"
+    if chg <= -3: return True
+    if chg >= 3: position_pct = 30; market_condition = "强市(极端上涨/降仓防追高)"
     return False
 
 # ============================================================
@@ -279,7 +279,8 @@ def step3_external_markets():
         if all_down: position_pct = min(position_pct, 30); market_condition = "弱市(美股暴跌)"
     except Exception: pass
 
-def step3A_premarket_futures():
+def step3A_domestic_index_check():
+    """v6.8.7: 原名step3A_premarket_futures，实际使用深证成指作为大盘强弱代理指标"""
     global position_pct, market_condition
     try:
         idx = fetch_tencent_index(["sz399001"])
@@ -287,11 +288,11 @@ def step3A_premarket_futures():
         sz = idx.get("sz399001", {})
         chg = sz.get("change_pct", 0)
         if chg < -1:
-            log_alert("WARNING", "外围期货", f"深成指跌{chg:.1f}%>1%，外围偏空降档")
-            position_pct = max(position_pct - 15, 25)
+            log_alert("WARNING", "大盘代理", f"深成指跌{chg:.1f}%>1%，偏空降档")
+            position_pct = max(position_pct - 15, MIN_POSITION_PCT)
             if market_condition == "强市": market_condition = "震荡"
             elif market_condition == "震荡": market_condition = "弱市"
-    except Exception: log_alert("INFO", "外围期货", "数据不可得，跳过")
+    except Exception: log_alert("INFO", "大盘代理", "数据不可得，跳过")
 
 # ============================================================
 # 步骤4：持仓行情同步（腾讯API）
@@ -475,7 +476,7 @@ def step8_market_environment():
     if idx:
         sh = idx.get("sh000001", {})
         chg = sh.get("change_pct", 0)
-        if chg > 1: market_condition = "强市"; position_pct = 70
+        if chg > 1: market_condition = "强市"; position_pct = 75
         elif chg < -1: market_condition = "弱市"; position_pct = 35
         else: market_condition = "震荡"; position_pct = 55
     else: market_condition = "震荡"; position_pct = 55
@@ -1274,10 +1275,17 @@ def step16_comprehensive_score(candidates):
     return candidates
 
 def step19_shortfall_handling(candidates):
-    """v6.8.5: 数值比较替代字符串比较——1只≥12分(★★), 2只≥6分(★)"""
-    if len(candidates) >= 3: return candidates
-    elif len(candidates) == 2: return [c for c in candidates if c.get('score', 0) >= 6]
-    elif len(candidates) == 1: return [c for c in candidates if c.get('score', 0) >= 12]
+    """v6.8.7: 数值比较，丢弃时记录日志"""
+    total = len(candidates)
+    if total >= 3: return candidates
+    elif total == 2:
+        result = [c for c in candidates if c.get('score', 0) >= 6]
+        if len(result) < total: log_alert("INFO", "降级", f"丢弃{total - len(result)}/2只因评分<6(★)")
+        return result
+    elif total == 1:
+        result = [c for c in candidates if c.get('score', 0) >= 12]
+        if len(result) < total: log_alert("INFO", "降级", f"丢弃1只因评分<12(★★)")
+        return result
     return []
 
 # ============================================================
@@ -1451,7 +1459,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
                 for s_ in strats:
                     if s_ not in seen: seen.add(s_); uniq_s.append(s_)
                 r7d = f"{r7d}({','.join(uniq_s)})"
-            url = f"https://quote.eastmoney.com/concept/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/concept/sz{code}.html"
+            url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
             lines.append(f"| {idx} | {s} | [{name}]({url}) | {code} | {ind} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} |")
     sd = Counter(c.get('strategy') for c in candidates)
     sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底'}
@@ -1515,7 +1523,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
         scl = f"strat_{s.lower()}"
         r7_cls = "recent-7d" if c.get('_recent_7d') else ""
-        url = f"https://quote.eastmoney.com/concept/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/concept/sz{code}.html"
+        url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
         rows_html += f"""<tr class="{scl} {r7_cls}"><td>{idx}</td><td><span class="badge {scl}">{s}</span></td>
         <td><a href="{url}" target="_blank">{html.escape(name)}</a></td><td>{code}</td><td>{ind}</td>
         <td class="{chg_cls}">{chg:+.2f}%</td><td>{op:.2f}</td><td>{close:.2f}</td>
@@ -1538,8 +1546,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         bp = cnt / mx * 100
         bar_html += f'<div class="bar-row"><div class="bar-label">{r}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%">{cnt}</div></div></div>'
     
-    stages = [("原始标的池", total_raw), ("硬排除(31项)", ae), ("信号过滤(14项)", asig),
-              ("策略匹配(8策略)", astr), ("行业+同策略限制", aind), ("最终推荐", fc)]
+    stages = [("原始标的池", total_raw), ("硬排除(11项)", ae), ("信号过滤(8项)", asig),
+              ("策略匹配(8策略)", astr), ("行业+同策略限制", aind), ("新闻筛查", aind - anew), ("最终推荐", fc)]
     max_f = max(s[1] for s in stages)
     funnel_html = ""
     for i, (name, count) in enumerate(stages):
@@ -1641,7 +1649,7 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 <tr><td><span class="badge strat_e">E资金埋伏</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>3000万</td><td>5-8%</td><td>3-5%</td></tr>
 <tr><td><span class="badge strat_f">F北向资金</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>5000万+近5日持续≥3日</td><td>3-5%</td><td>3-5%</td></tr>
 <tr><td><span class="badge strat_g">G横盘突破</span></td><td style="white-space:normal;word-break:break-all">涨2-3%+振幅1.5-6%+量比>1.5阳线突破</td><td>8-10%</td><td>5-8%</td></tr>
-<tr><td><span class="badge strat_h">H地量见底</span></td><td style="white-space:normal;word-break:break-all">涨-3~1%+量比<0.5+锤子线/十字星阳线</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_h">H地量见底</span></td><td style="white-space:normal;word-break:break-all">跌0~3%+量比<0.5+锤子线/十字星阳线</td><td>5-8%</td><td>3-5%</td></tr>
 </tbody></table></section></div>
 <div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p style="color:#fb923c;margin-top:.3rem">★ 7日 = 近7日内已推荐标的（橙色高亮行），可持续关注但不建议重复建仓</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
     
@@ -1785,7 +1793,7 @@ def main():
     if step2_extreme_market(): print("  极端行情跳过"); return
     
     print("\n[步骤3] 外围市场..."); step3_external_markets()
-    print("\n[步骤3A] 外围期货..."); step3A_premarket_futures()
+    print("\n[步骤3A] 大盘代理..."); step3A_domestic_index_check()
     
     print("\n[步骤4] 持仓行情..."); holdings = step4_holdings_sync()
     ahc = set(h.get('code') for h in holdings if h.get('code'))
