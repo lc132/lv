@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.8.5
-36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 67条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 22项漏洞修复
+A股每日盘前短线标的智能筛选 v6.8.6
+36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 67条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 17项漏洞修复
 """
-import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
+import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.8.5"
+BUILTIN_VERSION = "v6.8.6"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -22,7 +22,7 @@ def _load_credential(env_key, file_path, fallback=""):
     if os.path.exists(file_path):
         try:
             with open(file_path, 'r') as f: return f.read().strip()
-        except: pass
+        except Exception: pass
     return fallback
 
 GITHUB_TOKEN = _load_credential("GITHUB_TOKEN", "/workspace/.github_token")
@@ -32,10 +32,7 @@ DEFAULT_PARAMS = {
     "search_budget": 25, "northbound_threshold": 3000, "consecutive_weeks": 2,
     "win_rate_drop_threshold": 10, "limit_down_threshold": 100,
     "max_adjust_params": 3, "confidence_position_enabled": True,
-    "max_holding_days": 5, "circuit_breaker_threshold_pct": 3.0,
-    "strategy_concentration_pct": 30, "do_t_success_reset_count": 3,
-    "conversion_rate_window_days": 10, "conversion_rate_threshold": 0.3,
-    "conversion_rate_restore": 0.6, "conversion_rate_consecutive_days": 3,
+    "strategy_concentration_pct": 30,
     "data_tier_l2_skip_on_unavailable": True,
     "data_tier_l3_downgrade_to_signal": True, "strategy_a_weak_market": "closed"
 }
@@ -97,7 +94,7 @@ def fetch_tencent_index(codes):
                 chg = round((price - prev) / prev * 100, 2) if prev > 0 else 0
                 chg_amt = round(price - prev, 2)  # 涨跌点数
                 result[code] = {"name": raw[1], "price": price, "prev_close": prev, "change_pct": chg, "change_amount": chg_amt}
-            except: pass
+            except Exception: pass
     except Exception as e: log_alert("WARNING", "腾讯指数", f"获取失败: {str(e)[:60]}")
     return result
 
@@ -139,7 +136,7 @@ def fetch_tencent_stocks(codes):
                         "total_cap": _parse_tencent_field(raw, 44, None) * 1e8 if _parse_tencent_field(raw, 44, None) else None,  # 亿元→元
                         "main_inflow": None,  # 腾讯基础API不提供主力资金流向
                     })
-                except: pass
+                except Exception: pass
             time.sleep(0.05)
         except Exception as e: log_alert("WARNING", "腾讯个股", f"批次失败: {str(e)[:40]}")
     return result
@@ -172,7 +169,7 @@ def step0_get_beijing_time():
                 dt_str = date_part + '.' + frac[:6]
             beijing_now = datetime.fromisoformat(dt_str)
             break
-        except: continue
+        except Exception: continue
     if beijing_now is None:
         beijing_now = datetime.now()
         log_alert("WARNING", "北京时间", "所有API不可达，降级为系统时间(假设Asia/Shanghai)")
@@ -280,7 +277,7 @@ def step3_external_markets():
             log_alert("WARNING", "外围市场", f"新浪API {api_failures}/3 不可达，跳过美股检测")
             all_down = False  # 数据不可达时不触发弱市
         if all_down: position_pct = min(position_pct, 30); market_condition = "弱市(美股暴跌)"
-    except: pass
+    except Exception: pass
 
 def step3A_premarket_futures():
     global position_pct, market_condition
@@ -294,7 +291,7 @@ def step3A_premarket_futures():
             position_pct = max(position_pct - 15, 25)
             if market_condition == "强市": market_condition = "震荡"
             elif market_condition == "震荡": market_condition = "弱市"
-    except: log_alert("INFO", "外围期货", "数据不可得，跳过")
+    except Exception: log_alert("INFO", "外围期货", "数据不可得，跳过")
 
 # ============================================================
 # 步骤4：持仓行情同步（腾讯API）
@@ -335,8 +332,9 @@ def step4_holdings_sync():
 def step4A_doT_eval(holdings):
     recs = []
     for h in holdings:
-        pnl = h.get('pnl_pct', 0)
-        if pnl > -5: f = "观望"
+        pnl = h.get('pnl_pct')
+        if pnl is None: f = "数据缺失"
+        elif pnl > -5: f = "观望"
         elif -10 < pnl <= -5: f = "True"
         elif -15 < pnl <= -10: f = "谨慎"
         else: f = "False"
@@ -396,7 +394,7 @@ def step4C_crisis_check(holdings):
             if code.startswith("8") and len(str(code)) == 6: triggers.append("北交所")
             if triggers:
                 m = f"⚠️ {code} {name} 触发L1: {', '.join(triggers)}"
-                alerts.append(m); log_alert("WARNING", "持仓危机", m)
+                alerts.append(m); log_alert("INFO", "持仓L1", m)  # v6.8.6: L1条件降级为INFO
     return alerts
 
 # ============================================================
@@ -472,7 +470,7 @@ def step8_market_environment():
                     log_alert("INFO", "大盘环境", f"{market_condition} 仓位{position_pct}%")
                     return
                 api.disconnect()
-    except: pass
+    except Exception: pass
     # 降级：根据涨跌判断
     if idx:
         sh = idx.get("sh000001", {})
@@ -541,15 +539,16 @@ def step10A_fetch_all_stocks():
                             "turnover": 0, "amplitude": amplitude_v,
                             "volume_ratio": None, "main_inflow": None, "total_cap": None,
                         })
-                    except: continue
+                    except Exception: continue
                 if i % (batch_size * 10) == 0: time.sleep(0.02)
-            except: continue
+            except Exception: continue
         log_alert("INFO", "行情采集", f"新浪(二级) 成功拉取 {len(stocks)} 只")
         return stocks, "sina"
     except Exception as e:
         log_alert("ERROR", "行情采集", f"新浪二级也失败: {str(e)[:60]}")
     
     # Tier 3: pytdx
+    api = None
     try:
         from pytdx.hq import TdxHq_API
         api = TdxHq_API()
@@ -568,20 +567,23 @@ def step10A_fetch_all_stocks():
                         code = q.get('code', ''); name = q.get('name', '')
                         cur = q.get('price', 0); prev = q.get('last_close', 0)
                         if cur <= 0 or prev <= 0: continue
-                        qh = q.get('high', cur); ql = q.get('low', cur)
+                        qh = q.get('high', cur); qlow = q.get('low', cur)
                         stocks.append({"code": code, "name": name,
                             "open": q.get('open', cur), "close": cur,
                             "change_pct": round((cur - prev) / prev * 100, 2),
-                            "high": qh, "low": ql, "prev_close": prev,
+                            "high": qh, "low": qlow, "prev_close": prev,
                             "amount": q.get('amount', 0),
-                            "turnover": 0, "amplitude": round((qh - ql) / prev * 100, 2) if prev > 0 else 0,
+                            "turnover": 0, "amplitude": round((qh - qlow) / prev * 100, 2) if prev > 0 else 0,
                             "volume_ratio": None, "main_inflow": None, "total_cap": None})
-                except: pass
-        api.disconnect()
+                except Exception: pass
         return stocks, "pytdx"
     except Exception as e:
         log_alert("ERROR", "行情采集", f"三级数据源均不可达")
         raise RuntimeError("行情数据获取失败")
+    finally:
+        if api is not None:
+            try: api.disconnect()
+            except Exception: pass
 
 # ==========================================================
 # 步骤10B：行业查表 v6.6.29 （全代码段覆盖，零未知）
@@ -1258,7 +1260,7 @@ def step16_comprehensive_score(candidates):
         amp = c.get('amplitude', 0) or 0
         ma_bonus = 0.05 if amp < 3 and vr > 1.2 else 0
         code = c.get('code', '')
-        c['_tie_score'] = vs * 0.30 + ts * 0.30 + cs * 0.30 + (1.0 - so.get(s, 99) / 10.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus
+        c['_tie_score'] = max(0, vs * 0.30 + ts * 0.30 + cs * 0.30 + (1.0 - so.get(s, 99) / 10.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
     # v6.6.46: 五级二次评估 — _tie_score相同时，按量比→换手率→涨跌幅继续打破平局
     # SKILL.md五级: ①策略优先级(已独立排序键) ②量比高者优先 ③换手率中等优先(5-15%最佳) ④涨跌幅按策略 ⑤板块热度(已入_tie_score)
     def _tie_key(c):
@@ -1299,7 +1301,7 @@ def calc_entry_price(c):
         tr = max(high - low, abs(high - prev), abs(low - prev))
         atr_pct = tr / prev  # ATR百分比（日内波动率）
     else:
-        atr_pct = max(amp / 100, 0.015) if amp else 0.02
+        atr_pct = max((amp or 0) / 100, 0.015) if amp is not None else 0.02
     
     # 收盘在当日振幅的位置 (0=最低, 1=最高)
     if high > low and high > 0:
@@ -1515,7 +1517,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         r7_cls = "recent-7d" if c.get('_recent_7d') else ""
         url = f"https://quote.eastmoney.com/concept/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/concept/sz{code}.html"
         rows_html += f"""<tr class="{scl} {r7_cls}"><td>{idx}</td><td><span class="badge {scl}">{s}</span></td>
-        <td><a href="{url}" target="_blank">{name}</a></td><td>{code}</td><td>{ind}</td>
+        <td><a href="{url}" target="_blank">{html.escape(name)}</a></td><td>{code}</td><td>{ind}</td>
         <td class="{chg_cls}">{chg:+.2f}%</td><td>{op:.2f}</td><td>{close:.2f}</td>
         <td>{amp:.2f}%</td><td>{r7d_html}</td><td>{score}</td><td class="conf {conf_cls}">{conf}</td>
         <td class="entry">{entry:.2f}</td><td>{sl:.2f}</td><td>{tp:.2f}</td></tr>"""
@@ -1758,7 +1760,7 @@ def update_data_source_monitor(ds):
         if cf == 1: log_alert("WARNING", "数据源监控", f"腾讯一级第1次不可达，降级至{ds}")
         elif cf >= 10: log_alert("CRITICAL", "数据源监控", f"腾讯一级连续{cf}次不可达！")
     monitor["last_source"] = ds
-    monitor["history"].append({"date": data_date, "source": ds, "count": 0, "success": True})
+    monitor["history"].append({"date": data_date, "source": ds, "success": ds == "tencent"})
     if len(monitor["history"]) > 30: monitor["history"] = monitor["history"][-30:]
     safe_write_json("/workspace/数据源监控.json", monitor)
 
