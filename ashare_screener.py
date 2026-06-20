@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.1
-36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 全行业覆盖 | 12策略匹配 | MACD+RSI+K/L策略
+A股每日盘前短线标的智能筛选 v6.9.2
+36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 全行业覆盖 | 15策略匹配 | KDJ+BOLL+涨停回调
 """
 import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.1"
+BUILTIN_VERSION = "v6.9.2"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -915,8 +915,9 @@ HARDCODED_INDUSTRY = {
 # 步骤10C：历史K线批量拉取（v6.9.0: 支撑均线/形态策略）
 # ============================================================
 def step10C_fetch_klines(candidates):
-    """v6.9.1: 扩展MACD/RSI/20日高低点，支撑技术指标+形态策略
-    返回: {code: {ma5,ma10,ma20,dif,dea,macd_hist,rsi14,high20,low20,days_listed,closes,highs,lows}}
+    """v6.9.2: 扩展KDJ+布林带+涨停标记，支撑完整技术指标体系
+    返回: {code: {ma5,ma10,ma20,dif,dea,macd_hist,rsi14,k,d,j,boll_upper,boll_mid,boll_lower,
+                 high20,low20,days_listed,limit_up_days,closes,highs,lows,volumes}}
     """
     kline_data = {}
     try:
@@ -937,13 +938,14 @@ def step10C_fetch_klines(candidates):
                 closes = [b['close'] for b in bars]
                 highs = [b['high'] for b in bars]
                 lows = [b['low'] for b in bars]
+                volumes = [b.get('volume', 0) for b in bars]
                 ma5 = sum(closes[-5:]) / 5 if len(closes) >= 5 else 0
                 ma10 = sum(closes[-10:]) / 10 if len(closes) >= 10 else 0
                 ma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else 0
                 # MACD (12,26,9)
                 ema12 = closes[0]; ema26 = closes[0]
                 difs = [0.0]
-                for i, pr in enumerate(closes[1:], 1):
+                for pr in closes[1:]:
                     ema12 = ema12 * 11/13 + pr * 2/13
                     ema26 = ema26 * 25/27 + pr * 2/27
                     difs.append(ema12 - ema26)
@@ -961,9 +963,33 @@ def step10C_fetch_klines(candidates):
                     avg_gain = sum(gains[-14:]) / 14
                     avg_loss = sum(losses[-14:]) / 14
                     rsi14 = 100 - 100 / (1 + avg_gain / avg_loss) if avg_loss > 0 else 100
+                # KDJ(9,3,3)
+                k_val = 50.0; d_val = 50.0; j_val = 50.0
+                if len(closes) >= 9:
+                    h9 = max(highs[-9:]); l9 = min(lows[-9:])
+                    if h9 > l9:
+                        rsv = (closes[-1] - l9) / (h9 - l9) * 100
+                        k_val = 2/3 * 50 + 1/3 * rsv  # 简化: 用50作为初始值
+                        d_val = 2/3 * 50 + 1/3 * k_val
+                        j_val = 3 * k_val - 2 * d_val
+                # 布林带(20,2)
+                boll_mid = ma20
+                boll_upper = boll_mid; boll_lower = boll_mid
+                if len(closes) >= 20 and boll_mid > 0:
+                    variance = sum((c - boll_mid) ** 2 for c in closes[-20:]) / 20
+                    std = variance ** 0.5
+                    boll_upper = boll_mid + 2 * std
+                    boll_lower = boll_mid - 2 * std
                 # 20日高低点
                 high20 = max(highs[-20:]) if len(highs) >= 20 else max(highs)
                 low20 = min(lows[-20:]) if len(lows) >= 20 else min(lows)
+                # 近10日涨停天数（涨幅≥9.5%且收盘≈最高价）
+                limit_up_days = 0
+                for i in range(max(0, len(closes) - 10), len(closes) - 1):
+                    if i > 0 and closes[i-1] > 0:
+                        day_chg = (closes[i] - closes[i-1]) / closes[i-1]
+                        if day_chg >= 0.095 and highs[i] > 0 and closes[i] >= highs[i] * 0.98:
+                            limit_up_days += 1
                 # 上市天数
                 first_date = bars[0].get('datetime', '') or bars[0].get('date', '')
                 days_listed = 999
@@ -975,14 +1001,16 @@ def step10C_fetch_klines(candidates):
                 kline_data[code] = {
                     'ma5': ma5, 'ma10': ma10, 'ma20': ma20,
                     'dif': dif, 'dea': dea_val, 'macd_hist': macd_hist,
-                    'rsi14': rsi14, 'high20': high20, 'low20': low20,
-                    'days_listed': days_listed,
-                    'closes': closes, 'highs': highs, 'lows': lows
+                    'rsi14': rsi14, 'k': k_val, 'd': d_val, 'j': j_val,
+                    'boll_upper': boll_upper, 'boll_mid': boll_mid, 'boll_lower': boll_lower,
+                    'high20': high20, 'low20': low20,
+                    'days_listed': days_listed, 'limit_up_days': limit_up_days,
+                    'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes
                 }
             except Exception: kline_data[code] = {}
         try: api.disconnect()
         except: pass
-        log_alert("INFO", "K线拉取", f"获取{len(kline_data)}只历史K线(MACD+RSI)")
+        log_alert("INFO", "K线拉取", f"获取{len(kline_data)}只历史K线(KDJ+BOLL)")
     except Exception as e:
         log_alert("WARNING", "K线拉取", f"pytdx不可用: {str(e)[:60]}")
     return kline_data
@@ -1046,7 +1074,7 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None):
 # 步骤12：信号过滤
 # ============================================================
 def step12_signal_filter(candidates, kline_data=None):
-    """v6.9.1: 新增MACD顶背离+RSI超买（11项）"""
+    """v6.9.2: 新增缩量反弹+KDJ死叉（13项）"""
     if kline_data is None: kline_data = {}
     passed, excluded = [], []
     for c in candidates:
@@ -1080,7 +1108,7 @@ def step12_signal_filter(candidates, kline_data=None):
             ma5 = kd.get('ma5', 0); ma10 = kd.get('ma10', 0); ma20 = kd.get('ma20', 0)
             if ma5 > 0 and ma10 > 0 and ma20 > 0 and ma5 < ma10 < ma20:
                 reason = "均线空头排列"
-        # 10. MACD顶背离（v6.9.1: 股价近20日新高但DIF未新高）
+        # 10. MACD顶背离
         if not reason:
             high20 = kd.get('high20', 0); dif = kd.get('dif', 0)
             closes_h = kd.get('closes', [])
@@ -1094,17 +1122,28 @@ def step12_signal_filter(candidates, kline_data=None):
                 dif_20d_max = max(difs_list[-20:]) if len(difs_list) >= 20 else dif
                 if high >= high20 * 0.995 and dif < dif_20d_max * 0.9:
                     reason = "MACD顶背离"
-        # 11. RSI超买（v6.9.1: RSI(14)>80，短期回调风险）
+        # 11. RSI超买（RSI(14)>80）
         if not reason:
             rsi14 = kd.get('rsi14', 50)
             if rsi14 > 80: reason = f"RSI超买({rsi14:.0f})"
+        # 12. 缩量反弹（v6.9.2: 连续3日量能递减+当日反弹>2%）
+        if not reason and chg > 2:
+            vols = kd.get('volumes', [])
+            if len(vols) >= 4 and vr is not None and vr < 0.6:
+                if vols[-4] > vols[-3] > vols[-2] and vols[-1] > 0:
+                    reason = "缩量反弹"
+        # 13. KDJ高位死叉（v6.9.2: J值>100后下穿K/D线）
+        if not reason:
+            j_val = kd.get('j', 50); k_val = kd.get('k', 50)
+            if j_val > 100 and j_val < k_val:
+                reason = f"KDJ死叉(J={j_val:.0f})"
         if reason: excluded.append(c)
         else: passed.append(c)
     log_alert("INFO", "信号过滤", f"通过{len(passed)}只 排除{len(excluded)}只")
     return passed, excluded
 
 # ============================================================
-# 步骤13：十二策略匹配（ABCDEFGHIJKL按优先级顺序，v6.9.1新增K/L）
+# 步骤13：十五策略匹配（ABCDEFGHIJKLMNOMNO按优先级顺序，v6.9.2新增M/N/O）
 # ============================================================
 def step13_strategy_match(candidates, kline_data=None):
     if kline_data is None: kline_data = {}
@@ -1244,6 +1283,44 @@ def step13_strategy_match(candidates, kline_data=None):
                         vr_ok = (vr is not None and vr >= 1.2) or (to is not None and to >= 3)
                         if vr_ok:
                             s = "L"; reason = f"黄金坑:跌{abs(drop):.1%}→反弹{rebound:.1%}+放量+收阳"; score = 9
+        # ── M 涨停回调（v6.9.2: 近5日曾涨停→回调至50-62%位置+缩量企稳）──
+        if not s:
+            kd = kline_data.get(c.get('code', ''), {})
+            if kd.get('limit_up_days', 0) >= 1 and close > 0:
+                closes_h = kd.get('closes', [])
+                highs_h = kd.get('highs', [])
+                # 找到最近一次涨停的位置
+                for i in range(len(closes_h) - 2, max(0, len(closes_h) - 7), -1):
+                    if i > 0 and closes_h[i-1] > 0 and highs_h[i] > 0:
+                        day_chg = (closes_h[i] - closes_h[i-1]) / closes_h[i-1]
+                        if day_chg >= 0.095 and closes_h[i] >= highs_h[i] * 0.98:
+                            limit_price = closes_h[i]
+                            pullback_pct = (limit_price - close) / limit_price if limit_price > 0 else 0
+                            # 回调至涨停价的50%-62%位置
+                            if 0.05 <= pullback_pct <= 0.15 and close >= op:
+                                if vr is not None and vr < 0.7:
+                                    s = "M"; reason = f"涨停回调:涨停{day_chg:.1%}→回调{pullback_pct:.1%}+缩量+收阳"; score = 7
+                                    break
+        # ── N 新高突破（v6.9.2: 收盘价=20日新高+放量阳线）──
+        if not s:
+            kd = kline_data.get(c.get('code', ''), {})
+            high20 = kd.get('high20', 0)
+            if high20 > 0 and close >= high20 * 0.995 and close > op:
+                if vr is not None and vr >= 1.5:
+                    s = "N"; reason = f"新高突破:价{close:.2f}=20日高+量比{vr:.1f}+阳线"; score = 9
+                elif vr is None and to is not None and to >= 3:
+                    s = "N"; reason = f"新高突破(代理):价{close:.2f}=20日高+换手{to:.1f}%"; score = 8
+        # ── O 强势股回踩均线（v6.9.2: 60日涨幅>20%+回踩MA20±1%+缩量收阳）──
+        if not s:
+            kd = kline_data.get(c.get('code', ''), {})
+            closes_h = kd.get('closes', [])
+            ma20 = kd.get('ma20', 0)
+            if len(closes_h) >= 60 and ma20 > 0 and close > 0:
+                rally_60d = (close - closes_h[-60]) / closes_h[-60] if closes_h[-60] > 0 else 0
+                dist_to_ma20 = (close - ma20) / ma20  # 距MA20的距离
+                if rally_60d > 0.20 and -0.01 <= dist_to_ma20 <= 0.01 and close >= op:
+                    if vr is not None and vr < 0.7:
+                        s = "O"; reason = f"回踩均线:涨{rally_60d:.1%}→回踩MA20({dist_to_ma20:+.1%})+缩量+收阳"; score = 8
         if s: c['strategy'] = s; c['score'] = score; matched.append(c)
     log_alert("INFO", "策略匹配", f"匹配{len(matched)}只")
     return matched
@@ -1265,7 +1342,7 @@ def step14_scoring(candidates):
 
 def step17_industry_limit(candidates):
     # v6.6.46: 保留 step16 综合评分排序(_tie_score)，五级二次评估打破平局
-    so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11}
+    so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14}
     def _tie_key(c):
         vr = c.get('volume_ratio') or 0
         to = c.get('turnover') or 0
@@ -1309,7 +1386,8 @@ def step18_news_screening(candidates):
         '终止减持', '不减持', '解除质押', '回复', '整改完成', '撤销',
         '上调', '大幅增长', '扭亏', '摘帽', '恢复正常', '已消除',
         '不立案', '不处罚', '不予', '驳回', '和解', '撤回',
-        '募集资金', '增持', '回购', '承诺不'
+        '募集资金', '增持', '回购', '承诺不',
+        '减持完毕', '解除异常', '无违规'  # v6.9.2
     ]
     
     excluded = []
@@ -1395,11 +1473,11 @@ def step18_news_screening(candidates):
     return passed, nex
 
 def step16_comprehensive_score(candidates):
-    so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11}
-    # v6.6.38: 板块联动检测 — 同板块≥3只A/D/G/I/K → 板块加分
+    so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14}
+    # v6.6.38: 板块联动检测 — 同板块≥3只A/D/G/I/K/N → 板块加分
     sector_ad = defaultdict(list)
     for c in candidates:
-        if c.get('strategy') in ('A', 'D', 'G', 'I', 'K'):
+        if c.get('strategy') in ('A', 'D', 'G', 'I', 'K', 'N'):
             sector_ad[c.get('industry', '')].append(c)
     sector_bonus = {}
     for ind, clist in sector_ad.items():
@@ -1427,6 +1505,9 @@ def step16_comprehensive_score(candidates):
         elif s == 'J': cs = max(0, 1.0 - abs(chg + 5) / 8.0)   # J偏好回调至-5%附近
         elif s == 'K': cs = max(0, 1.0 - abs(chg - 1) / 4.0)   # K偏好回踩1%附近
         elif s == 'L': cs = max(0, 1.0 - abs(chg - 4) / 5.0)   # L偏好反弹4%附近
+        elif s == 'M': cs = max(0, 1.0 - abs(chg + 3) / 8.0)   # M偏好回调至-3%附近
+        elif s == 'N': cs = max(0, 1.0 - abs(chg - 3) / 3.0)   # N偏好突破3%附近
+        elif s == 'O': cs = max(0, 1.0 - abs(chg) / 1.5)       # O偏好回踩均线(0%附近)
         else: cs = 0.5
         # v6.6.38: 均线粘合发散增强 — 振幅<3%+量比>1.2 → 疑似粘合发散
         amp = c.get('amplitude', 0) or 0
@@ -1610,6 +1691,27 @@ def calc_entry_price(c):
             entry = close * 1.005
         return round(entry, 2)
     
+    elif strategy == 'M':
+        # 涨停回调(v6.9.2): 缩量回调企稳，次日平开
+        if low > 0 and close > low:
+            entry = low + (close - low) * 0.3
+        else:
+            entry = close * 0.998
+        return round(entry, 2)
+    
+    elif strategy == 'N':
+        # 新高突破(v6.9.2): 强势突破，次日惯性高开
+        if high > close and close > 0:
+            entry = close + (high - close) * 0.35
+        else:
+            entry = close * 1.005
+        return round(entry, 2)
+    
+    elif strategy == 'O':
+        # 回踩均线(v6.9.2): 均线支撑确认，次日平开
+        entry = close * 1.002
+        return round(entry, 2)
+    
     return round(close, 2)
 
 # ============================================================
@@ -1628,8 +1730,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
         "|------|------|------|------|",
         f"| ①原始标的池 | {total_raw} | - | 全市场活跃TOP500 |",
         f"| ②硬排除 | {ae} | {total_raw - ae} | 12项(持仓/科创/北交/低价/高价/ST/涨幅/停牌/PE/市值/成交额/上市天数) |",
-        f"| ③信号过滤 | {asig} | {ae - asig} | 11项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买) |",
-        f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKL十二策略 |",
+        f"| ③信号过滤 | {asig} | {ae - asig} | 13项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉) |",
+        f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKLMNO十二策略 |",
         f"| ⑤行业+同策略限制 | {aind} | {astr - aind} | 同行业≤3只+同策略≤30% |",
         f"| ⑥新闻筛查 | {aind - anew} | {anew} | Bing/东方财富双源利空检测 |",
         f"| ★最终推荐 | {len(candidates)} | {aind - anew - len(candidates)} | 评分门控+降级 |", "",
@@ -1662,9 +1764,9 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
             url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
             lines.append(f"| {idx} | {s} | [{name}]({url}) | {code} | {ind} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} |")
     sd = Counter(c.get('strategy') for c in candidates)
-    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑'}
+    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线'}
     lines.append("\n## 策略分布")
-    for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L']:
+    for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O']:
         if sd.get(s, 0) > 0: lines.append(f"- {s} {sn.get(s, '')}: {sd[s]}只")
     lines.append("\n## 硬排除 TOP5")
     for r, cnt in er.most_common(5): lines.append(f"- {r}: {cnt}只")
@@ -1681,8 +1783,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
     os.makedirs(hd, exist_ok=True)
     hp = f"{hd}/ashare-screening-{pred_yyyymmdd}.html"
     sd = Counter(c.get('strategy') for c in candidates)
-    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑'}
-    sc = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4', 'G': '#10b981', 'H': '#f97316', 'I': '#14b8a6', 'J': '#ef4444', 'K': '#a855f7', 'L': '#eab308'}
+    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线'}
+    sc = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4', 'G': '#10b981', 'H': '#f97316', 'I': '#14b8a6', 'J': '#ef4444', 'K': '#a855f7', 'L': '#eab308', 'M': '#f472b6', 'N': '#84cc16', 'O': '#38bdf8'}
     fc = len(candidates)
     
     # 指数卡片HTML
@@ -1733,7 +1835,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
     seg_html = ""; legend_html = ""
     total_m = sum(sd.values())
     if total_m > 0:
-        for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L']:
+        for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O']:
             cnt = sd.get(s, 0)
             if cnt > 0:
                 pct = cnt / total_m * 100
@@ -1746,8 +1848,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         bp = cnt / mx * 100
         bar_html += f'<div class="bar-row"><div class="bar-label">{r}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%">{cnt}</div></div></div>'
     
-    stages = [("原始标的池", total_raw), ("硬排除(12项)", ae), ("信号过滤(11项)", asig),
-              ("策略匹配(12策略)", astr), ("行业+同策略限制", aind), ("新闻筛查", aind - anew), ("最终推荐", fc)]
+    stages = [("原始标的池", total_raw), ("硬排除(12项)", ae), ("信号过滤(13项)", asig),
+              ("策略匹配(15策略)", astr), ("行业+同策略限制", aind), ("新闻筛查", aind - anew), ("最终推荐", fc)]
     max_f = max(s[1] for s in stages)
     funnel_html = ""
     for i, (name, count) in enumerate(stages):
@@ -1805,9 +1907,9 @@ td{{padding:.4rem .5rem;border-bottom:1px solid #334155;white-space:nowrap}}
 tr:hover{{background:#2d3b4f}}
 .badge{{padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:bold}}
 .strat_a{{background:#14532d;color:#22c55e}}.strat_b{{background:#1e3a5f;color:#3b82f6}}.strat_c{{background:#3b1f6e;color:#8b5cf6}}
-.strat_d{{background:#5c3d0e;color:#f59e0b}}.strat_e{{background:#5c1648;color:#ec4899}}.strat_f{{background:#0f4c5c;color:#06b6d4}}.strat_g{{background:#0e4c3d;color:#10b981}}.strat_h{{background:#4c1d0e;color:#f97316}}.strat_i{{background:#0e3d3d;color:#14b8a6}}.strat_j{{background:#5c1515;color:#ef4444}}.strat_k{{background:#3b1f3b;color:#a855f7}}.strat_l{{background:#4c3d0e;color:#eab308}}
+.strat_d{{background:#5c3d0e;color:#f59e0b}}.strat_e{{background:#5c1648;color:#ec4899}}.strat_f{{background:#0f4c5c;color:#06b6d4}}.strat_g{{background:#0e4c3d;color:#10b981}}.strat_h{{background:#4c1d0e;color:#f97316}}.strat_i{{background:#0e3d3d;color:#14b8a6}}.strat_j{{background:#5c1515;color:#ef4444}}.strat_k{{background:#3b1f3b;color:#a855f7}}.strat_l{{background:#4c3d0e;color:#eab308}}.strat_m{{background:#4c1d3b;color:#f472b6}}.strat_n{{background:#1e3d0e;color:#84cc16}}.strat_o{{background:#0e2e4c;color:#38bdf8}}
 tr.strat_a{{background:rgba(34,197,94,0.05)}}tr.strat_b{{background:rgba(59,130,246,0.05)}}tr.strat_c{{background:rgba(139,92,246,0.05)}}
-tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72,153,0.05)}}tr.strat_f{{background:rgba(6,182,212,0.05)}}tr.strat_g{{background:rgba(16,185,129,0.05)}}tr.strat_h{{background:rgba(249,115,22,0.05)}}tr.strat_i{{background:rgba(20,184,166,0.05)}}tr.strat_j{{background:rgba(239,68,68,0.05)}}tr.strat_k{{background:rgba(168,85,247,0.05)}}tr.strat_l{{background:rgba(234,179,8,0.05)}}
+tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72,153,0.05)}}tr.strat_f{{background:rgba(6,182,212,0.05)}}tr.strat_g{{background:rgba(16,185,129,0.05)}}tr.strat_h{{background:rgba(249,115,22,0.05)}}tr.strat_i{{background:rgba(20,184,166,0.05)}}tr.strat_j{{background:rgba(239,68,68,0.05)}}tr.strat_k{{background:rgba(168,85,247,0.05)}}tr.strat_l{{background:rgba(234,179,8,0.05)}}tr.strat_m{{background:rgba(244,114,182,0.05)}}tr.strat_n{{background:rgba(132,204,22,0.05)}}tr.strat_o{{background:rgba(56,189,248,0.05)}}
 tr.recent-7d{{background:rgba(251,146,60,0.12)}} tr.recent-7d:hover{{background:rgba(251,146,60,0.2)}}
 .conf{{font-weight:bold}}.conf.high{{color:#22c55e}}.conf.mid{{color:#f59e0b}}.conf.low{{color:#ef4444}}
 .entry{{color:#38bdf8;font-weight:bold}}
@@ -1854,6 +1956,9 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 <tr><td><span class="badge strat_j">J龙回头</span></td><td style="white-space:normal;word-break:break-all">20日强势股+回调10-20%+缩量收阳企稳</td><td>8-10%</td><td>5-8%</td></tr>
 <tr><td><span class="badge strat_k">K缺口回补</span></td><td style="white-space:normal;word-break:break-all">前日跳空高开1-5%+回踩缺口上沿确认+收阳</td><td>5-8%</td><td>3-5%</td></tr>
 <tr><td><span class="badge strat_l">L黄金坑</span></td><td style="white-space:normal;word-break:break-all">5日急跌≥8%+V型反弹≥4%+放量收阳</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_m">M涨停回调</span></td><td style="white-space:normal;word-break:break-all">近5日涨停+回调5-15%+缩量收阳企稳</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_n">N新高突破</span></td><td style="white-space:normal;word-break:break-all">收盘价=20日新高+放量阳线突破</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_o">O回踩均线</span></td><td style="white-space:normal;word-break:break-all">60日涨>20%+回踩MA20±1%+缩量收阳</td><td>5-8%</td><td>3-5%</td></tr>
 </tbody></table></section></div>
 <div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p style="color:#fb923c;margin-top:.3rem">★ 7日 = 近7日内已推荐标的（橙色高亮行），可持续关注但不建议重复建仓</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
     
@@ -1936,8 +2041,8 @@ def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, anew, sd):
     if not FEISHU_WEBHOOK: log_alert("WARNING", "飞书推送", "无Webhook"); return
     try:
         fc = len(candidates)
-        sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑'}
-        ss = " | ".join([f"{s}{sn.get(s,'')}:{sd.get(s,0)}只" for s in ['A','B','C','D','E','F','G','H','I','J','K','L'] if sd.get(s, 0) > 0]) or "无推荐标的"
+        sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线'}
+        ss = " | ".join([f"{s}{sn.get(s,'')}:{sd.get(s,0)}只" for s in ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O'] if sd.get(s, 0) > 0]) or "无推荐标的"
         pb = "https://lc132.github.io/lv"
         pr = f"{pb}/ashare-screening-{pred_yyyymmdd}/ashare-screening-{pred_yyyymmdd}.html"
         card = {"msg_type": "interactive", "card": {
@@ -2057,8 +2162,8 @@ def main():
     print("=" * 60)
     print(f"prediction_date={prediction_date} (数据来源:{data_date})")
     print(f"①原始:N={total_raw} → ②硬排除:N={ae} → ③信号过滤:N={asig} → ④策略:N={astr} → ⑤行业限制:N={aind} → ⑥新闻筛查:N={aind - anew} → ★ 最终:N={fc}")
-    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑'}
-    print(f"策略分布: " + " ".join([f"{s}:{sd.get(s,0)}" for s in ['A','B','C','D','E','F','G','H','I','J','K','L']]))
+    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线'}
+    print(f"策略分布: " + " ".join([f"{s}:{sd.get(s,0)}" for s in ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O']]))
     print(f"排除TOP5: " + " ".join([f"{r}:{c}只" for r, c in er.most_common(5)]))
     print("=" * 60)
     
