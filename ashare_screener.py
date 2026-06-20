@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.8.4
-36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 68条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | SKILL.md全面同步
+A股每日盘前短线标的智能筛选 v6.8.5
+36步完整执行流程 | 腾讯一级 | 新浪二级 | 历史数据进场价 | 全行业覆盖 | 67条硬编码修正 | 7日推荐标注 | 指数涨跌金额 | 22项漏洞修复
 """
 import urllib.request, urllib.error, json, os, sys, time, re, shutil, subprocess
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.8.4"
+BUILTIN_VERSION = "v6.8.5"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -173,7 +173,9 @@ def step0_get_beijing_time():
             beijing_now = datetime.fromisoformat(dt_str)
             break
         except: continue
-    if beijing_now is None: raise RuntimeError("北京时间获取失败")
+    if beijing_now is None:
+        beijing_now = datetime.now()
+        log_alert("WARNING", "北京时间", "所有API不可达，降级为系统时间(假设Asia/Shanghai)")
     beijing_date = beijing_now.strftime('%Y-%m-%d')
     beijing_weekday = beijing_now.weekday()
     beijing_hour = beijing_now.hour
@@ -182,6 +184,7 @@ def step0_get_beijing_time():
     # data_date: 盘前/交易时段→昨日，收盘后→当日，周末回退到周五
     if beijing_weekday == 5: data_date = (beijing_now - timedelta(days=1)).strftime('%Y-%m-%d')
     elif beijing_weekday == 6: data_date = (beijing_now - timedelta(days=2)).strftime('%Y-%m-%d')
+    elif beijing_weekday == 0 and is_pre_market: data_date = (beijing_now - timedelta(days=3)).strftime('%Y-%m-%d')  # v6.8.5: 周一盘前回退到周五
     elif is_pre_market or not is_post_market: data_date = (beijing_now - timedelta(days=1)).strftime('%Y-%m-%d')
     else: data_date = beijing_date
     # prediction_date: 盘前→当日，收盘后→下一交易日，周末→周一
@@ -793,7 +796,6 @@ HARDCODED_INDUSTRY = {
     '002229': '轻工制造',  # 鸿博股份（印刷，在002200-002299段但非建筑装饰）
     '002254': '基础化工',  # 泰和新材（芳纶纤维，在002200-002299段但非建筑装饰）
     '000670': '电子',      # 盈方微（芯片设计，在000600-000699段但非公用事业）
-    '300626': '汽车',      # 华瑞股份（换向器/电机部件，在300600-300699段但非国防军工）
     '300606': '机械设备',  # 金太阳（研磨抛光材料，在300600-300699段但非国防军工）
     '600505': '公用事业',  # 西昌电力（电力供应，在600500-600599段但非食品饮料）
     '301458': '电子',      # 钧崴电子（精密电阻，在301400-301499段但非通信）
@@ -941,7 +943,7 @@ def step11_hard_exclude(candidates, all_holdings_codes):
         elif code.startswith('8'): reason = "北交所"
         elif close < 5: reason = f"股价<5元"
         elif close > 100: reason = f"股价>100元"
-        elif 'ST' in c.get('name', ''): reason = "ST/*ST"
+        elif c.get('name', '').startswith('ST') or c.get('name', '').startswith('*ST'): reason = "ST/*ST"
         elif chg > 7: reason = f"涨幅>7%"
         elif close <= 0: reason = "停牌"
         # v6.8.3: 补充硬排除条件
@@ -1061,8 +1063,8 @@ def step13_strategy_match(candidates):
                     s = "G"; reason = f"横盘突破:涨{chg:.1f}%+振幅{amp:.1f}%+量比{vr:.1f}"; score = 8
                 elif vr is None and to is not None and to >= 3:
                     s = "G"; reason = f"横盘突破(代理):涨{chg:.1f}%+振幅{amp:.1f}%+换手{to:.1f}%"; score = 7
-        # ── H 地量见底 (v6.8.2: body=0时增加最小影线要求+vr=None兜底) ──
-        if not s and -3 <= chg <= 1 and close >= op:
+        # ── H 地量见底 (v6.8.5: chg上限改为<0，避免与E[0,1]重叠) ──
+        if not s and -3 <= chg < 0 and close >= op:
             is_hammer = False
             if high > low and low > 0:
                 body = abs(close - op)
@@ -1083,8 +1085,8 @@ def step13_strategy_match(candidates):
 def step14_scoring(candidates):
     for c in candidates:
         sc = c.get('score', 0) * 2
-        if c.get('_first_yin'): sc += 1
-        if c.get('_fake_breakout'): sc -= 3  # v6.6.38: A策略假突破惩罚
+        if c.get('_first_yin'): sc += 3  # v6.8.5: 首阴权重提升 1→3
+        # v6.8.5: _fake_breakout惩罚已在step13中扣分，此处不再重复扣罚
         c['score'] = max(0, sc)
         s = c['score']
         if s >= 18: c['confidence'] = '★★★'
@@ -1211,11 +1213,6 @@ def step18_news_screening(candidates):
         else:
             passed.append(c)
     
-    # 剩余未搜索的直接通过
-    for c in sorted_cand[search_limit:]:
-        if c not in excluded:
-            passed.append(c)
-    
     nex = len(excluded)
     if nex > 0:
         details = ", ".join(f"{c.get('name','')}({c.get('_news_reason','?')})" for c in excluded[:5])
@@ -1261,7 +1258,7 @@ def step16_comprehensive_score(candidates):
         amp = c.get('amplitude', 0) or 0
         ma_bonus = 0.05 if amp < 3 and vr > 1.2 else 0
         code = c.get('code', '')
-        c['_tie_score'] = vs * 0.25 + ts * 0.25 + cs * 0.25 + 0.15 + (1.0 - so.get(s, 99) / 10.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus
+        c['_tie_score'] = vs * 0.30 + ts * 0.30 + cs * 0.30 + (1.0 - so.get(s, 99) / 10.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus
     # v6.6.46: 五级二次评估 — _tie_score相同时，按量比→换手率→涨跌幅继续打破平局
     # SKILL.md五级: ①策略优先级(已独立排序键) ②量比高者优先 ③换手率中等优先(5-15%最佳) ④涨跌幅按策略 ⑤板块热度(已入_tie_score)
     def _tie_key(c):
@@ -1275,10 +1272,10 @@ def step16_comprehensive_score(candidates):
     return candidates
 
 def step19_shortfall_handling(candidates):
-    """v6.8.2: 放宽门控——1只≥★★, 2只≥★, 避免E/F/H策略标的被误杀"""
+    """v6.8.5: 数值比较替代字符串比较——1只≥12分(★★), 2只≥6分(★)"""
     if len(candidates) >= 3: return candidates
-    elif len(candidates) == 2: return [c for c in candidates if c.get('confidence', '★') >= '★']
-    elif len(candidates) == 1: return [c for c in candidates if c.get('confidence', '★') >= '★★']
+    elif len(candidates) == 2: return [c for c in candidates if c.get('score', 0) >= 6]
+    elif len(candidates) == 1: return [c for c in candidates if c.get('score', 0) >= 12]
     return []
 
 # ============================================================
@@ -1676,6 +1673,7 @@ def step22_write_history(candidates):
 # ============================================================
 def step26_github_sync(mp, hd, candidates):
     if not GITHUB_TOKEN: log_alert("WARNING", "GitHub同步", "无令牌"); return
+    rd = None
     try:
         repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
         rd = "/tmp/lv_sync"
@@ -1706,10 +1704,10 @@ def step26_github_sync(mp, hd, candidates):
         subprocess.run(["git", "-C", rd, "commit", "-m", f"筛选结果 {prediction_date} (v{file_version})", "--allow-empty"], check=True)
         result = subprocess.run(["git", "-C", rd, "push", "origin", "main"], capture_output=True, text=True, timeout=30)
         if result.returncode == 0: log_alert("INFO", "GitHub同步", f"✅ {prediction_date} 已推送")
-        else: log_alert("WARNING", "GitHub同步", f"推送失败: {result.stderr[:100]}")
+        else: log_alert("WARNING", "GitHub同步", f"推送失败: {result.stderr[:100].replace(GITHUB_TOKEN, '***')}")
     except Exception as e: log_alert("WARNING", "GitHub同步", f"失败: {str(e)[:100]}")
     finally:
-        if os.path.exists(rd): shutil.rmtree(rd, ignore_errors=True)
+        if rd and os.path.exists(rd): shutil.rmtree(rd, ignore_errors=True)
 
 # ============================================================
 # 步骤27：飞书推送
@@ -1807,10 +1805,10 @@ def main():
     print("\n[步骤10B] 行业补全...")
     for s in all_stocks: s['industry'] = lookup_industry(s.get('code', ''))
     
-    raw_pool = [s for s in all_stocks if s.get('change_pct') is not None and s.get('change_pct') > -9.5
+    raw_pool = [s for s in all_stocks if s.get('change_pct') is not None and s.get('change_pct') >= -9.5
                 and s.get('close') is not None and s.get('close') > 0]
     if ds == 'tencent': raw_pool.sort(key=lambda x: ((x.get('turnover', 0) or 0), (x.get('amount', 0) or 0)), reverse=True)
-    else: raw_pool.sort(key=lambda x: ((x.get('amount', 0) or 0), (x.get('turnover', 0) or 0)), reverse=True)
+    else: raw_pool.sort(key=lambda x: ((x.get('turnover', 0) or 0), (x.get('amount', 0) or 0)), reverse=True)  # v6.8.5: 统一使用turnover优先
     raw_pool = raw_pool[:500]
     total_raw = len(raw_pool)
     print(f"  原始池: {total_raw}只")
