@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.16"
+BUILTIN_VERSION = "v6.9.17"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1118,7 +1118,7 @@ def step10E_fetch_fundamentals(candidates):
         try:
             url = f'https://emweb.securities.eastmoney.com/PC_HSF10/NewFinanceAnalysis/ZYZBAjaxNew?type=0&code={secode}'
             req = urllib.request.Request(url, headers=headers)
-            r = json.loads(urllib.request.urlopen(req, timeout=8).read())
+            r = json.loads(urllib.request.urlopen(req, timeout=8).read().decode('utf-8-sig'))
             items = r.get('data', [])
             if items:
                 latest = items[0]  # 最新一期报告
@@ -1360,8 +1360,8 @@ def step13_strategy_match(candidates, kline_data=None):
                 s = "B"; reason = f"超跌反弹:跌{chg:.1f}%+振幅{amp:.1f}%+反弹确认"; score = 7
             elif amp > 8:
                 s = "B"; reason = f"超跌反弹(宽幅):跌{chg:.1f}%+振幅{amp:.1f}%"; score = 6
-        # ── C 事件驱动 (v6.8.2: vr=None时用换手率≥2%兜底) ──
-        if not s and 1 <= chg < 2:
+        # ── C 事件驱动 (v6.9.17: 弱市关闭，追涨风险大) ──
+        if not s and 1 <= chg < 2 and market_condition != "弱市":
             is_earnings = beijing_now.month in (1, 3, 4, 8, 10)
             if is_earnings:
                 s = "C"; reason = f"事件驱动(财报季):涨{chg:.1f}%"; score = 8
@@ -1369,24 +1369,26 @@ def step13_strategy_match(candidates, kline_data=None):
                 s = "C"; reason = f"事件驱动:涨{chg:.1f}%+量比{vr:.1f}"; score = 7
             elif vr is None and to is not None and to >= 2 and close > op:
                 s = "C"; reason = f"事件驱动(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 6
-        # ── D 回调企稳 (v6.8.2: 弱市时上限扩展至7%兜底A策略关闭后的(6,7]区间) ──
+        # ── D 回调企稳 (v6.9.17: 弱市时上限扩展至7%兜底A策略关闭后的(6,7]区间，但弱市下D权重降低) ──
         if not s and 3 <= chg <= (7 if market_condition == "弱市" else 6):
             if 2 <= amp <= 8 and close > op:
-                s = "D"; reason = f"回调企稳:涨{chg:.1f}%+阳线+振幅{amp:.1f}%"; score = 8
-        # ── E 资金埋伏 (v6.9.16: 放宽代理兜底，vr≥0.8+to≥1.0即可匹配) ──
+                s = "D"; reason = f"回调企稳:涨{chg:.1f}%+阳线+振幅{amp:.1f}%"; score = 8 if market_condition != "弱市" else 7
+        # ── E 资金埋伏 (v6.9.17: 弱市下score-1) ──
         if not s and 0 <= chg <= 1:
             mi = c.get('main_inflow')
+            wm_penalty = -1 if market_condition == "弱市" else 0
             if mi is not None and mi > 3000:
-                s = "E"; reason = f"资金埋伏:涨{chg:.1f}%+主力流入{mi:.0f}万"; score = 6
+                s = "E"; reason = f"资金埋伏:涨{chg:.1f}%+主力流入{mi:.0f}万"; score = 6 + wm_penalty
             elif mi is None and close > op:
-                # 代理兜底：阳线+放量或高换手（v6.9.16放宽）
+                # 代理兜底：阳线+放量或高换手
                 if vr is not None and vr >= 0.8 and to is not None and to >= 1.0:
-                    s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%"; score = 5
+                    s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%"; score = 5 + wm_penalty
                 elif vr is None and to is not None and to >= 1.5:
-                    s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 4
-        # ── F 北向资金（v6.9.16: 放宽代理兜底，vr≥1.0+to≥2.0即可）──
+                    s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 4 + wm_penalty
+        # ── F 北向资金（v6.9.17: 弱市下score-1）──
         if s == "E":
             mi = c.get('main_inflow')
+            wm_penalty = -1 if market_condition == "弱市" else 0
             if mi is not None and mi > 5000:
                 # 主力资金>5000万 → 升级为F
                 nb_days = 0
@@ -1399,9 +1401,9 @@ def step13_strategy_match(candidates, kline_data=None):
                                     nb_days += 1
                                     break
                 if nb_days >= 3:
-                    s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi:.0f}万+持续{nb_days}日"; score = 5
+                    s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi:.0f}万+持续{nb_days}日"; score = 5 + wm_penalty
             elif mi is None and vr is not None and vr >= 1.0 and to is not None and to >= 2.0:
-                # 代理兜底：量比≥1.0+换手≥2% → 资金活跃度升级（v6.9.16放宽）
+                # 代理兜底：量比≥1.0+换手≥2% → 资金活跃度升级
                 nb_days = 0
                 for fname in sorted(os.listdir('/workspace')):
                     if fname.startswith('推荐历史_') and fname.endswith('.json'):
@@ -1412,7 +1414,7 @@ def step13_strategy_match(candidates, kline_data=None):
                                     nb_days += 1
                                     break
                 if nb_days >= 2:
-                    s = "F"; reason = f"北向资金(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%+持续{nb_days}日"; score = 4
+                    s = "F"; reason = f"北向资金(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%+持续{nb_days}日"; score = 4 + wm_penalty
         # ── G 横盘突破 (v6.9.11: chg 1.0-4.0%, vr≥1.2) ──
         if not s and 1.0 <= chg < 4.0 and close > op:
             if amp is not None and 1.5 <= amp <= 6:
@@ -1432,19 +1434,19 @@ def step13_strategy_match(candidates, kline_data=None):
             vr_ok = (vr is not None and vr < 0.85) or (vr is None and to is not None and to < 0.85)
             if vr_ok and (is_hammer or (close > 0 and body / close < 0.008)):
                 s = "H"; reason = f"地量见底:{chg:+.1f}%+量比{vr or 0:.1f}+锤子线"; score = 5
-        # ── I 均线粘合突破（v6.9.0: 多均线间距<2%+放量阳线突破）──
+        # ── I 均线粘合突破（v6.9.17: 放宽粘合<3%+vr≥1.2）──
         if not s:
             kd = kline_data.get(c.get('code', ''), {})
             ma5 = kd.get('ma5', 0); ma10 = kd.get('ma10', 0); ma20 = kd.get('ma20', 0)
             if ma5 > 0 and ma10 > 0 and ma20 > 0:
                 ma_max = max(ma5, ma10, ma20); ma_min = min(ma5, ma10, ma20)
                 convergence = (ma_max - ma_min) / ma_min if ma_min > 0 else 999
-                if convergence < 0.02 and close > ma_max and close > op:
-                    if vr is not None and vr >= 1.5:
+                if convergence < 0.03 and close >= ma_max * 0.99 and close > op:
+                    if vr is not None and vr >= 1.2:
                         s = "I"; reason = f"均线粘合突破:价{close:.2f}>均线+量比{vr:.1f}(粘合{convergence:.1%})"; score = 9
                     elif vr is None and to is not None and to >= 3:
                         s = "I"; reason = f"均线粘合突破(代理):价{close:.2f}>均线+换手{to:.1f}%"; score = 8
-        # ── J 龙回头（v6.9.10: pullback 8-22%, vr<0.7）──
+        # ── J 龙回头（v6.9.17: 放宽vr<0.85）──
         if not s:
             kd = kline_data.get(c.get('code', ''), {})
             closes_h = kd.get('closes', [])
@@ -1455,9 +1457,9 @@ def step13_strategy_match(candidates, kline_data=None):
                 rally_20d = (max20 - closes_h[-20]) / closes_h[-20] if closes_h[-20] > 0 else 0
                 pullback = (max20 - close) / max20 if max20 > 0 else 0
                 if rally_20d > 0.05 and 0.08 <= pullback <= 0.22:
-                    if vr is not None and vr < 0.7 and close >= op:
+                    if vr is not None and vr < 0.85 and close >= op:
                         s = "J"; reason = f"龙回头:涨{rally_20d:.1%}→回调{pullback:.1%}+缩量+收阳"; score = 8
-        # ── K 缺口回补（v6.9.1: 前日跳空缺口后回踩确认支撑）──
+        # ── K 缺口回补（v6.9.17: 放宽缺口1-7%）──
         if not s:
             kd = kline_data.get(c.get('code', ''), {})
             closes_h = kd.get('closes', [])
@@ -1468,7 +1470,7 @@ def step13_strategy_match(candidates, kline_data=None):
                 if yest_close > 0 and yest_high > 0:
                     gap_up = op > yest_high * 1.01  # 跳空高开>1%
                     gap_size = (op - yest_high) / yest_high if yest_high > 0 else 0
-                    if gap_up and 0.01 <= gap_size <= 0.05:
+                    if gap_up and 0.01 <= gap_size <= 0.07:
                         # 回踩缺口上沿: low触达yest_high下方(±0.5%)才算真正回补
                         if low <= yest_high * 0.995 and close >= op:
                             s = "K"; reason = f"缺口回补:跳空{gap_size:.1%}→回踩确认+收阳"; score = 8
@@ -1503,12 +1505,12 @@ def step13_strategy_match(candidates, kline_data=None):
                                 if vr is not None and vr < 0.85:
                                     s = "M"; reason = f"涨停回调:涨停{day_chg:.1%}→回调{pullback_pct:.1%}+缩量+收阳"; score = 7
                                     break
-        # ── N 新高突破（v6.9.3: 收盘价=20日新高+放量阳线）──
+        # ── N 新高突破（v6.9.17: 放宽vr≥1.2）──
         if not s:
             kd = kline_data.get(c.get('code', ''), {})
             high20 = kd.get('high20', 0)
             if high20 > 0 and close >= high20 * 0.995 and close > op:
-                if vr is not None and vr >= 1.5:
+                if vr is not None and vr >= 1.2:
                     s = "N"; reason = f"新高突破:价{close:.2f}=20日高+量比{vr:.1f}+阳线"; score = 9
                 elif vr is None and to is not None and to >= 3:
                     s = "N"; reason = f"新高突破(代理):价{close:.2f}=20日高+换手{to:.1f}%"; score = 8
@@ -1520,17 +1522,17 @@ def step13_strategy_match(candidates, kline_data=None):
             if len(closes_h) >= 60 and ma20 > 0 and close > 0:
                 rally_60d = (close - closes_h[-60]) / closes_h[-60] if closes_h[-60] > 0 else 0
                 dist_to_ma20 = (close - ma20) / ma20  # 距MA20的距离
-                if rally_60d > 0.20 and -0.01 <= dist_to_ma20 <= 0.01 and close >= op:
-                    if vr is not None and vr < 0.7:
+                if rally_60d > 0.20 and -0.02 <= dist_to_ma20 <= 0.02 and close >= op:
+                    if vr is not None and vr < 0.85:
                         s = "O"; reason = f"回踩均线:涨{rally_60d:.1%}→回踩MA20({dist_to_ma20:+.1%})+缩量+收阳"; score = 8
-        # ── P 地量反弹（v6.9.10: vr≥1.8）──
+        # ── P 地量反弹（v6.9.17: 放宽vr≥1.5+chg≥1.5%）──
         if not s:
             kd = kline_data.get(c.get('code', ''), {})
             vols = kd.get('volumes', [])
             if len(vols) >= 4 and vr is not None:
-                if vols[-4] > vols[-3] > vols[-2] and vr >= 1.8 and 2 <= chg <= 5 and close > op:
+                if vols[-4] > vols[-3] > vols[-2] and vr >= 1.5 and 1.5 <= chg <= 5 and close > op:
                     s = "P"; reason = f"地量反弹:3日缩量+放量{vr:.1f}x+涨{chg:.1f}%"; score = 7
-        # ── Q W底形态（v6.9.3: 20日内两底+突破颈线）──
+        # ── Q W底形态（v6.9.17: 放宽vr≥1.2+颈线突破≥0.5%）──
         if not s:
             kd = kline_data.get(c.get('code', ''), {})
             closes_h = kd.get('closes', []); lows_h = kd.get('lows', [])
@@ -1541,8 +1543,8 @@ def step13_strategy_match(candidates, kline_data=None):
                 if l1 > 0 and l2 > 0 and 0.95 < l2 / l1 < 1.05:  # 两底相差<5%
                     # 颈线: 两底之间最高点（取整个20日区间，因为两底横跨前后10日）
                     neck = max(highs_h[-20:]) if len(highs_h) >= 20 else 0
-                    if neck > 0 and close > neck * 1.01 and close > op:
-                        if vr is not None and vr >= 1.5:
+                    if neck > 0 and close > neck * 1.005 and close > op:
+                        if vr is not None and vr >= 1.2:
                             s = "Q"; reason = f"W底突破:两底{l1:.2f}/{l2:.2f}+突破颈线{neck:.2f}+放量"; score = 9
         if s: c['strategy'] = s; c['score'] = score; matched.append(c)
     log_alert("INFO", "策略匹配", f"匹配{len(matched)}只")
