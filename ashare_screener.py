@@ -2069,7 +2069,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         entry = calc_entry_price(c)
         sl = round(entry * sl_map.get(s, 0.96), 2)
         tp = round(entry * tp_map.get(s, 1.05), 2)
-        r7d_html = str(c.get('_recent_7d')) if c.get('_recent_7d') else ""
+        r7d_html = str(c.get('_recent_7d')) if c.get('_recent_7d') is not None else ""
         # v6.6.44: 7日列附带历史策略标注
         r7s = c.get('_recent_7d_strategies', {})
         if r7d_html and r7s:
@@ -2116,10 +2116,13 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         funnel_html += f'<div class="funnel-step {cls}" style="width:{w}%">{name}: {count}只</div>'
     
     strat_bars = ""
-    for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']:
+    for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']:
         cnt = sd.get(s, 0)
-        bp = cnt / max(max(sd.values()), 1) * 100
-        strat_bars += f'<div class="bar-row"><div class="bar-label">{s} {sn.get(s, "")}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%;background:{sc[s]}">{cnt}</div></div></div>'
+        if cnt > 0:
+            bp = cnt / max(max(sd.values()), 1) * 100
+            strat_bars += f'<div class="bar-row"><div class="bar-label">{s} {sn.get(s, "")}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%;background:{sc[s]}">{cnt}</div></div></div>'
+    if not strat_bars:
+        strat_bars = '<div style="color:#94a3b8">无匹配</div>'
     
     alerts_html = ""
     if crisis_alerts:
@@ -2202,23 +2205,23 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 <section><h2>策略说明</h2><table>
 <thead><tr><th style="width:18%">策略</th><th style="width:48%">条件</th><th style="width:16%">仓位(震荡)</th><th style="width:18%">仓位(弱市)</th></tr></thead>
 <tbody>
-<tr><td><span class="badge strat_a">A动量延续</span></td><td style="white-space:normal;word-break:break-all">涨3-7%+量比1.5-3.0+弱市关闭</td><td>12-17%</td><td>0%(关闭)</td></tr>
-<tr><td><span class="badge strat_b">B超跌反弹</span></td><td style="white-space:normal;word-break:break-all">涨-9.5~-3%+振幅>3%或下影线</td><td>10-13%</td><td>12-15%</td></tr>
-<tr><td><span class="badge strat_c">C事件驱动</span></td><td style="white-space:normal;word-break:break-all">涨1-2%+量比≥1.0或财报季</td><td>8-10%</td><td>5-8%</td></tr>
-<tr><td><span class="badge strat_d">D回调企稳</span></td><td style="white-space:normal;word-break:break-all">涨3-6%+振幅2-8%+阳线</td><td>12-15%</td><td>8-12%</td></tr>
-<tr><td><span class="badge strat_e">E资金埋伏</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>3000万</td><td>5-8%</td><td>3-5%</td></tr>
-<tr><td><span class="badge strat_f">F北向资金</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>5000万+近5日持续≥3日</td><td>3-5%</td><td>3-5%</td></tr>
-<tr><td><span class="badge strat_g">G横盘突破</span></td><td style="white-space:normal;word-break:break-all">涨2-3%+振幅1.5-6%+量比>1.5阳线突破</td><td>8-10%</td><td>5-8%</td></tr>
-<tr><td><span class="badge strat_h">H地量见底</span></td><td style="white-space:normal;word-break:break-all">跌0~3%+量比<0.5+锤子线/十字星阳线</td><td>5-8%</td><td>3-5%</td></tr>
-<tr><td><span class="badge strat_i">I均线突破</span></td><td style="white-space:normal;word-break:break-all">MA5/10/20粘合<2%+放量阳线突破均线</td><td>5-8%</td><td>3-5%</td></tr>
-<tr><td><span class="badge strat_j">J龙回头</span></td><td style="white-space:normal;word-break:break-all">20日强势股+回调10-20%+缩量收阳企稳</td><td>8-10%</td><td>5-8%</td></tr>
-<tr><td><span class="badge strat_k">K缺口回补</span></td><td style="white-space:normal;word-break:break-all">前日跳空高开1-5%+回踩缺口上沿确认+收阳</td><td>5-8%</td><td>3-5%</td></tr>
-<tr><td><span class="badge strat_l">L黄金坑</span></td><td style="white-space:normal;word-break:break-all">5日急跌≥8%+V型反弹≥4%+放量收阳</td><td>8-10%</td><td>5-8%</td></tr>
-<tr><td><span class="badge strat_m">M涨停回调</span></td><td style="white-space:normal;word-break:break-all">近5日涨停+回调5-15%+缩量收阳企稳</td><td>5-8%</td><td>3-5%</td></tr>
-<tr><td><span class="badge strat_n">N新高突破</span></td><td style="white-space:normal;word-break:break-all">收盘价=20日新高+放量阳线突破</td><td>8-10%</td><td>5-8%</td></tr>
-<tr><td><span class="badge strat_o">O回踩均线</span></td><td style="white-space:normal;word-break:break-all">60日涨>20%+回踩MA20±1%+缩量收阳</td><td>5-8%</td><td>3-5%</td></tr>
-<tr><td><span class="badge strat_p">P地量反弹</span></td><td style="white-space:normal;word-break:break-all">连续3日缩量至地量+当日放量≥2x+涨2-5%阳线</td><td>5-8%</td><td>3-5%</td></tr>
-<tr><td><span class="badge strat_q">Q W底突破</span></td><td style="white-space:normal;word-break:break-all">20日内两底相差<5%+放量突破颈线+阳线</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_a">A动量延续</span></td><td style="white-space:normal;word-break:break-all">涨3-7%+量比1.5-3.0+弱市/极端上涨关闭</td><td>12-17%</td><td>0%(关闭)</td></tr>
+<tr><td><span class="badge strat_b">B超跌反弹</span></td><td style="white-space:normal;word-break:break-all">跌2.5-9.5%+振幅>3%+反弹确认(close>low*1.01)+深度跌幅加分</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_c">C事件驱动</span></td><td style="white-space:normal;word-break:break-all">涨1-2%+量比≥1.0或财报季+弱市关闭</td><td>10-12%</td><td>0%(关闭)</td></tr>
+<tr><td><span class="badge strat_d">D回调企稳</span></td><td style="white-space:normal;word-break:break-all">涨3-6%(弱市上限7%)+振幅1.5-10%+阳线+弱市不折扣</td><td>12-15%</td><td>8-12%</td></tr>
+<tr><td><span class="badge strat_e">E资金埋伏</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>3000万(代理vr≥0.6+to≥0.5%)+弱市不折扣</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_f">F北向资金</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>5000万+近5日持续≥3日+弱市不折扣</td><td>3-5%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_g">G横盘突破</span></td><td style="white-space:normal;word-break:break-all">涨1.0-3.0%+振幅1.5-6%+量比≥1.0阳线+弱市不折扣低吸</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_h">H地量见底</span></td><td style="white-space:normal;word-break:break-all">涨-3~1.0%+量比<1.0+锤子线/十字星阳线+弱市放宽</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_i">I均线突破</span></td><td style="white-space:normal;word-break:break-all">MA5/10/20粘合<4%+放量vr≥1.0阳线+收盘≥均线×0.98+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_j">J龙回头</span></td><td style="white-space:normal;word-break:break-all">20日强势股+回调6-25%+缩量vr<1.0收阳+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_k">K缺口回补</span></td><td style="white-space:normal;word-break:break-all">前日跳空高开1-7%+回踩缺口上沿确认+收阳+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_l">L黄金坑</span></td><td style="white-space:normal;word-break:break-all">5日急跌≥5%+V型反弹≥2%+放量vr≥1.0收阳+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_m">M涨停回调</span></td><td style="white-space:normal;word-break:break-all">近5日涨停+回调4-25%+缩量vr<1.0收阳+弱市跳过</td><td>6-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_n">N新高突破</span></td><td style="white-space:normal;word-break:break-all">收盘≥20日新高×0.99+放量vr≥1.0阳线+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_o">O回踩均线</span></td><td style="white-space:normal;word-break:break-all">60日涨>15%+回踩MA20±3%+缩量vr<1.0收阳+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_p">P地量反弹</span></td><td style="white-space:normal;word-break:break-all">连续3日缩量至地量+当日放量vr≥1.2+涨1.0-5%阳线+弱市跳过</td><td>6-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_q">Q W底突破</span></td><td style="white-space:normal;word-break:break-all">20日内两底相差<5%+放量vr≥1.2突破颈线+阳线+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
 </tbody></table></section></div>
 <div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p style="color:#fb923c;margin-top:.3rem">★ 7日 = 近7日内已推荐标的（橙色高亮行），可持续关注但不建议重复建仓</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
     
