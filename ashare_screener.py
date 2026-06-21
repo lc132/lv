@@ -226,7 +226,8 @@ def step1_holiday_check():
     h = ["2026-01-01","2026-01-02","2026-02-16","2026-02-17","2026-02-18","2026-02-19","2026-02-20",
          "2026-04-06","2026-05-01","2026-06-19","2026-06-20","2026-06-21","2026-06-22","2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07"]
     if data_date in h:
-        return True  # 数据日节假日→跳过
+        log_alert("INFO", "节假日", f"数据日{data_date}为节假日，用户要求强制执行，继续筛选")
+        pass  # 强制运行，不跳过
     if prediction_date in h:
         # prediction_date是节假日，推进到下一个交易日
         old_pred = prediction_date
@@ -2056,7 +2057,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
     else:
         alerts_html = '<div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">今日无异常告警</span></div>'
     
-    html = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+    html_content = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>A股短线标的筛选 — {prediction_date}</title>
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}body{{font-family:'Noto Sans CJK SC','WenQuanYi Micro Hei',sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.6}}
@@ -2150,7 +2151,7 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 </tbody></table></section></div>
 <div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p style="color:#fb923c;margin-top:.3rem">★ 7日 = 近7日内已推荐标的（橙色高亮行），可持续关注但不建议重复建仓</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
     
-    with open(hp, 'w', encoding='utf-8') as f: f.write(html)
+    with open(hp, 'w', encoding='utf-8') as f: f.write(html_content)
     log_alert("INFO", "HTML报告", f"已生成至 {hp}")
     return hp
 
