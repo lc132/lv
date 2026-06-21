@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.14"
+BUILTIN_VERSION = "v6.9.15"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1089,102 +1089,55 @@ def step10C_fetch_klines(candidates):
     return kline_data
 
 # ============================================================
-# 步骤10D：东方财富财务数据拉取（v6.9.4: 质押/商誉/解禁/ROE）
+# 步骤10D：东方财富财务数据拉取（质押/商誉/解禁 — API已废弃，降级跳过）
+# v6.9.15: 质押/商誉/解禁API全部废弃，返回空字典。
+# ROE/净利润已迁移至step10E（F10单股API，仅在step11后对候选标的拉取）。
 # ============================================================
 def step10D_fetch_financials():
-    """批量拉取东方财富财务数据: 质押/商誉/解禁/ROE/净利润
-    v6.9.14: 东方财富datacenter-web API已全部废弃(返回success:False)。
-    当前所有财务数据返回空字典，硬排除规则13-17(质押/商誉/解禁/ROE)降级跳过。
-    待接入新的财务数据源后恢复。"""
-    pledge_data = {}; goodwill_data = {}; unlock_data = {}; fundamental_data = {}
-    headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://data.eastmoney.com/'}
-    api_degraded = False
-    
-    # 1. 质押比例
-    try:
-        url = ('https://datacenter-web.eastmoney.com/api/data/v1/get'
-               '?reportName=RPTA_STOCKPLEDGE&columns=ALL&pageNumber=1&pageSize=500'
-               '&sortColumns=PLEDGE_RATIO&sortTypes=-1&source=WEB&client=WEB')
-        req = urllib.request.Request(url, headers=headers)
-        r = json.loads(urllib.request.urlopen(req, timeout=10).read())
-        if not r.get('success', True):
-            api_degraded = True
-            log_alert("WARNING", "财务数据", f"质押API已废弃(success=False)，降级跳过")
-        else:
-            for item in (r.get('result') or {}).get('data', []):
-                code = item.get('SECURITY_CODE', '')
-                ratio = item.get('PLEDGE_RATIO')
-                if code and ratio is not None: pledge_data[code] = float(ratio)
-            log_alert("INFO", "财务数据", f"质押比例: {len(pledge_data)}只")
-    except Exception as e: log_alert("WARNING", "质押数据", str(e)[:60]); api_degraded = True
-    
-    # 2. 商誉/净资产
-    try:
-        url = ('https://datacenter-web.eastmoney.com/api/data/v1/get'
-               '?reportName=RPT_STOCK_GOODWILL&columns=ALL&pageNumber=1&pageSize=500'
-               '&sortColumns=NOTICE_DATE,SECURITY_CODE&sortTypes=-1,-1&source=WEB&client=WEB')
-        req = urllib.request.Request(url, headers=headers)
-        r = json.loads(urllib.request.urlopen(req, timeout=10).read())
-        for item in (r.get('result') or {}).get('data', []):
-            code = item.get('SECURITY_CODE', '')
-            gw = item.get('GOODWILL'); na = item.get('NET_ASSETS')
-            if code and gw is not None and na is not None and na > 0:
-                goodwill_data[code] = (float(gw), float(na), float(gw) / float(na))
-        log_alert("INFO", "财务数据", f"商誉: {len(goodwill_data)}只")
-    except Exception as e: log_alert("WARNING", "商誉数据", str(e)[:60])
-    
-    # 3. 近期解禁（未来30天）
-    try:
-        from datetime import datetime, timedelta
-        today_str = datetime.now().strftime('%Y-%m-%d')
-        end_str = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
-        url = (f'https://datacenter-web.eastmoney.com/api/data/v1/get'
-               f'?reportName=RPT_RESTRICTED_STOCK&columns=ALL&pageNumber=1&pageSize=500'
-               f'&sortColumns=UNLOCK_DATE&sortTypes=1'
-               f'&filter=(UNLOCK_DATE%3E%3D%27{today_str}%27)(UNLOCK_DATE%3C%3D%27{end_str}%27)'
-               f'&source=WEB&client=WEB')
-        req = urllib.request.Request(url, headers=headers)
-        r = json.loads(urllib.request.urlopen(req, timeout=10).read())
-        for item in (r.get('result') or {}).get('data', []):
-            code = item.get('SECURITY_CODE', '')
-            ud = item.get('UNLOCK_DATE', '')
-            ratio = item.get('UNLOCK_RATIO')
-            if code and ratio is not None:
-                if code not in unlock_data: unlock_data[code] = []
-                unlock_data[code].append((ud, float(ratio)))
-        log_alert("INFO", "财务数据", f"解禁: {len(unlock_data)}只有近期解禁")
-    except Exception as e: log_alert("WARNING", "解禁数据", str(e)[:60])
-    
-    # 4. ROE/净利润（最新报告期，动态计算）
-    try:
-        from datetime import datetime
-        now = datetime.now()
-        # 最新财报季: 若当前月份在1-4月则用上年Q3(09-30), 5-8月用当年Q1(03-31), 9-12月用当年Q2(06-30)
-        if now.month <= 4:
-            latest_report = f"{now.year - 1}-12-31"
-        elif now.month <= 8:
-            latest_report = f"{now.year}-03-31"
-        else:
-            latest_report = f"{now.year}-06-30"
-        url = (f'https://datacenter-web.eastmoney.com/api/data/v1/get'
-               f'?reportName=RPT_DMSK_FN_MAIN&columns=ALL&pageNumber=1&pageSize=500'
-               f'&sortColumns=SECURITY_CODE&sortTypes=1'
-               f'&filter=(REPORT_DATE%3D%27{latest_report}%27)&source=WEB&client=WEB')
-        req = urllib.request.Request(url, headers=headers)
-        r = json.loads(urllib.request.urlopen(req, timeout=10).read())
-        for item in (r.get('result') or {}).get('data', []):
-            code = item.get('SECURITY_CODE', '')
-            if code:
+    """质押/商誉/解禁 — API已废弃，降级跳过"""
+    pledge_data = {}; goodwill_data = {}; unlock_data = {}
+    log_alert("WARNING", "财务数据", "质押/商誉/解禁API已废弃，硬排除规则13-15降级跳过")
+    return pledge_data, goodwill_data, unlock_data
+
+# ============================================================
+# 步骤10E：F10财务数据拉取（ROE/净利润 — 单股逐只API）
+# v6.9.15: 替代已废弃的datacenter-web批量API，使用F10单股API逐只拉取。
+# 仅在step11硬排除后调用，对通过候选标的拉取最新财报ROE和净利润。
+# ============================================================
+def step10E_fetch_fundamentals(candidates):
+    """使用F10单股API拉取ROE/净利润，仅对通过硬排除的候选标的"""
+    fundamental_data = {}
+    headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://emweb.securities.eastmoney.com/'}
+    fetched = 0; errors = 0
+    for c in candidates:
+        code = c.get('code', '')
+        if not code: continue
+        # 确定市场前缀: 6开头→SH, 0/3开头→SZ
+        prefix = 'SH' if code.startswith('6') else 'SZ'
+        secode = f'{prefix}{code}'
+        try:
+            url = f'https://emweb.securities.eastmoney.com/PC_HSF10/NewFinanceAnalysis/ZYZBAjaxNew?type=0&code={secode}'
+            req = urllib.request.Request(url, headers=headers)
+            r = json.loads(urllib.request.urlopen(req, timeout=8).read())
+            items = r.get('data', [])
+            if items:
+                latest = items[0]  # 最新一期报告
                 fundamental_data[code] = {
-                    'roe': item.get('ROE_WEIGHTED'),
-                    'net_profit': item.get('NET_PROFIT_PARENT'),
-                    'revenue': item.get('REVENUE'),
-                    'eps': item.get('EPS')
+                    'roe': latest.get('ROEJQ'),
+                    'net_profit': latest.get('PARENTNETPROFIT'),
+                    'revenue': latest.get('TOTALOPERATEREVE'),
+                    'eps': latest.get('EPSJB'),
+                    'report_date': latest.get('REPORT_DATE', ''),
                 }
-        log_alert("INFO", "财务数据", f"基本面: {len(fundamental_data)}只")
-    except Exception as e: log_alert("WARNING", "ROE数据", str(e)[:60])
-    
-    return pledge_data, goodwill_data, unlock_data, fundamental_data
+                fetched += 1
+        except Exception:
+            errors += 1
+            continue
+        # 每50只短暂休息，避免被限流
+        if fetched % 50 == 0 and fetched > 0:
+            time.sleep(0.3)
+    log_alert("INFO", "财务数据", f"F10基本面: {fetched}只成功, {errors}只失败")
+    return fundamental_data
 
 # ============================================================
 # 步骤11：硬排除
@@ -1262,9 +1215,10 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
 # ============================================================
 # 步骤12：信号过滤
 # ============================================================
-def step12_signal_filter(candidates, kline_data=None):
-    """v6.9.6: 清理dead参数fundamental_data，精简为16项"""
+def step12_signal_filter(candidates, kline_data=None, fundamental_data=None):
+    """v6.9.15: 恢复fundamental_data参数，新增净利润亏损过滤"""
     if kline_data is None: kline_data = {}
+    if fundamental_data is None: fundamental_data = {}
     passed, excluded = [], []
     for c in candidates:
         chg = c.get('change_pct', 0); close = c.get('close', 0); op = c.get('open', 0)
@@ -1357,6 +1311,17 @@ def step12_signal_filter(candidates, kline_data=None):
                 reason = "长上影线"
         # 20. 连续缩量（v6.9.11: 量比<0.4+涨跌<1%→无人气横盘）
         if not reason and vr is not None and vr < 0.4 and abs(chg) < 1: reason = "连续缩量"
+        # 21. 净利润亏损（v6.9.15: 基于F10单股API数据，排除ROE<0或净利润<0的标的）
+        if not reason:
+            fd = fundamental_data.get(c.get('code', ''), {})
+            roe = fd.get('roe')
+            np_val = fd.get('net_profit')
+            if roe is not None and np_val is not None:
+                try:
+                    if float(roe) < 0 or float(np_val) < 0:
+                        reason = f"净利润亏损(ROE={float(roe):.1f}%)"
+                except (ValueError, TypeError):
+                    pass
         if reason: excluded.append(c)
         else: passed.append(c)
     log_alert("INFO", "信号过滤", f"通过{len(passed)}只 排除{len(excluded)}只")
@@ -1415,11 +1380,11 @@ def step13_strategy_match(candidates, kline_data=None):
                 s = "E"; reason = f"资金埋伏:涨{chg:.1f}%+主力流入{mi:.0f}万"; score = 6
             elif mi is None and vr is not None and vr >= 1.2 and to is not None and to >= 2 and close > op:
                 s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%"; score = 5
-        # ── F 北向资金（v6.8.8: main_inflow全数据源为None→死码，条件永久禁用）──
-        # 待接入主力资金流向API后删除 "and False" 即可激活
-        if s == "E" and False:
+        # ── F 北向资金（v6.9.15: 移除死码，增加代理兜底）──
+        if s == "E":
             mi = c.get('main_inflow')
             if mi is not None and mi > 5000:
+                # 主力资金>5000万 → 升级为F
                 nb_days = 0
                 for fname in sorted(os.listdir('/workspace')):
                     if fname.startswith('推荐历史_') and fname.endswith('.json'):
@@ -1431,6 +1396,19 @@ def step13_strategy_match(candidates, kline_data=None):
                                     break
                 if nb_days >= 3:
                     s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi:.0f}万+持续{nb_days}日"; score = 5
+            elif mi is None and vr is not None and vr >= 1.5 and to is not None and to >= 3:
+                # 代理兜底：量比≥1.5+换手≥3% → 资金活跃度升级
+                nb_days = 0
+                for fname in sorted(os.listdir('/workspace')):
+                    if fname.startswith('推荐历史_') and fname.endswith('.json'):
+                        for r in safe_read_json(os.path.join('/workspace', fname)):
+                            if r.get('code') == c.get('code') and r.get('type') == 'recommendation':
+                                rd = r.get('date', '')
+                                if rd >= (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=5)).strftime('%Y-%m-%d'):
+                                    nb_days += 1
+                                    break
+                if nb_days >= 2:
+                    s = "F"; reason = f"北向资金(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%+持续{nb_days}日"; score = 4
         # ── G 横盘突破 (v6.9.11: chg 1.0-4.0%, vr≥1.2) ──
         if not s and 1.0 <= chg < 4.0 and close > op:
             if amp is not None and 1.5 <= amp <= 6:
@@ -2381,7 +2359,7 @@ def main():
     for s in all_stocks: s['industry'] = lookup_industry(s.get('code', ''))
     
     print("\n[步骤10C] 历史K线..."); kline_data = step10C_fetch_klines(all_stocks[:500])
-    print("\n[步骤10D] 财务数据..."); pledge_data, goodwill_data, unlock_data, fundamental_data = step10D_fetch_financials()
+    print("\n[步骤10D] 财务数据..."); pledge_data, goodwill_data, unlock_data = step10D_fetch_financials()
     
     raw_pool = [s for s in all_stocks if s.get('change_pct') is not None and s.get('change_pct') >= -9.5
                 and s.get('close') is not None and s.get('close') > 0]
@@ -2391,8 +2369,9 @@ def main():
     total_raw = len(raw_pool)
     print(f"  原始池: {total_raw}只")
     
-    print("\n[步骤11] 硬排除..."); ael, _, er = step11_hard_exclude(raw_pool, ahc, kline_data, pledge_data, goodwill_data, unlock_data, fundamental_data); ae = len(ael)
-    print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data); asig = len(asl)
+    print("\n[步骤11] 硬排除..."); ael, _, er = step11_hard_exclude(raw_pool, ahc, kline_data, pledge_data, goodwill_data, unlock_data, {}); ae = len(ael)
+    print("\n[步骤10E] F10基本面..."); fundamental_data = step10E_fetch_fundamentals(ael)
+    print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data, fundamental_data); asig = len(asl)
     print("\n[步骤13] 策略匹配..."); sm = step13_strategy_match(asl, kline_data); astr = len(sm)
     print("\n[步骤14] 评分..."); scored = step14_scoring(sm)
     print("\n[步骤15·16] 综合评分+平局打破..."); ranked = step16_comprehensive_score(scored)
