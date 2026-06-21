@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.12"
+BUILTIN_VERSION = "v6.9.13"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -195,7 +195,7 @@ def step0_get_beijing_time():
     else: prediction_date = beijing_date
     # 节假日调整：data_date和prediction_date若为节假日则回退/推进到最近交易日
     h = ["2026-01-01","2026-01-02","2026-02-16","2026-02-17","2026-02-18","2026-02-19","2026-02-20",
-         "2026-04-06","2026-05-01","2026-06-19","2026-06-20","2026-06-21","2026-06-22","2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07"]
+         "2026-04-06","2026-05-01","2026-06-19","2026-06-20","2026-06-21","2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07"]
     # data_date若为节假日，回退到上一个交易日
     if data_date in h:
         dd_dt = datetime.strptime(data_date, '%Y-%m-%d')
@@ -247,7 +247,7 @@ def step0A_pull_holdings():
 def step1_holiday_check():
     global prediction_date, pred_yyyymmdd, position_pct, market_condition, params
     h = ["2026-01-01","2026-01-02","2026-02-16","2026-02-17","2026-02-18","2026-02-19","2026-02-20",
-         "2026-04-06","2026-05-01","2026-06-19","2026-06-20","2026-06-21","2026-06-22","2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07"]
+         "2026-04-06","2026-05-01","2026-06-19","2026-06-20","2026-06-21","2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07"]
     # 长休检测：data_date到prediction_date之间自然日≥3天→弱市+仓位≤30%+搜索预算+5
     dd_dt = datetime.strptime(data_date, '%Y-%m-%d')
     pd_dt = datetime.strptime(prediction_date, '%Y-%m-%d')
