@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.24"
+BUILTIN_VERSION = "v6.9.25"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1380,7 +1380,7 @@ def step13_strategy_match(candidates, kline_data=None):
         if not s and 3 <= chg <= (7 if market_condition == "弱市" else 6):
             if 1.5 <= amp <= 10 and close > op:
                 s = "D"; reason = f"回调企稳:涨{chg:.1f}%+阳线+振幅{amp:.1f}%"; score = 8
-        # ── E 资金埋伏 (v6.9.22: 弱市不折扣，代理vr≥0.6+to≥0.5%放宽) ──
+        # ── E 资金埋伏 (v6.9.25: 弱市不折扣，代理base=6与H看齐) ──
         if not s and 0 <= chg <= 1:
             mi = c.get('main_inflow')
             if mi is not None and mi > 3000:
@@ -1388,14 +1388,13 @@ def step13_strategy_match(candidates, kline_data=None):
             elif mi is None and close > op:
                 # 代理兜底：阳线+放量或高换手
                 if vr is not None and vr >= 0.6 and to is not None and to >= 0.5:
-                    s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%"; score = 5
+                    s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%"; score = 6
                 elif vr is None and to is not None and to >= 1.0:
-                    s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 4
-        # ── F 北向资金（v6.9.22: 弱市不折扣，代理vr≥0.8+to≥1.5%放宽）──
+                    s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 6
+        # ── F 北向资金（v6.9.25: 弱市不折扣，代理base=6与H看齐）──
         if s == "E":
             mi = c.get('main_inflow')
             if mi is not None and mi > 5000:
-                # 主力资金>5000万 → 升级为F
                 nb_days = 0
                 for fname in sorted(os.listdir('/workspace')):
                     if fname.startswith('推荐历史_') and fname.endswith('.json'):
@@ -1406,9 +1405,8 @@ def step13_strategy_match(candidates, kline_data=None):
                                     nb_days += 1
                                     break
                 if nb_days >= 3:
-                    s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi:.0f}万+持续{nb_days}日"; score = 5
+                    s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi:.0f}万+持续{nb_days}日"; score = 6
             elif mi is None and vr is not None and vr >= 0.8 and to is not None and to >= 1.5:
-                # 代理兜底：量比≥0.8+换手≥1.5% → 资金活跃度升级
                 nb_days = 0
                 for fname in sorted(os.listdir('/workspace')):
                     if fname.startswith('推荐历史_') and fname.endswith('.json'):
@@ -1419,7 +1417,7 @@ def step13_strategy_match(candidates, kline_data=None):
                                     nb_days += 1
                                     break
                 if nb_days >= 2:
-                    s = "F"; reason = f"北向资金(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%+持续{nb_days}日"; score = 4
+                    s = "F"; reason = f"北向资金(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%+持续{nb_days}日"; score = 6
         # ── G 横盘突破 (v6.9.22: vr≥1.0,弱市不折扣,chg<3.0%避免与D重叠) ──
         if not s and 1.0 <= chg < 3.0 and close > op:
             if amp is not None and 1.5 <= amp <= 6:
@@ -1576,7 +1574,7 @@ def step14_scoring(candidates):
         elif s == 'D': cs = max(0, 1.0 - abs(chg - 4.5) / 3.0)
         elif s == 'E': cs = max(0, 1.0 - abs(chg - 0.5) / 1.0)
         elif s == 'F': cs = max(0, 1.0 - abs(chg - 0.5) / 1.0)
-        elif s == 'G': cs = max(0, 1.0 - abs(chg - 2.5) / 1.0)
+        elif s == 'G': cs = max(0, 1.0 - abs(chg - 2.0) / 1.5)
         elif s == 'H': cs = max(0, 1.0 - abs(chg - 0) / 3.0)
         elif s == 'I': cs = max(0, 1.0 - abs(chg - 3) / 3.0)
         elif s == 'J': cs = max(0, 1.0 - abs(chg + 5) / 8.0)
@@ -1591,7 +1589,7 @@ def step14_scoring(candidates):
         amp = c.get('amplitude', 0) or 0
         ma_bonus = 0.05 if amp < 3 and vr > 1.2 else 0
         code = c.get('code', '')
-        c['_tie_score'] = max(0, vs * 0.30 + ts * (0.35 if s == 'D' else 0.30) + cs * (0.25 if s == 'D' else 0.30) + (1.0 - so.get(s, 99) / 10.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
+        c['_tie_score'] = max(0, vs * (0.25 if s == 'D' else 0.30) + ts * (0.35 if s == 'D' else 0.30) + cs * 0.30 + (1.0 - so.get(s, 99) / 10.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
         # 融入最终score
         sc = c.get('score', 0) * 2
         sc += round(c['_tie_score'] * 8)  # v6.9.18: _tie_score 0~1 → 0~8分浮动，扩大区分度
