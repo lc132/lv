@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.17"
+BUILTIN_VERSION = "v6.9.18"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1415,13 +1415,14 @@ def step13_strategy_match(candidates, kline_data=None):
                                     break
                 if nb_days >= 2:
                     s = "F"; reason = f"北向资金(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%+持续{nb_days}日"; score = 4 + wm_penalty
-        # ── G 横盘突破 (v6.9.11: chg 1.0-4.0%, vr≥1.2) ──
+        # ── G 横盘突破 (v6.9.18: 弱市score-1, 追涨风险大) ──
         if not s and 1.0 <= chg < 4.0 and close > op:
             if amp is not None and 1.5 <= amp <= 6:
+                wm_penalty_g = -1 if market_condition == "弱市" else 0
                 if vr is not None and vr >= 1.2:
-                    s = "G"; reason = f"横盘突破:涨{chg:.1f}%+振幅{amp:.1f}%+量比{vr:.1f}"; score = 8
+                    s = "G"; reason = f"横盘突破:涨{chg:.1f}%+振幅{amp:.1f}%+量比{vr:.1f}"; score = 8 + wm_penalty_g
                 elif vr is None and to is not None and to >= 3:
-                    s = "G"; reason = f"横盘突破(代理):涨{chg:.1f}%+振幅{amp:.1f}%+换手{to:.1f}%"; score = 7
+                    s = "G"; reason = f"横盘突破(代理):涨{chg:.1f}%+振幅{amp:.1f}%+换手{to:.1f}%"; score = 7 + wm_penalty_g
         # ── H 地量见底 (v6.9.10: vr<0.85, body/close<0.008) ──
         if not s and -3 <= chg < 0 and close >= op:
             is_hammer = False
@@ -1598,7 +1599,7 @@ def step14_scoring(candidates):
         c['_tie_score'] = max(0, vs * 0.30 + ts * 0.30 + cs * 0.30 + (1.0 - so.get(s, 99) / 10.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
         # 融入最终score
         sc = c.get('score', 0) * 2
-        sc += round(c['_tie_score'] * 5)  # v6.9.11: _tie_score 0~1 → 0~5分浮动，扩大区分度
+        sc += round(c['_tie_score'] * 8)  # v6.9.18: _tie_score 0~1 → 0~8分浮动，扩大区分度
         if c.get('_first_yin'): sc += 2
         c['score'] = max(0, sc)
         if c['score'] >= 18: c['confidence'] = '★★★'
@@ -1877,9 +1878,13 @@ def calc_entry_price(c):
         return round(entry, 2)
     
     elif strategy == 'G':
-        # 横盘突破(v6.7.0): 放量突破平台，次日大概率高开惯性冲高
-        # 在收盘价上方0.5%挂单，追涨为主
-        if high > close and close > 0:
+        # 横盘突破(v6.9.18): 弱市不追涨，在收盘价下方进场；强/震荡市追涨
+        if market_condition == "弱市":
+            if low > 0 and close > low:
+                entry = low + (close - low) * 0.4  # 弱市低吸
+            else:
+                entry = close * 0.998
+        elif high > close and close > 0:
             entry = close + (high - close) * 0.3
         else:
             entry = close * 1.005
@@ -1980,7 +1985,14 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
             score = c.get('score', 0); conf = c.get('confidence', '★')
             chg_e = "🔴" if chg >= 0 else "🟢"
             entry = calc_entry_price(c)
-            sl = round(entry * 0.96, 2); tp = round(entry * 1.05, 2)
+            # v6.9.18: 策略差异化止损止盈
+            sl_map = {'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965, 'F': 0.965, 'G': 0.95, 'H': 0.94,
+                      'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95}
+            tp_map = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06,
+                      'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05}
+            s = c.get('strategy', 'Z')
+            sl = round(entry * sl_map.get(s, 0.96), 2)
+            tp = round(entry * tp_map.get(s, 1.05), 2)
             r7d = str(c.get('_recent_7d')) if c.get('_recent_7d') else ""
             # v6.6.44: 7日列附带历史策略标注
             r7s = c.get('_recent_7d_strategies', {})
@@ -2036,13 +2048,19 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             index_cards += f'<div class="index-card"><div class="idx-name">{name}</div><div class="idx-price">-</div><div class="idx-chg">数据不可得</div></div>'
     
     rows_html = ""
+    # v6.9.18: 策略差异化止损止盈（与step20 MD报告保持一致）
+    sl_map = {'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965, 'F': 0.965, 'G': 0.95, 'H': 0.94,
+              'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95}
+    tp_map = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06,
+              'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05}
     for idx, c in enumerate(candidates, 1):
         code = c.get('code', ''); name = c.get('name', ''); s = c.get('strategy', '?')
         ind = c.get('industry', '未知'); chg = c.get('change_pct', 0)
         op = c.get('open', 0) or 0; close = c.get('close', 0) or 0
         amp = c.get('amplitude', 0) or 0; score = c.get('score', 0); conf = c.get('confidence', '★')
         entry = calc_entry_price(c)
-        sl = round(entry * 0.96, 2); tp = round(entry * 1.05, 2)
+        sl = round(entry * sl_map.get(s, 0.96), 2)
+        tp = round(entry * tp_map.get(s, 1.05), 2)
         r7d_html = str(c.get('_recent_7d')) if c.get('_recent_7d') else ""
         # v6.6.44: 7日列附带历史策略标注
         r7s = c.get('_recent_7d_strategies', {})
