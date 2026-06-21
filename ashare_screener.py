@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.18"
+BUILTIN_VERSION = "v6.9.19"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1354,9 +1354,9 @@ def step13_strategy_match(candidates, kline_data=None):
                         c['_fake_breakout'] = True
                         score -= 3
                         reason += f" ⚠假突破(上影{round(upper_shadow/lower_shadow,1)}x)"
-        # ── B 超跌反弹（v6.9.5: 收紧，amp>5且有实体内反弹确认）──
-        if not s and -9.5 <= chg <= -3:
-            if amp > 5 and close > low * 1.02:
+        # ── B 超跌反弹（v6.9.19: 放宽amp>3+close>low*1.01, chg上限-2.5%）──
+        if not s and -9.5 <= chg <= -2.5:
+            if amp > 3 and close > low * 1.01:
                 s = "B"; reason = f"超跌反弹:跌{chg:.1f}%+振幅{amp:.1f}%+反弹确认"; score = 7
             elif amp > 8:
                 s = "B"; reason = f"超跌反弹(宽幅):跌{chg:.1f}%+振幅{amp:.1f}%"; score = 6
@@ -1369,9 +1369,9 @@ def step13_strategy_match(candidates, kline_data=None):
                 s = "C"; reason = f"事件驱动:涨{chg:.1f}%+量比{vr:.1f}"; score = 7
             elif vr is None and to is not None and to >= 2 and close > op:
                 s = "C"; reason = f"事件驱动(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 6
-        # ── D 回调企稳 (v6.9.17: 弱市时上限扩展至7%兜底A策略关闭后的(6,7]区间，但弱市下D权重降低) ──
+        # ── D 回调企稳 (v6.9.19: 放宽amp≥1.5%+弱市上限7%兜底A策略关闭后的(6,7]区间) ──
         if not s and 3 <= chg <= (7 if market_condition == "弱市" else 6):
-            if 2 <= amp <= 8 and close > op:
+            if 1.5 <= amp <= 10 and close > op:
                 s = "D"; reason = f"回调企稳:涨{chg:.1f}%+阳线+振幅{amp:.1f}%"; score = 8 if market_condition != "弱市" else 7
         # ── E 资金埋伏 (v6.9.17: 弱市下score-1) ──
         if not s and 0 <= chg <= 1:
@@ -1415,11 +1415,11 @@ def step13_strategy_match(candidates, kline_data=None):
                                     break
                 if nb_days >= 2:
                     s = "F"; reason = f"北向资金(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%+持续{nb_days}日"; score = 4 + wm_penalty
-        # ── G 横盘突破 (v6.9.18: 弱市score-1, 追涨风险大) ──
+        # ── G 横盘突破 (v6.9.19: vr≥1.0,弱市score-1) ──
         if not s and 1.0 <= chg < 4.0 and close > op:
             if amp is not None and 1.5 <= amp <= 6:
                 wm_penalty_g = -1 if market_condition == "弱市" else 0
-                if vr is not None and vr >= 1.2:
+                if vr is not None and vr >= 1.0:
                     s = "G"; reason = f"横盘突破:涨{chg:.1f}%+振幅{amp:.1f}%+量比{vr:.1f}"; score = 8 + wm_penalty_g
                 elif vr is None and to is not None and to >= 3:
                     s = "G"; reason = f"横盘突破(代理):涨{chg:.1f}%+振幅{amp:.1f}%+换手{to:.1f}%"; score = 7 + wm_penalty_g
