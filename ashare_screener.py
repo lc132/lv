@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.15"
+BUILTIN_VERSION = "v6.9.16"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1373,14 +1373,18 @@ def step13_strategy_match(candidates, kline_data=None):
         if not s and 3 <= chg <= (7 if market_condition == "弱市" else 6):
             if 2 <= amp <= 8 and close > op:
                 s = "D"; reason = f"回调企稳:涨{chg:.1f}%+阳线+振幅{amp:.1f}%"; score = 8
-        # ── E 资金埋伏 (v6.8.2: main_inflow为None时降级为量比+换手率兜底) ──
+        # ── E 资金埋伏 (v6.9.16: 放宽代理兜底，vr≥0.8+to≥1.0即可匹配) ──
         if not s and 0 <= chg <= 1:
             mi = c.get('main_inflow')
             if mi is not None and mi > 3000:
                 s = "E"; reason = f"资金埋伏:涨{chg:.1f}%+主力流入{mi:.0f}万"; score = 6
-            elif mi is None and vr is not None and vr >= 1.2 and to is not None and to >= 2 and close > op:
-                s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%"; score = 5
-        # ── F 北向资金（v6.9.15: 移除死码，增加代理兜底）──
+            elif mi is None and close > op:
+                # 代理兜底：阳线+放量或高换手（v6.9.16放宽）
+                if vr is not None and vr >= 0.8 and to is not None and to >= 1.0:
+                    s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%"; score = 5
+                elif vr is None and to is not None and to >= 1.5:
+                    s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 4
+        # ── F 北向资金（v6.9.16: 放宽代理兜底，vr≥1.0+to≥2.0即可）──
         if s == "E":
             mi = c.get('main_inflow')
             if mi is not None and mi > 5000:
@@ -1396,8 +1400,8 @@ def step13_strategy_match(candidates, kline_data=None):
                                     break
                 if nb_days >= 3:
                     s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi:.0f}万+持续{nb_days}日"; score = 5
-            elif mi is None and vr is not None and vr >= 1.5 and to is not None and to >= 3:
-                # 代理兜底：量比≥1.5+换手≥3% → 资金活跃度升级
+            elif mi is None and vr is not None and vr >= 1.0 and to is not None and to >= 2.0:
+                # 代理兜底：量比≥1.0+换手≥2% → 资金活跃度升级（v6.9.16放宽）
                 nb_days = 0
                 for fname in sorted(os.listdir('/workspace')):
                     if fname.startswith('推荐历史_') and fname.endswith('.json'):
@@ -1955,8 +1959,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
         "| 阶段 | 数量 | 排除 | 说明 |",
         "|------|------|------|------|",
         f"| ①原始标的池 | {total_raw} | - | 全市场活跃TOP500 |",
-        f"| ②硬排除 | {ae} | {total_raw - ae} | 16项(持仓/科创/北交/低价/高价/ST/涨幅/停牌/PE/市值/成交额/上市天数/质押/商誉/解禁) |",
-        f"| ③信号过滤 | {asig} | {ae - asig} | 16项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉/涨停次日高开低走/布林突破失败/20日涨幅>45%) |",
+        f"| ②硬排除 | {ae} | {total_raw - ae} | 14项(持仓/科创/北交/低价/高价/ST/涨幅/停牌/PE/市值/成交额/上市天数/质押商誉解禁已废弃) |",
+        f"| ③信号过滤 | {asig} | {ae - asig} | 21项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉/涨停次日高开低走/布林突破失败/20日涨幅>45%/放量不涨/放量滞跌/长上影线/连续缩量/净利润亏损) |",
         f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKLMNOPQ十七策略 |",
         f"| ⑤行业+同策略限制 | {aind} | {astr - aind} | 同行业≤3只+同策略≤30% |",
         f"| ⑥新闻筛查 | {aind - anew} | {anew} | Bing/东方财富双源利空检测 |",
@@ -2074,7 +2078,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         bp = cnt / mx * 100
         bar_html += f'<div class="bar-row"><div class="bar-label">{r}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%">{cnt}</div></div></div>'
     
-    stages = [("原始标的池", total_raw), ("硬排除(16项)", ae), ("信号过滤(16项)", asig),
+    stages = [("原始标的池", total_raw), ("硬排除(14项)", ae), ("信号过滤(21项)", asig),
               ("策略匹配(17策略)", astr), ("行业+同策略限制", aind), ("新闻筛查", aind - anew), ("最终推荐", fc)]
     max_f = max(s[1] for s in stages)
     funnel_html = ""
