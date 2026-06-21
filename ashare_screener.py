@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.5
-36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 审计修复
+A股每日盘前短线标的智能筛选 v6.9.6
+36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | P2修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.5"
+BUILTIN_VERSION = "v6.9.6"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -977,12 +977,12 @@ def step10C_fetch_klines(candidates):
                 # KDJ(9,3,3)
                 k_val = 50.0; d_val = 50.0; j_val = 50.0
                 if len(closes) >= 9:
-                    h9 = max(highs[-9:]); l9 = min(lows[-9:])
-                    if h9 > l9:
-                        rsv = (closes[-1] - l9) / (h9 - l9) * 100
-                        k_val = 2/3 * 50 + 1/3 * rsv  # 简化: 用50作为初始值
-                        d_val = 2/3 * 50 + 1/3 * k_val
-                        j_val = 3 * k_val - 2 * d_val
+                    for i in range(8, len(closes)):
+                        h9 = max(highs[i-8:i+1]); l9 = min(lows[i-8:i+1])
+                        rsv = (closes[i] - l9) / (h9 - l9) * 100 if h9 > l9 else 50
+                        k_val = 2/3 * k_val + 1/3 * rsv
+                        d_val = 2/3 * d_val + 1/3 * k_val
+                    j_val = 3 * k_val - 2 * d_val
                 # 布林带(20,2)
                 boll_mid = ma20
                 boll_upper = boll_mid; boll_lower = boll_mid
@@ -1051,7 +1051,7 @@ def step10C_fetch_klines(candidates):
             except Exception: kline_data[code] = {}
         try: api.disconnect()
         except: pass
-        log_alert("INFO", "K线拉取", f"获取{len(kline_data)}只历史K线(WR+OBV+DMI)")
+        log_alert("INFO", "K线拉取", f"获取{len(kline_data)}只历史K线(KDJ迭代+BOLL)")
     except Exception as e:
         log_alert("WARNING", "K线拉取", f"pytdx不可用: {str(e)[:60]}")
     return kline_data
@@ -1213,10 +1213,9 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
 # ============================================================
 # 步骤12：信号过滤
 # ============================================================
-def step12_signal_filter(candidates, kline_data=None, fundamental_data=None):
-    """v6.9.5: 删除净利润亏损死代码（step11已排除），精简为16项"""
+def step12_signal_filter(candidates, kline_data=None):
+    """v6.9.6: 清理dead参数fundamental_data，精简为16项"""
     if kline_data is None: kline_data = {}
-    if fundamental_data is None: fundamental_data = {}
     passed, excluded = [], []
     for c in candidates:
         chg = c.get('change_pct', 0); close = c.get('close', 0); op = c.get('open', 0)
@@ -1388,7 +1387,7 @@ def step13_strategy_match(candidates, kline_data=None):
                 min_shadow = max(body * 1.5, 0.001 * close)  # body=0时至少0.1%影线
                 if lower_shadow >= min_shadow:
                     is_hammer = True
-            vr_ok = (vr is not None and vr < 0.5) or (vr is None and to is not None and to < 0.5)
+            vr_ok = (vr is not None and vr < 0.7) or (vr is None and to is not None and to < 0.7)
             if vr_ok and (is_hammer or (close > 0 and body / close < 0.005)):
                 s = "H"; reason = f"地量见底:{chg:+.1f}%+量比{vr or 0:.1f}+锤子线"; score = 5
         # ── I 均线粘合突破（v6.9.0: 多均线间距<2%+放量阳线突破）──
@@ -1515,7 +1514,7 @@ def step13_strategy_match(candidates, kline_data=None):
 def step14_scoring(candidates):
     for c in candidates:
         sc = c.get('score', 0) * 2
-        if c.get('_first_yin'): sc += 3  # v6.8.5: 首阴权重提升 1→3
+        if c.get('_first_yin'): sc += 2  # v6.9.6: 首阴权重 3→2，避免弱信号过推
         # v6.8.5: _fake_breakout惩罚已在step13中扣分，此处不再重复扣罚
         c['score'] = max(0, sc)
         s = c['score']
@@ -2331,7 +2330,7 @@ def main():
     print(f"  原始池: {total_raw}只")
     
     print("\n[步骤11] 硬排除..."); ael, _, er = step11_hard_exclude(raw_pool, ahc, kline_data, pledge_data, goodwill_data, unlock_data, fundamental_data); ae = len(ael)
-    print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data, fundamental_data); asig = len(asl)
+    print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data); asig = len(asl)
     print("\n[步骤13] 策略匹配..."); sm = step13_strategy_match(asl, kline_data); astr = len(sm)
     print("\n[步骤14] 评分..."); scored = step14_scoring(sm)
     print("\n[步骤15·16] 综合评分+平局打破..."); ranked = step16_comprehensive_score(scored)
