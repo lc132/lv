@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.4
-36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 质押+商誉+解禁+ROE
+A股每日盘前短线标的智能筛选 v6.9.5
+36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 审计修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.4"
+BUILTIN_VERSION = "v6.9.5"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1141,7 +1141,7 @@ def step10D_fetch_financials():
 # 步骤11：硬排除
 # ============================================================
 def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_data=None, goodwill_data=None, unlock_data=None, fundamental_data=None):
-    """v6.9.4: 新增质押/商誉/解禁/连续亏损硬排除（17项）"""
+    """v6.9.5: 去重PE<0与ROE<0，精简为16项硬排除"""
     if kline_data is None: kline_data = {}
     if pledge_data is None: pledge_data = {}
     if goodwill_data is None: goodwill_data = {}
@@ -1202,12 +1202,7 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
                 if ratio > 10:
                     reason = f"解禁{ratio:.0f}%({ud})"
                     break
-        # v6.9.4: 连续亏损（ROE<0或净利润<0）
-        if not reason and code in fundamental_data:
-            fd = fundamental_data[code]
-            roe = fd.get('roe'); np_val = fd.get('net_profit')
-            if (roe is not None and roe < 0) or (np_val is not None and np_val < 0):
-                reason = "连续亏损(ROE负)"
+        # v6.9.5: PE<0已在上方排除(行1185)，ROE/净利润仅作参考不重复排除
         if reason: er[reason.split('(')[0]] += 1; excluded.append(c)
         else: passed.append(c)
     # 统计7日内推荐数量（仅统计通过且被标注的）
@@ -1219,7 +1214,7 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
 # 步骤12：信号过滤
 # ============================================================
 def step12_signal_filter(candidates, kline_data=None, fundamental_data=None):
-    """v6.9.4: 新增净利润亏损（17项）"""
+    """v6.9.5: 删除净利润亏损死代码（step11已排除），精简为16项"""
     if kline_data is None: kline_data = {}
     if fundamental_data is None: fundamental_data = {}
     passed, excluded = [], []
@@ -1296,19 +1291,13 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None):
             boll_width = kd.get('boll_width', 999)
             if boll_width < 0.05 and vr is not None and vr >= 1.5 and close < op:
                 reason = f"布林突破失败(带宽{boll_width:.1%})"
-        # 16. 20日涨幅>45%风控（v6.9.3: 防止追高爆炒股）
+        # 16. 20日涨幅>45%风控（v6.9.5: 防止追高爆炒股）
         if not reason:
             closes_h = kd.get('closes', [])
             if len(closes_h) >= 20 and closes_h[-20] > 0:
                 rally_20d_v2 = (close - closes_h[-20]) / closes_h[-20]
                 if rally_20d_v2 > 0.45:
                     reason = f"20日涨幅{rally_20d_v2:.0%}>45%"
-        # 17. 净利润亏损（v6.9.4: fundamental_data中净利润为负）
-        if not reason:
-            fd = fundamental_data.get(c.get('code', ''), {})
-            np_val = fd.get('net_profit')
-            if np_val is not None and np_val < 0:
-                reason = "净利润亏损"
         if reason: excluded.append(c)
         else: passed.append(c)
     log_alert("INFO", "信号过滤", f"通过{len(passed)}只 排除{len(excluded)}只")
@@ -1330,7 +1319,7 @@ def step13_strategy_match(candidates, kline_data=None):
         a_weak_closed = params.get('strategy_a_weak_market', 'closed') == 'closed'
         a_extreme = market_condition == "强市(极端上涨/降仓防追高)"
         if (not a_weak_closed or market_condition != "弱市") and not a_extreme and 3 <= chg <= 7:
-            if vr is not None and 1.5 <= vr <= 3.0:
+            if vr is not None and 1.5 <= vr <= 5.0:
                 s = "A"; reason = f"动量延续:涨{chg:.1f}%+量比{vr:.1f}"; score = 10
                 # v6.6.38: 假突破过滤 — 上影线:下影线>2:1 → 降置信减3分
                 if high > 0 and low > 0 and high > low:
@@ -1341,10 +1330,12 @@ def step13_strategy_match(candidates, kline_data=None):
                         c['_fake_breakout'] = True
                         score -= 3
                         reason += f" ⚠假突破(上影{round(upper_shadow/lower_shadow,1)}x)"
-        # ── B 超跌反弹 ──
+        # ── B 超跌反弹（v6.9.5: 收紧，amp>5且有实体内反弹确认）──
         if not s and -9.5 <= chg <= -3:
-            if amp > 3 or (low > 0 and close > low * 1.005):
-                s = "B"; reason = f"超跌反弹:跌{chg:.1f}%+振幅{amp:.1f}%"; score = 7
+            if amp > 5 and close > low * 1.02:
+                s = "B"; reason = f"超跌反弹:跌{chg:.1f}%+振幅{amp:.1f}%+反弹确认"; score = 7
+            elif amp > 8:
+                s = "B"; reason = f"超跌反弹(宽幅):跌{chg:.1f}%+振幅{amp:.1f}%"; score = 6
         # ── C 事件驱动 (v6.8.2: vr=None时用换手率≥2%兜底) ──
         if not s and 1 <= chg < 2:
             is_earnings = beijing_now.month in (1, 3, 4, 8, 10)
@@ -1437,8 +1428,8 @@ def step13_strategy_match(candidates, kline_data=None):
                     gap_up = op > yest_high * 1.01  # 跳空高开>1%
                     gap_size = (op - yest_high) / yest_high if yest_high > 0 else 0
                     if gap_up and 0.01 <= gap_size <= 0.05:
-                        # 回踩缺口上沿: low接近yest_high(±1%)
-                        if low <= yest_high * 1.01 and close >= op:
+                        # 回踩缺口上沿: low触达yest_high下方(±0.5%)才算真正回补
+                        if low <= yest_high * 0.995 and close >= op:
                             s = "K"; reason = f"缺口回补:跳空{gap_size:.1%}→回踩确认+收阳"; score = 8
         # ── L 黄金坑（v6.9.1: 近5日急跌后V型反弹）──
         if not s:
@@ -1455,7 +1446,7 @@ def step13_strategy_match(candidates, kline_data=None):
                         vr_ok = (vr is not None and vr >= 1.2) or (to is not None and to >= 3)
                         if vr_ok:
                             s = "L"; reason = f"黄金坑:跌{abs(drop):.1%}→反弹{rebound:.1%}+放量+收阳"; score = 9
-        # ── M 涨停回调（v6.9.3: 近5日曾涨停→回调至50-62%位置+缩量企稳）──
+        # ── M 涨停回调（v6.9.3: 近5日曾涨停→回调至85-95%位置+缩量企稳）──
         if not s:
             kd = kline_data.get(c.get('code', ''), {})
             if kd.get('limit_up_days', 0) >= 1 and close > 0:
@@ -1509,8 +1500,8 @@ def step13_strategy_match(candidates, kline_data=None):
                 l1 = min(lows_h[-20:-10]) if len(lows_h) >= 20 else 0
                 l2 = min(lows_h[-10:]) if len(lows_h) >= 10 else 0
                 if l1 > 0 and l2 > 0 and 0.95 < l2 / l1 < 1.05:  # 两底相差<5%
-                    # 颈线: 两底之间最高点
-                    neck = max(highs_h[-20:-10]) if len(highs_h) >= 20 else 0
+                    # 颈线: 两底之间最高点（取整个20日区间，因为两底横跨前后10日）
+                    neck = max(highs_h[-20:]) if len(highs_h) >= 20 else 0
                     if neck > 0 and close > neck * 1.01 and close > op:
                         if vr is not None and vr >= 1.5:
                             s = "Q"; reason = f"W底突破:两底{l1:.2f}/{l2:.2f}+突破颈线{neck:.2f}+放量"; score = 9
@@ -1925,8 +1916,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
         "| 阶段 | 数量 | 排除 | 说明 |",
         "|------|------|------|------|",
         f"| ①原始标的池 | {total_raw} | - | 全市场活跃TOP500 |",
-        f"| ②硬排除 | {ae} | {total_raw - ae} | 17项(持仓/科创/北交/低价/高价/ST/涨幅/停牌/PE/市值/成交额/上市天数/质押/商誉/解禁/亏损) |",
-        f"| ③信号过滤 | {asig} | {ae - asig} | 17项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉/涨停次日高开低走/布林突破失败/20日涨幅>45%/净利润亏损) |",
+        f"| ②硬排除 | {ae} | {total_raw - ae} | 16项(持仓/科创/北交/低价/高价/ST/涨幅/停牌/PE/市值/成交额/上市天数/质押/商誉/解禁) |",
+        f"| ③信号过滤 | {asig} | {ae - asig} | 16项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉/涨停次日高开低走/布林突破失败/20日涨幅>45%) |",
         f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKLMNOPQ十七策略 |",
         f"| ⑤行业+同策略限制 | {aind} | {astr - aind} | 同行业≤3只+同策略≤30% |",
         f"| ⑥新闻筛查 | {aind - anew} | {anew} | Bing/东方财富双源利空检测 |",
@@ -2044,7 +2035,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         bp = cnt / mx * 100
         bar_html += f'<div class="bar-row"><div class="bar-label">{r}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%">{cnt}</div></div></div>'
     
-    stages = [("原始标的池", total_raw), ("硬排除(17项)", ae), ("信号过滤(17项)", asig),
+    stages = [("原始标的池", total_raw), ("硬排除(16项)", ae), ("信号过滤(16项)", asig),
               ("策略匹配(17策略)", astr), ("行业+同策略限制", aind), ("新闻筛查", aind - anew), ("最终推荐", fc)]
     max_f = max(s[1] for s in stages)
     funnel_html = ""
