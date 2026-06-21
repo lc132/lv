@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.13"
+BUILTIN_VERSION = "v6.9.14"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -463,6 +463,9 @@ def step7_earnings_season():
 
 def step8_market_environment():
     global market_condition, position_pct, index_data
+    # 保存前置步骤可能已设置的保守值（step1长休弱市/step3外围暴跌等）
+    pre_condition = market_condition
+    pre_position = position_pct
     idx = fetch_tencent_index(["sh000001", "sz399001", "sz399006"])
     index_data = idx  # 保存供HTML使用
     if idx:
@@ -484,19 +487,26 @@ def step8_market_environment():
                     elif cur_c < ma20 * 0.98: market_condition = "弱市"; position_pct = 35
                     else: market_condition = "震荡"; position_pct = 55
                     api.disconnect()
-                    log_alert("INFO", "大盘环境", f"{market_condition} 仓位{position_pct}%")
-                    return
+                    break
                 api.disconnect()
     except Exception: pass
-    # 降级：根据涨跌判断
-    if idx:
+    # 降级：根据涨跌判断（仅在pytdx未设置时生效）
+    if not idx:
+        market_condition = "震荡"; position_pct = 55
+    elif market_condition == pre_condition and position_pct == pre_position:
+        # pytdx未成功设置，降级判断
         sh = idx.get("sh000001", {})
         chg = sh.get("change_pct", 0)
         if chg > 1: market_condition = "强市"; position_pct = 75
         elif chg < -1: market_condition = "弱市"; position_pct = 35
         else: market_condition = "震荡"; position_pct = 55
-    else: market_condition = "震荡"; position_pct = 55
-    log_alert("INFO", "大盘环境", f"降级判断: {market_condition} 仓位{position_pct}%")
+    # 保护前置步骤的保守设置：不覆盖更弱的条件
+    if pre_condition == "弱市" and market_condition != "弱市":
+        market_condition = "弱市"
+        position_pct = min(position_pct, pre_position)
+        log_alert("INFO", "大盘环境", f"保护前置弱市: {market_condition} 仓位{position_pct}%")
+    else:
+        log_alert("INFO", "大盘环境", f"判断: {market_condition} 仓位{position_pct}%")
 
 # ============================================================
 # 步骤10A：全市场拉取（三级降级，Tier2改为腾讯）
@@ -1082,9 +1092,13 @@ def step10C_fetch_klines(candidates):
 # 步骤10D：东方财富财务数据拉取（v6.9.4: 质押/商誉/解禁/ROE）
 # ============================================================
 def step10D_fetch_financials():
-    """批量拉取东方财富财务数据: 质押/商誉/解禁/ROE/净利润"""
+    """批量拉取东方财富财务数据: 质押/商誉/解禁/ROE/净利润
+    v6.9.14: 东方财富datacenter-web API已全部废弃(返回success:False)。
+    当前所有财务数据返回空字典，硬排除规则13-17(质押/商誉/解禁/ROE)降级跳过。
+    待接入新的财务数据源后恢复。"""
     pledge_data = {}; goodwill_data = {}; unlock_data = {}; fundamental_data = {}
     headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://data.eastmoney.com/'}
+    api_degraded = False
     
     # 1. 质押比例
     try:
@@ -1093,12 +1107,16 @@ def step10D_fetch_financials():
                '&sortColumns=PLEDGE_RATIO&sortTypes=-1&source=WEB&client=WEB')
         req = urllib.request.Request(url, headers=headers)
         r = json.loads(urllib.request.urlopen(req, timeout=10).read())
-        for item in (r.get('result') or {}).get('data', []):
-            code = item.get('SECURITY_CODE', '')
-            ratio = item.get('PLEDGE_RATIO')
-            if code and ratio is not None: pledge_data[code] = float(ratio)
-        log_alert("INFO", "财务数据", f"质押比例: {len(pledge_data)}只")
-    except Exception as e: log_alert("WARNING", "质押数据", str(e)[:60])
+        if not r.get('success', True):
+            api_degraded = True
+            log_alert("WARNING", "财务数据", f"质押API已废弃(success=False)，降级跳过")
+        else:
+            for item in (r.get('result') or {}).get('data', []):
+                code = item.get('SECURITY_CODE', '')
+                ratio = item.get('PLEDGE_RATIO')
+                if code and ratio is not None: pledge_data[code] = float(ratio)
+            log_alert("INFO", "财务数据", f"质押比例: {len(pledge_data)}只")
+    except Exception as e: log_alert("WARNING", "质押数据", str(e)[:60]); api_degraded = True
     
     # 2. 商誉/净资产
     try:
