@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.23"
+BUILTIN_VERSION = "v6.9.24"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1148,7 +1148,7 @@ def step10E_fetch_fundamentals(candidates):
 # 步骤11：硬排除
 # ============================================================
 def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_data=None, goodwill_data=None, unlock_data=None, fundamental_data=None):
-    """v6.9.5: 去重PE<0与ROE<0，精简为16项硬排除"""
+    """v6.9.24: 13项硬排除（PE<0已迁移至信号过滤#21，质押/商誉/解禁API已废弃降级跳过）"""
     if kline_data is None: kline_data = {}
     if pledge_data is None: pledge_data = {}
     if goodwill_data is None: goodwill_data = {}
@@ -1208,7 +1208,7 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
                 if ratio > 10:
                     reason = f"解禁{ratio:.0f}%({ud})"
                     break
-        # v6.9.5: PE<0已在上方排除(行1185)，ROE/净利润仅作参考不重复排除
+        # v6.9.22: PE<0已迁移至信号过滤#21，此处在硬排除中不再检查
         if reason: er[reason.split('(')[0]] += 1; excluded.append(c)
         else: passed.append(c)
     # 统计7日内推荐数量（仅统计通过且被标注的）
@@ -1259,7 +1259,7 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None):
         if not reason:
             high20 = kd.get('high20', 0); dif = kd.get('dif', 0)
             closes_h = kd.get('closes', [])
-            if high20 > 0 and dif != 0 and len(closes_h) >= 20:
+            if high20 > 0 and len(closes_h) >= 20:
                 difs_list = []
                 ema12 = closes_h[0]; ema26 = closes_h[0]
                 for pr in closes_h[1:]:
@@ -1998,13 +1998,13 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
                       'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95}
             tp_map = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06,
                       'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05}
-            s = c.get('strategy', 'Z')
             sl = round(entry * sl_map.get(s, 0.96), 2)
             tp = round(entry * tp_map.get(s, 1.05), 2)
-            r7d = str(c.get('_recent_7d')) if c.get('_recent_7d') else ""
+            r7d = c.get('_recent_7d')
+            r7d_str = str(r7d) if r7d is not None else ""
             # v6.6.44: 7日列附带历史策略标注
             r7s = c.get('_recent_7d_strategies', {})
-            if r7d and r7s:
+            if r7d_str and r7s:
                 # 按日期排序，取策略列表（去重）如 "1(A,B)" 表示1天前，策略A/B
                 sorted_dates = sorted(r7s.keys())
                 strats = [r7s[d] for d in sorted_dates]
@@ -2012,9 +2012,9 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
                 seen = set(); uniq_s = []
                 for s_ in strats:
                     if s_ not in seen: seen.add(s_); uniq_s.append(s_)
-                r7d = f"{r7d} ({','.join(uniq_s)})"
+                r7d_str = f"{r7d} ({','.join(uniq_s)})"
             url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
-            lines.append(f"| {idx} | {s} | [{name}]({url}) | {code} | {ind} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} |")
+            lines.append(f"| {idx} | {s} | [{name}]({url}) | {code} | {ind} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} |")
     sd = Counter(c.get('strategy') for c in candidates)
     sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破'}
     lines.append("\n## 策略分布")
@@ -2413,8 +2413,7 @@ def main():
     sd = Counter(c.get('strategy') for c in final)
     
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, aind, anew, er)
-    print("\n[步骤20B] HTML..."); hd = f"/workspace/ashare-screening-{pred_yyyymmdd}"
-    step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts)
+    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts); hd = os.path.dirname(hp)
     
     print("\n[步骤21] 验证..."); step21_final_verify(mp, fc)
     print("\n[步骤22] 推荐历史..."); step22_write_history(final)
