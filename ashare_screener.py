@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.10
+A股每日盘前短线标的智能筛选 v6.9.11
 36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | P2修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html
@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.10"
+BUILTIN_VERSION = "v6.9.11"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1077,7 +1077,7 @@ def step10D_fetch_financials():
                '&sortColumns=PLEDGE_RATIO&sortTypes=-1&source=WEB&client=WEB')
         req = urllib.request.Request(url, headers=headers)
         r = json.loads(urllib.request.urlopen(req, timeout=10).read())
-        for item in r.get('result', {}).get('data', []):
+        for item in (r.get('result') or {}).get('data', []):
             code = item.get('SECURITY_CODE', '')
             ratio = item.get('PLEDGE_RATIO')
             if code and ratio is not None: pledge_data[code] = float(ratio)
@@ -1091,7 +1091,7 @@ def step10D_fetch_financials():
                '&sortColumns=NOTICE_DATE,SECURITY_CODE&sortTypes=-1,-1&source=WEB&client=WEB')
         req = urllib.request.Request(url, headers=headers)
         r = json.loads(urllib.request.urlopen(req, timeout=10).read())
-        for item in r.get('result', {}).get('data', []):
+        for item in (r.get('result') or {}).get('data', []):
             code = item.get('SECURITY_CODE', '')
             gw = item.get('GOODWILL'); na = item.get('NET_ASSETS')
             if code and gw is not None and na is not None and na > 0:
@@ -1111,7 +1111,7 @@ def step10D_fetch_financials():
                f'&source=WEB&client=WEB')
         req = urllib.request.Request(url, headers=headers)
         r = json.loads(urllib.request.urlopen(req, timeout=10).read())
-        for item in r.get('result', {}).get('data', []):
+        for item in (r.get('result') or {}).get('data', []):
             code = item.get('SECURITY_CODE', '')
             ud = item.get('UNLOCK_DATE', '')
             ratio = item.get('UNLOCK_RATIO')
@@ -1121,15 +1121,24 @@ def step10D_fetch_financials():
         log_alert("INFO", "财务数据", f"解禁: {len(unlock_data)}只有近期解禁")
     except Exception as e: log_alert("WARNING", "解禁数据", str(e)[:60])
     
-    # 4. ROE/净利润（最新报告期）
+    # 4. ROE/净利润（最新报告期，动态计算）
     try:
-        url = ('https://datacenter-web.eastmoney.com/api/data/v1/get'
-               '?reportName=RPT_DMSK_FN_MAIN&columns=ALL&pageNumber=1&pageSize=500'
-               '&sortColumns=SECURITY_CODE&sortTypes=1'
-               '&filter=(REPORT_DATE%3D%272025-12-31%27)&source=WEB&client=WEB')
+        from datetime import datetime
+        now = datetime.now()
+        # 最新财报季: 若当前月份在1-4月则用上年Q3(09-30), 5-8月用当年Q1(03-31), 9-12月用当年Q2(06-30)
+        if now.month <= 4:
+            latest_report = f"{now.year - 1}-12-31"
+        elif now.month <= 8:
+            latest_report = f"{now.year}-03-31"
+        else:
+            latest_report = f"{now.year}-06-30"
+        url = (f'https://datacenter-web.eastmoney.com/api/data/v1/get'
+               f'?reportName=RPT_DMSK_FN_MAIN&columns=ALL&pageNumber=1&pageSize=500'
+               f'&sortColumns=SECURITY_CODE&sortTypes=1'
+               f'&filter=(REPORT_DATE%3D%27{latest_report}%27)&source=WEB&client=WEB')
         req = urllib.request.Request(url, headers=headers)
         r = json.loads(urllib.request.urlopen(req, timeout=10).read())
-        for item in r.get('result', {}).get('data', []):
+        for item in (r.get('result') or {}).get('data', []):
             code = item.get('SECURITY_CODE', '')
             if code:
                 fundamental_data[code] = {
@@ -1307,6 +1316,13 @@ def step12_signal_filter(candidates, kline_data=None):
         if not reason and vr is not None and vr > 2 and 0 < chg < 1: reason = "放量不涨"
         # 18. 放量滞跌（v6.9.10: 量比>1.5+微跌+收阴→放量滞跌，下跌中继）
         if not reason and vr is not None and vr > 1.5 and -1 < chg < 0 and close < op: reason = "放量滞跌"
+        # 19. 高位长上影线（v6.9.11: 涨>5%+上影线>实体2倍→高位抛压）
+        if not reason and chg > 5 and high > max(close, op) and low > 0:
+            body = abs(close - op); upper_shadow = high - max(close, op)
+            if upper_shadow > body * 2 and upper_shadow / close > 0.03:
+                reason = "长上影线"
+        # 20. 连续缩量（v6.9.11: 量比<0.4+涨跌<1%→无人气横盘）
+        if not reason and vr is not None and vr < 0.4 and abs(chg) < 1: reason = "连续缩量"
         if reason: excluded.append(c)
         else: passed.append(c)
     log_alert("INFO", "信号过滤", f"通过{len(passed)}只 排除{len(excluded)}只")
@@ -1381,8 +1397,8 @@ def step13_strategy_match(candidates, kline_data=None):
                                     break
                 if nb_days >= 3:
                     s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi:.0f}万+持续{nb_days}日"; score = 5
-        # ── G 横盘突破 (v6.9.10: chg放宽至1.5-3.5%, vr≥1.2) ──
-        if not s and 1.5 <= chg < 3.5 and close > op:
+        # ── G 横盘突破 (v6.9.11: chg 1.0-4.0%, vr≥1.2) ──
+        if not s and 1.0 <= chg < 4.0 and close > op:
             if amp is not None and 1.5 <= amp <= 6:
                 if vr is not None and vr >= 1.2:
                     s = "G"; reason = f"横盘突破:涨{chg:.1f}%+振幅{amp:.1f}%+量比{vr:.1f}"; score = 8
@@ -1564,7 +1580,7 @@ def step14_scoring(candidates):
         c['_tie_score'] = max(0, vs * 0.30 + ts * 0.30 + cs * 0.30 + (1.0 - so.get(s, 99) / 10.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
         # 融入最终score
         sc = c.get('score', 0) * 2
-        sc += round(c['_tie_score'] * 3)  # _tie_score 0~1 → 0~3分浮动
+        sc += round(c['_tie_score'] * 5)  # v6.9.11: _tie_score 0~1 → 0~5分浮动，扩大区分度
         if c.get('_first_yin'): sc += 2
         c['score'] = max(0, sc)
         if c['score'] >= 18: c['confidence'] = '★★★'
