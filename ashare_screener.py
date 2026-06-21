@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.22"
+BUILTIN_VERSION = "v6.9.23"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1244,8 +1244,8 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None):
         if not reason and amp > 15: reason = f"振幅>{amp:.1f}%"
         # 5. 跌停板边缘：chg<-9%+振幅>12%
         if not reason and chg < -9 and amp > 12: reason = "跌停板异动"
-        # 6. 缩量下跌：chg<-3%+量比<0.3
-        if not reason and chg < -3 and vr is not None and vr < 0.3: reason = "缩量下跌"
+        # 6. 缩量下跌（v6.9.23: vr<0.15→真正无流动性排除，避免与B策略超跌反弹冲突）
+        if not reason and chg < -3 and vr is not None and vr < 0.15: reason = "缩量下跌"
         # 7. 高换手低涨幅：换手>20%+涨跌幅<2%
         if not reason and to > 20 and abs(chg) < 2: reason = "高换手低涨幅"
         # 8. 首阴标记（不排除，仅加分）
@@ -1591,14 +1591,15 @@ def step14_scoring(candidates):
         amp = c.get('amplitude', 0) or 0
         ma_bonus = 0.05 if amp < 3 and vr > 1.2 else 0
         code = c.get('code', '')
-        c['_tie_score'] = max(0, vs * 0.30 + ts * 0.30 + cs * 0.30 + (1.0 - so.get(s, 99) / 10.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
+        c['_tie_score'] = max(0, vs * 0.30 + ts * (0.35 if s == 'D' else 0.30) + cs * (0.25 if s == 'D' else 0.30) + (1.0 - so.get(s, 99) / 10.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
         # 融入最终score
         sc = c.get('score', 0) * 2
         sc += round(c['_tie_score'] * 8)  # v6.9.18: _tie_score 0~1 → 0~8分浮动，扩大区分度
-        # v6.9.20: D策略振幅区分度，理想振幅3-6%+1分，>8%-1分
+        # v6.9.23: D策略振幅四档区分度，扩大16只标的间区分
         if s == 'D' and amp is not None:
-            if 3 <= amp <= 6: sc += 1
-            elif amp > 8: sc -= 1
+            if 3 <= amp <= 6: sc += 1       # 理想振幅
+            elif 1.5 <= amp < 3: sc -= 1     # 振幅偏小，动力不足
+            elif amp > 8: sc -= 1            # 振幅偏大，波动风险
         # v6.9.21: B策略深度跌幅加分，跌幅越深反弹潜力越大
         if s == 'B':
             if chg < -7: sc += 2
@@ -1973,10 +1974,10 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
         "| 阶段 | 数量 | 排除 | 说明 |",
         "|------|------|------|------|",
         f"| ①原始标的池 | {total_raw} | - | 全市场活跃TOP500 |",
-        f"| ②硬排除 | {ae} | {total_raw - ae} | 14项(持仓/科创/北交/低价/高价/ST/涨幅/停牌/PE/市值/成交额/上市天数/质押商誉解禁已废弃) |",
+        f"| ②硬排除 | {ae} | {total_raw - ae} | 13项(持仓/科创/北交/低价/高价/ST/涨幅/停牌/市值/成交额/上市天数/质押商誉解禁已废弃) |",
         f"| ③信号过滤 | {asig} | {ae - asig} | 21项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉/涨停次日高开低走/布林突破失败/20日涨幅>45%/放量不涨/放量滞跌/长上影线/连续缩量/净利润亏损) |",
         f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKLMNOPQ十七策略 |",
-        f"| ⑤行业+同策略限制 | {aind} | {astr - aind} | 同行业≤3只+同策略≤30% |",
+        f"| ⑤行业+同策略限制 | {aind} | {astr - aind} | 同行业≤4只(弱市)/3只(强/震荡)+同策略≤30% |",
         f"| ⑥新闻筛查 | {aind - anew} | {anew} | Bing/东方财富双源利空检测 |",
         f"| ★最终推荐 | {len(candidates)} | {aind - anew - len(candidates)} | 评分门控+降级 |", "",
     ]
@@ -2105,7 +2106,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         bp = cnt / mx * 100
         bar_html += f'<div class="bar-row"><div class="bar-label">{r}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%">{cnt}</div></div></div>'
     
-    stages = [("原始标的池", total_raw), ("硬排除(14项)", ae), ("信号过滤(21项)", asig),
+    stages = [("原始标的池", total_raw), ("硬排除(13项)", ae), ("信号过滤(21项)", asig),
               ("策略匹配(17策略)", astr), ("行业+同策略限制", aind), ("新闻筛查", aind - anew), ("最终推荐", fc)]
     max_f = max(s[1] for s in stages)
     funnel_html = ""
