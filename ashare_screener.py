@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.11"
+BUILTIN_VERSION = "v6.9.12"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -193,6 +193,29 @@ def step0_get_beijing_time():
         if beijing_weekday == 4: prediction_date = (beijing_now + timedelta(days=3)).strftime('%Y-%m-%d')
         else: prediction_date = (beijing_now + timedelta(days=1)).strftime('%Y-%m-%d')
     else: prediction_date = beijing_date
+    # 节假日调整：data_date和prediction_date若为节假日则回退/推进到最近交易日
+    h = ["2026-01-01","2026-01-02","2026-02-16","2026-02-17","2026-02-18","2026-02-19","2026-02-20",
+         "2026-04-06","2026-05-01","2026-06-19","2026-06-20","2026-06-21","2026-06-22","2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07"]
+    # data_date若为节假日，回退到上一个交易日
+    if data_date in h:
+        dd_dt = datetime.strptime(data_date, '%Y-%m-%d')
+        for _ in range(10):
+            dd_dt -= timedelta(days=1)
+            candidate = dd_dt.strftime('%Y-%m-%d')
+            if candidate not in h and dd_dt.weekday() < 5:
+                data_date = candidate
+                log_alert("INFO", "节假日", f"data_date回退至{data_date}")
+                break
+    # prediction_date若为节假日，推进到下一个交易日
+    if prediction_date in h:
+        pd_dt = datetime.strptime(prediction_date, '%Y-%m-%d')
+        for _ in range(10):
+            pd_dt += timedelta(days=1)
+            candidate = pd_dt.strftime('%Y-%m-%d')
+            if candidate not in h and pd_dt.weekday() < 5:
+                prediction_date = candidate
+                log_alert("INFO", "节假日", f"prediction_date推进至{prediction_date}")
+                break
     pred_yyyymmdd = prediction_date.replace('-', '')
     log_alert("INFO", "北京时间", f"beijing={beijing_date} data={data_date} pred={prediction_date}")
 
@@ -222,26 +245,19 @@ def step0A_pull_holdings():
 # 步骤1-2：节假日 + 极端行情（腾讯API）
 # ============================================================
 def step1_holiday_check():
-    global prediction_date, pred_yyyymmdd, position_pct, market_condition
+    global prediction_date, pred_yyyymmdd, position_pct, market_condition, params
     h = ["2026-01-01","2026-01-02","2026-02-16","2026-02-17","2026-02-18","2026-02-19","2026-02-20",
          "2026-04-06","2026-05-01","2026-06-19","2026-06-20","2026-06-21","2026-06-22","2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07"]
-    if data_date in h:
-        return True  # 数据日节假日→跳过
-    if prediction_date in h:
-        # prediction_date是节假日，推进到下一个交易日
-        old_pred = prediction_date
-        pd_dt = datetime.strptime(prediction_date, '%Y-%m-%d')
-        for _ in range(10):
-            pd_dt += timedelta(days=1)
-            candidate = pd_dt.strftime('%Y-%m-%d')
-            if candidate not in h and pd_dt.weekday() < 5:
-                prediction_date = candidate
-                pred_yyyymmdd = pd_dt.strftime('%Y%m%d')
-                break
-        log_alert("INFO", "节假日", f"预测日期{old_pred}为节假日，推进至{prediction_date}")
-        # 长休≥3日→弱市+仓位≤30%+搜索预算+5
+    # 长休检测：data_date到prediction_date之间自然日≥3天→弱市+仓位≤30%+搜索预算+5
+    dd_dt = datetime.strptime(data_date, '%Y-%m-%d')
+    pd_dt = datetime.strptime(prediction_date, '%Y-%m-%d')
+    days_gap = (pd_dt - dd_dt).days
+    if days_gap >= 4:  # data_date和prediction_date间隔≥4自然日（含周末+节假日）
+        log_alert("INFO", "节假日", f"长休{data_date}→{prediction_date}(间隔{days_gap}日)，弱市+仓位≤30%+搜索预算+5")
         position_pct = 30
         market_condition = "弱市"
+        params = params.copy()
+        params['search_budget'] = params.get('search_budget', 25) + 5
     return False
 
 def step2_extreme_market():
