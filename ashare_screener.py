@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.19"
+BUILTIN_VERSION = "v6.9.20"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1354,9 +1354,9 @@ def step13_strategy_match(candidates, kline_data=None):
                         c['_fake_breakout'] = True
                         score -= 3
                         reason += f" ⚠假突破(上影{round(upper_shadow/lower_shadow,1)}x)"
-        # ── B 超跌反弹（v6.9.19: 放宽amp>3+close>low*1.01, chg上限-2.5%）──
+        # ── B 超跌反弹（v6.9.20: 放宽amp>3+close>low*1.01, chg上限-2.5%, low=0保护）──
         if not s and -9.5 <= chg <= -2.5:
-            if amp > 3 and close > low * 1.01:
+            if amp > 3 and low > 0 and close > low * 1.01:
                 s = "B"; reason = f"超跌反弹:跌{chg:.1f}%+振幅{amp:.1f}%+反弹确认"; score = 7
             elif amp > 8:
                 s = "B"; reason = f"超跌反弹(宽幅):跌{chg:.1f}%+振幅{amp:.1f}%"; score = 6
@@ -1373,22 +1373,20 @@ def step13_strategy_match(candidates, kline_data=None):
         if not s and 3 <= chg <= (7 if market_condition == "弱市" else 6):
             if 1.5 <= amp <= 10 and close > op:
                 s = "D"; reason = f"回调企稳:涨{chg:.1f}%+阳线+振幅{amp:.1f}%"; score = 8 if market_condition != "弱市" else 7
-        # ── E 资金埋伏 (v6.9.17: 弱市下score-1) ──
+        # ── E 资金埋伏 (v6.9.20: 弱市不折扣，低波动策略是弱市最佳选择) ──
         if not s and 0 <= chg <= 1:
             mi = c.get('main_inflow')
-            wm_penalty = -1 if market_condition == "弱市" else 0
             if mi is not None and mi > 3000:
-                s = "E"; reason = f"资金埋伏:涨{chg:.1f}%+主力流入{mi:.0f}万"; score = 6 + wm_penalty
+                s = "E"; reason = f"资金埋伏:涨{chg:.1f}%+主力流入{mi:.0f}万"; score = 6
             elif mi is None and close > op:
                 # 代理兜底：阳线+放量或高换手
                 if vr is not None and vr >= 0.8 and to is not None and to >= 1.0:
-                    s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%"; score = 5 + wm_penalty
+                    s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%"; score = 5
                 elif vr is None and to is not None and to >= 1.5:
-                    s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 4 + wm_penalty
-        # ── F 北向资金（v6.9.17: 弱市下score-1）──
+                    s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 4
+        # ── F 北向资金（v6.9.20: 弱市不折扣）──
         if s == "E":
             mi = c.get('main_inflow')
-            wm_penalty = -1 if market_condition == "弱市" else 0
             if mi is not None and mi > 5000:
                 # 主力资金>5000万 → 升级为F
                 nb_days = 0
@@ -1401,7 +1399,7 @@ def step13_strategy_match(candidates, kline_data=None):
                                     nb_days += 1
                                     break
                 if nb_days >= 3:
-                    s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi:.0f}万+持续{nb_days}日"; score = 5 + wm_penalty
+                    s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi:.0f}万+持续{nb_days}日"; score = 5
             elif mi is None and vr is not None and vr >= 1.0 and to is not None and to >= 2.0:
                 # 代理兜底：量比≥1.0+换手≥2% → 资金活跃度升级
                 nb_days = 0
@@ -1414,17 +1412,16 @@ def step13_strategy_match(candidates, kline_data=None):
                                     nb_days += 1
                                     break
                 if nb_days >= 2:
-                    s = "F"; reason = f"北向资金(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%+持续{nb_days}日"; score = 4 + wm_penalty
-        # ── G 横盘突破 (v6.9.19: vr≥1.0,弱市score-1) ──
+                    s = "F"; reason = f"北向资金(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%+持续{nb_days}日"; score = 4
+        # ── G 横盘突破 (v6.9.20: vr≥1.0, 弱市不折扣—低吸策略) ──
         if not s and 1.0 <= chg < 4.0 and close > op:
             if amp is not None and 1.5 <= amp <= 6:
-                wm_penalty_g = -1 if market_condition == "弱市" else 0
                 if vr is not None and vr >= 1.0:
-                    s = "G"; reason = f"横盘突破:涨{chg:.1f}%+振幅{amp:.1f}%+量比{vr:.1f}"; score = 8 + wm_penalty_g
+                    s = "G"; reason = f"横盘突破:涨{chg:.1f}%+振幅{amp:.1f}%+量比{vr:.1f}"; score = 8
                 elif vr is None and to is not None and to >= 3:
-                    s = "G"; reason = f"横盘突破(代理):涨{chg:.1f}%+振幅{amp:.1f}%+换手{to:.1f}%"; score = 7 + wm_penalty_g
-        # ── H 地量见底 (v6.9.10: vr<0.85, body/close<0.008) ──
-        if not s and -3 <= chg < 0 and close >= op:
+                    s = "G"; reason = f"横盘突破(代理):涨{chg:.1f}%+振幅{amp:.1f}%+换手{to:.1f}%"; score = 7
+        # ── H 地量见底 (v6.9.20: chg上限0→0.5%, vr<0.85→<0.90, 放宽) ──
+        if not s and -3 <= chg < 0.5 and close >= op:
             is_hammer = False
             if high > low and low > 0:
                 body = abs(close - op)
@@ -1432,7 +1429,7 @@ def step13_strategy_match(candidates, kline_data=None):
                 min_shadow = max(body * 1.5, 0.001 * close)  # body=0时至少0.1%影线
                 if lower_shadow >= min_shadow:
                     is_hammer = True
-            vr_ok = (vr is not None and vr < 0.85) or (vr is None and to is not None and to < 0.85)
+            vr_ok = (vr is not None and vr < 0.90) or (vr is None and to is not None and to < 0.90)
             if vr_ok and (is_hammer or (close > 0 and body / close < 0.008)):
                 s = "H"; reason = f"地量见底:{chg:+.1f}%+量比{vr or 0:.1f}+锤子线"; score = 5
         # ── I 均线粘合突破（v6.9.17: 放宽粘合<3%+vr≥1.2）──
@@ -1600,6 +1597,10 @@ def step14_scoring(candidates):
         # 融入最终score
         sc = c.get('score', 0) * 2
         sc += round(c['_tie_score'] * 8)  # v6.9.18: _tie_score 0~1 → 0~8分浮动，扩大区分度
+        # v6.9.20: D策略振幅区分度，理想振幅3-6%+1分，>8%-1分
+        if s == 'D' and amp is not None:
+            if 3 <= amp <= 6: sc += 1
+            elif amp > 8: sc -= 1
         if c.get('_first_yin'): sc += 2
         c['score'] = max(0, sc)
         if c['score'] >= 18: c['confidence'] = '★★★'
@@ -1827,14 +1828,15 @@ def calc_entry_price(c):
     
     elif strategy == 'B':
         # 超跌反弹：基于历史跌幅和日内低点推算安全进场价
-        # 优先参考当日低点作为支撑，在低点和收盘价之间取合理位置
         if low > 0 and close > low:
-            # 若尾盘有回升迹象(收盘在低点上方>1%)，在低点上方1%进场
             if close > low * 1.01 and pos > 0.3:
                 entry = low + (close - low) * 0.3  # 低点上方30%分位
             elif chg < -5:
                 # 深度超跌，次日可能惯性低开，在收盘价-1%挂单
                 entry = close * (1 - atr_pct * 0.3)
+            elif chg >= -3.5:
+                # v6.9.20: 轻度跌幅(-2.5%~-3.5%)，更激进低吸
+                entry = low + (close - low) * 0.25
             else:
                 entry = close * 0.995
         else:
