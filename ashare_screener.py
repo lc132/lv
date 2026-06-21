@@ -1520,17 +1520,55 @@ def step13_strategy_match(candidates, kline_data=None):
 # 步骤14-17：评分+行业限制
 # ============================================================
 def step14_scoring(candidates):
+    # v6.9.10: 先计算_tie_score（原在step16），再融入最终score
+    so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16}
+    sector_ad = defaultdict(list)
     for c in candidates:
+        if c.get('strategy') in ('A', 'D', 'G', 'I', 'K', 'N'):
+            sector_ad[c.get('industry', '')].append(c)
+    sector_bonus = {}
+    for ind, clist in sector_ad.items():
+        if len(clist) >= 3:
+            for c in clist:
+                sector_bonus[c.get('code', '')] = 0.10
+    for c in candidates:
+        vr = c.get('volume_ratio') or 0; to = c.get('turnover') or 0; chg = c.get('change_pct') or 0
+        vs = min(vr / 3.0, 1.0)
+        if to < 2: ts = 0.2
+        elif to <= 5: ts = 0.6
+        elif to <= 15: ts = 1.0
+        elif to <= 25: ts = 0.5
+        else: ts = 0.1
+        s = c.get('strategy', 'Z')
+        if s == 'A': cs = max(0, 1.0 - abs(chg - 5) / 4.0)
+        elif s == 'B': cs = max(0, 1.0 - abs(chg + 5) / 5.0)
+        elif s == 'C': cs = max(0, 1.0 - abs(chg - 1.5) / 1.0)
+        elif s == 'D': cs = max(0, 1.0 - abs(chg - 4.5) / 3.0)
+        elif s == 'E': cs = max(0, 1.0 - abs(chg - 0.5) / 1.0)
+        elif s == 'F': cs = max(0, 1.0 - abs(chg - 0.5) / 1.0)
+        elif s == 'G': cs = max(0, 1.0 - abs(chg - 2.5) / 1.0)
+        elif s == 'H': cs = max(0, 1.0 - abs(chg - 0) / 3.0)
+        elif s == 'I': cs = max(0, 1.0 - abs(chg - 3) / 3.0)
+        elif s == 'J': cs = max(0, 1.0 - abs(chg + 5) / 8.0)
+        elif s == 'K': cs = max(0, 1.0 - abs(chg - 1) / 4.0)
+        elif s == 'L': cs = max(0, 1.0 - abs(chg - 4) / 5.0)
+        elif s == 'M': cs = max(0, 1.0 - abs(chg + 3) / 8.0)
+        elif s == 'N': cs = max(0, 1.0 - abs(chg - 3) / 3.0)
+        elif s == 'O': cs = max(0, 1.0 - abs(chg) / 1.5)
+        elif s == 'P': cs = max(0, 1.0 - abs(chg - 3) / 4.0)
+        elif s == 'Q': cs = max(0, 1.0 - abs(chg - 3) / 3.0)
+        else: cs = 0.5
+        amp = c.get('amplitude', 0) or 0
+        ma_bonus = 0.05 if amp < 3 and vr > 1.2 else 0
+        code = c.get('code', '')
+        c['_tie_score'] = max(0, vs * 0.30 + ts * 0.30 + cs * 0.30 + (1.0 - so.get(s, 99) / 10.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
+        # 融入最终score
         sc = c.get('score', 0) * 2
-        # v6.9.10: _tie_score融入最终score，同策略内区分度提升
-        tie = c.get('_tie_score', 0)
-        sc += round(tie * 3)  # _tie_score 0~1 → 0~3分浮动
-        if c.get('_first_yin'): sc += 2  # v6.9.6: 首阴权重 3→2，避免弱信号过推
-        # v6.8.5: _fake_breakout惩罚已在step13中扣分，此处不再重复扣罚
+        sc += round(c['_tie_score'] * 3)  # _tie_score 0~1 → 0~3分浮动
+        if c.get('_first_yin'): sc += 2
         c['score'] = max(0, sc)
-        s = c['score']
-        if s >= 18: c['confidence'] = '★★★'
-        elif s >= 12: c['confidence'] = '★★'
+        if c['score'] >= 18: c['confidence'] = '★★★'
+        elif c['score'] >= 12: c['confidence'] = '★★'
         else: c['confidence'] = '★'
     return candidates
 
@@ -1675,55 +1713,11 @@ def step18_news_screening(candidates):
     return passed, nex
 
 def step16_comprehensive_score(candidates):
+    # v6.9.10: _tie_score已在step14计算并融入score，step16仅负责排序
     so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16}
-    # v6.6.38: 板块联动检测 — 同板块≥3只A/D/G/I/K/N → 板块加分
-    sector_ad = defaultdict(list)
-    for c in candidates:
-        if c.get('strategy') in ('A', 'D', 'G', 'I', 'K', 'N'):
-            sector_ad[c.get('industry', '')].append(c)
-    sector_bonus = {}
-    for ind, clist in sector_ad.items():
-        if len(clist) >= 3:
-            for c in clist:
-                sector_bonus[c.get('code', '')] = 0.10  # 板块联动加分10%
-    for c in candidates:
-        vr = c.get('volume_ratio') or 0; to = c.get('turnover') or 0; chg = c.get('change_pct') or 0
-        vs = min(vr / 3.0, 1.0)
-        if to < 2: ts = 0.2
-        elif to <= 5: ts = 0.6
-        elif to <= 15: ts = 1.0
-        elif to <= 25: ts = 0.5
-        else: ts = 0.1
-        s = c.get('strategy', 'Z')
-        if s == 'A': cs = max(0, 1.0 - abs(chg - 5) / 4.0)    # A偏好5%动量
-        elif s == 'B': cs = max(0, 1.0 - abs(chg + 5) / 5.0)
-        elif s == 'C': cs = max(0, 1.0 - abs(chg - 1.5) / 1.0) # C偏好1-2%中枢
-        elif s == 'D': cs = max(0, 1.0 - abs(chg - 4.5) / 3.0) # D偏好4.5%突破
-        elif s == 'E': cs = max(0, 1.0 - abs(chg - 0.5) / 1.0) # E偏好微涨吸筹
-        elif s == 'F': cs = max(0, 1.0 - abs(chg - 0.5) / 1.0) # F偏好微涨吸筹
-        elif s == 'G': cs = max(0, 1.0 - abs(chg - 2.5) / 1.0) # G偏好2-3%突破
-        elif s == 'H': cs = max(0, 1.0 - abs(chg - 0) / 3.0)   # H偏好企稳不涨
-        elif s == 'I': cs = max(0, 1.0 - abs(chg - 3) / 3.0)   # I偏好突破3%附近
-        elif s == 'J': cs = max(0, 1.0 - abs(chg + 5) / 8.0)   # J偏好回调至-5%附近
-        elif s == 'K': cs = max(0, 1.0 - abs(chg - 1) / 4.0)   # K偏好回踩1%附近
-        elif s == 'L': cs = max(0, 1.0 - abs(chg - 4) / 5.0)   # L偏好反弹4%附近
-        elif s == 'M': cs = max(0, 1.0 - abs(chg + 3) / 8.0)   # M偏好回调至-3%附近
-        elif s == 'N': cs = max(0, 1.0 - abs(chg - 3) / 3.0)   # N偏好突破3%附近
-        elif s == 'O': cs = max(0, 1.0 - abs(chg) / 1.5)       # O偏好回踩均线(0%附近)
-        elif s == 'P': cs = max(0, 1.0 - abs(chg - 3) / 4.0)   # P偏好反弹3%附近
-        elif s == 'Q': cs = max(0, 1.0 - abs(chg - 3) / 3.0)   # Q偏好突破3%附近
-        else: cs = 0.5
-        # v6.6.38: 均线粘合发散增强 — 振幅<3%+量比>1.2 → 疑似粘合发散
-        amp = c.get('amplitude', 0) or 0
-        ma_bonus = 0.05 if amp < 3 and vr > 1.2 else 0
-        code = c.get('code', '')
-        c['_tie_score'] = max(0, vs * 0.30 + ts * 0.30 + cs * 0.30 + (1.0 - so.get(s, 99) / 10.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
-    # v6.6.46: 五级二次评估 — _tie_score相同时，按量比→换手率→涨跌幅继续打破平局
-    # SKILL.md五级: ①策略优先级(已独立排序键) ②量比高者优先 ③换手率中等优先(5-15%最佳) ④涨跌幅按策略 ⑤板块热度(已入_tie_score)
     def _tie_key(c):
         vr = c.get('volume_ratio') or 0
         to = c.get('turnover') or 0
-        # 换手率中等优先: 离10%越近越好(5-15%区间内最佳)
         to_penalty = abs(to - 10) if to > 0 else 99
         return (-c.get('score', 0), so.get(c.get('strategy', 'Z'), 99), -(c.get('_tie_score', 0)),
                 -vr, to_penalty)
