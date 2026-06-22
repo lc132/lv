@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.31
-36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 27项信号过滤 | 主营业务
+A股每日盘前短线标的智能筛选 v6.9.33
+36步完整执行流程 | 腾讯一级 | Baostock行业 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 27项信号过滤 | 主营业务
 """
 import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html, gzip, re, ssl
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.32"
+BUILTIN_VERSION = "v6.9.33"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -28,6 +28,10 @@ def _load_credential(env_key, file_path, fallback=""):
 
 GITHUB_TOKEN = _load_credential("GITHUB_TOKEN", "/workspace/.github_token")
 FEISHU_WEBHOOK = _load_credential("FEISHU_WEBHOOK", "/workspace/.feishu_webhook")
+
+# v6.9.33: Baostock行业分类集成
+BAOSTOCK_CACHE_FILE = "/workspace/行业缓存.json"
+_baostock_cache = {}  # {code: "申万一级行业"}
 
 DEFAULT_PARAMS = {
     "search_budget": 25, "northbound_threshold": 3000, "consecutive_weeks": 2,
@@ -741,14 +745,75 @@ INDUSTRY_MAP = {
     '304200-304299': '建筑装饰', '304300-304399': '基础化工',
 }
 def lookup_industry(code):
-    """行业查表：先查硬编码覆盖，再查代码段映射"""
+    """行业查表：v6.9.33 优先 Baostock API → 硬编码覆盖 → 代码段映射"""
+    # 1. Baostock缓存优先（官方申万行业分类）
+    if code in _baostock_cache and _baostock_cache[code]:
+        return _baostock_cache[code]
+    # 2. 硬编码覆盖
     if code in HARDCODED_INDUSTRY:
         return HARDCODED_INDUSTRY[code]
+    # 3. 代码段映射
     ci = int(code)
     for k, v in INDUSTRY_MAP.items():
         lo, hi = k.split('-')
         if int(lo) <= ci <= int(hi): return v
     return "未知"
+
+# ==========================================================
+# v6.9.33: Baostock行业分类预加载
+# ==========================================================
+def _load_baostock_cache():
+    """从磁盘加载行业缓存"""
+    global _baostock_cache
+    if os.path.exists(BAOSTOCK_CACHE_FILE):
+        try:
+            with open(BAOSTOCK_CACHE_FILE, 'r') as f:
+                _baostock_cache = json.load(f)
+            print(f"[INFO] Baostock缓存: 从磁盘加载 {len(_baostock_cache)} 条行业记录")
+        except Exception:
+            _baostock_cache = {}
+
+def _save_baostock_cache():
+    """保存行业缓存到磁盘"""
+    if _baostock_cache:
+        try:
+            with open(BAOSTOCK_CACHE_FILE, 'w') as f:
+                json.dump(_baostock_cache, f, ensure_ascii=False, indent=2)
+            print(f"[INFO] Baostock缓存: 已保存 {len(_baostock_cache)} 条")
+        except Exception as e:
+            print(f"[WARNING] Baostock缓存保存失败: {e}")
+
+def _preload_baostock_industries():
+    """通过 Baostock API 预加载全量行业分类，失败则使用磁盘缓存"""
+    global _baostock_cache
+    _load_baostock_cache()
+    try:
+        import baostock as bs
+        lg = bs.login()
+        if lg.error_code != '0':
+            print(f"[WARNING] Baostock登录失败: {lg.error_msg}, 使用本地缓存")
+            return
+        print("[INFO] Baostock: 登录成功，拉取全量行业分类...")
+        rs = bs.query_stock_industry()
+        if rs.error_code != '0':
+            print(f"[WARNING] Baostock行业查询失败: {rs.error_msg}, 使用本地缓存")
+            bs.logout()
+            return
+        new_count = 0
+        while rs.next():
+            item = rs.get_row_data()
+            code = item[0]
+            industry = item[2]  # 申万一级行业
+            if code not in _baostock_cache:
+                _baostock_cache[code] = industry
+                new_count += 1
+        bs.logout()
+        print(f"[INFO] Baostock: 新增 {new_count} 条行业记录, 缓存总计 {len(_baostock_cache)} 条")
+        _save_baostock_cache()
+    except ImportError:
+        print("[WARNING] baostock 未安装，使用本地缓存+分段查表")
+    except Exception as e:
+        print(f"[WARNING] Baostock 预加载异常: {e}，使用本地缓存+分段查表")
 
 # v6.6.29: 知名股票硬编码覆盖（代码段查表无法精确区分时）
 HARDCODED_INDUSTRY = {
@@ -2687,6 +2752,7 @@ def main():
     update_data_source_monitor(ds)
     
     print("\n[步骤10B] 行业补全...")
+    _preload_baostock_industries()  # v6.9.33: Baostock API 预加载全量行业分类
     for s in all_stocks: s['industry'] = lookup_industry(s.get('code', ''))
     
     print("\n[步骤10C] 历史K线..."); kline_data = step10C_fetch_klines(all_stocks[:500])
