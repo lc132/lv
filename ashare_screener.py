@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.11
-36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | P2修复
+A股每日盘前短线标的智能筛选 v6.9.26
+36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 22项信号过滤
 """
 import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.25"
+BUILTIN_VERSION = "v6.9.26"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1220,7 +1220,7 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
 # 步骤12：信号过滤
 # ============================================================
 def step12_signal_filter(candidates, kline_data=None, fundamental_data=None):
-    """v6.9.15: 恢复fundamental_data参数，新增净利润亏损过滤"""
+    """v6.9.26: 22项信号过滤（新增#22流动性冲击成本Amihud ILLIQ）"""
     if kline_data is None: kline_data = {}
     if fundamental_data is None: fundamental_data = {}
     passed, excluded = [], []
@@ -1329,6 +1329,15 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None):
             elif c.get('pe_ttm') is not None and c.get('pe_ttm', 0) < 0:
                 # F10数据不可达时，PE<0兜底排除
                 reason = "PE负值(亏损)"
+        # 22. 流动性冲击成本（v6.9.26: Amihud ILLIQ=|chg%|/(成交额/亿)→排除>10的标的，避免短线交易滑点侵蚀利润）
+        if not reason:
+            amt = c.get('amount', 0)
+            if amt is not None and amt > 0:
+                amt_e8 = amt / 1e8  # 成交额(亿元)
+                if amt_e8 > 0:
+                    illiq = abs(chg) / amt_e8
+                    if illiq > 10:
+                        reason = f"冲击成本({illiq:.0f}bps/亿)"
         if reason: excluded.append(c)
         else: passed.append(c)
     log_alert("INFO", "信号过滤", f"通过{len(passed)}只 排除{len(excluded)}只")
@@ -1973,7 +1982,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
         "|------|------|------|------|",
         f"| ①原始标的池 | {total_raw} | - | 全市场活跃TOP500 |",
         f"| ②硬排除 | {ae} | {total_raw - ae} | 13项(持仓/科创/北交/低价/高价/ST/涨幅/停牌/市值/成交额/上市天数/质押商誉解禁已废弃) |",
-        f"| ③信号过滤 | {asig} | {ae - asig} | 21项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉/涨停次日高开低走/布林突破失败/20日涨幅>45%/放量不涨/放量滞跌/长上影线/连续缩量/净利润亏损) |",
+        f"| ③信号过滤 | {asig} | {ae - asig} | 22项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉/涨停次日高开低走/布林突破失败/20日涨幅>45%/放量不涨/放量滞跌/长上影线/连续缩量/净利润亏损/冲击成本) |",
         f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKLMNOPQ十七策略 |",
         f"| ⑤行业+同策略限制 | {aind} | {astr - aind} | 同行业≤4只(弱市)/3只(强/震荡)+同策略≤30% |",
         f"| ⑥新闻筛查 | {aind - anew} | {anew} | Bing/东方财富双源利空检测 |",
@@ -2104,7 +2113,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         bp = cnt / mx * 100
         bar_html += f'<div class="bar-row"><div class="bar-label">{r}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%">{cnt}</div></div></div>'
     
-    stages = [("原始标的池", total_raw), ("硬排除(13项)", ae), ("信号过滤(21项)", asig),
+    stages = [("原始标的池", total_raw), ("硬排除(13项)", ae), ("信号过滤(22项)", asig),
               ("策略匹配(17策略)", astr), ("行业+同策略限制", aind), ("新闻筛查", aind - anew), ("最终推荐", fc)]
     max_f = max(s[1] for s in stages)
     funnel_html = ""
