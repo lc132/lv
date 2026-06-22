@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.34
-36步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 27项信号过滤 | 主营业务
+A股每日盘前短线标的智能筛选 v6.9.35
+36步完整执行流程 | 腾讯一级 | 东方财富HTTP行业(一/二级) | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 27项信号过滤
 """
 import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html, gzip, re, ssl
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.34"
+BUILTIN_VERSION = "v6.9.35"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -31,7 +31,10 @@ FEISHU_WEBHOOK = _load_credential("FEISHU_WEBHOOK", "/workspace/.feishu_webhook"
 
 # v6.9.34: 东方财富HTTP行业分类（替代Baostock TCP，解决沙箱网络限制）
 INDUSTRY_CACHE_FILE = "/workspace/行业缓存.json"
-_industry_cache = {}  # {code: "申万一级行业"}
+_industry_cache = {}          # {code: "申万一级行业"}
+# v6.9.35: 二级行业缓存（东方财富sshy，与一级行业同源拉取）
+SUB_INDUSTRY_CACHE_FILE = "/workspace/二级行业缓存.json"
+_sub_industry_cache = {}      # {code: "东方财富二级行业"}
 
 # v6.9.34: 证监会行业 → 申万一级行业映射表
 _ZJH_TO_SHENWAN = {
@@ -841,7 +844,7 @@ def _zjh_to_shenwan(zjh):
 
 def _load_industry_cache():
     """从磁盘加载行业缓存"""
-    global _industry_cache
+    global _industry_cache, _sub_industry_cache
     if os.path.exists(INDUSTRY_CACHE_FILE):
         try:
             with open(INDUSTRY_CACHE_FILE, 'r') as f:
@@ -849,6 +852,13 @@ def _load_industry_cache():
             print(f"[INFO] 行业缓存: 从磁盘加载 {len(_industry_cache)} 条")
         except Exception:
             _industry_cache = {}
+    if os.path.exists(SUB_INDUSTRY_CACHE_FILE):
+        try:
+            with open(SUB_INDUSTRY_CACHE_FILE, 'r') as f:
+                _sub_industry_cache = json.load(f)
+            print(f"[INFO] 二级行业缓存: 从磁盘加载 {len(_sub_industry_cache)} 条")
+        except Exception:
+            _sub_industry_cache = {}
 
 def _save_industry_cache():
     """保存行业缓存到磁盘"""
@@ -859,9 +869,17 @@ def _save_industry_cache():
             print(f"[INFO] 行业缓存: 已保存 {len(_industry_cache)} 条")
         except Exception as e:
             print(f"[WARNING] 行业缓存保存失败: {e}")
+    if _sub_industry_cache:
+        try:
+            with open(SUB_INDUSTRY_CACHE_FILE, 'w') as f:
+                json.dump(_sub_industry_cache, f, ensure_ascii=False, indent=2)
+            print(f"[INFO] 二级行业缓存: 已保存 {len(_sub_industry_cache)} 条")
+        except Exception as e:
+            print(f"[WARNING] 二级行业缓存保存失败: {e}")
 
 def _fetch_zjh_industry(code):
-    """通过东方财富HTTP API获取单只股票的证监会行业"""
+    """v6.9.35: 通过东方财富HTTP API获取证监会行业和二级行业(sshy)。
+    返回: (申万一级行业, 二级行业) 或 (None, None)"""
     try:
         market = 'SH' if code.startswith(('6', '9')) else 'SZ'
         secode = f'{market}{code}'
@@ -875,46 +893,54 @@ def _fetch_zjh_industry(code):
         ctx.verify_mode = ssl.CERT_NONE
         with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
             data = json.loads(resp.read().decode())
-            zjh = data.get('jbzl', {}).get('sszjhhy', '')
-            return _zjh_to_shenwan(zjh)
+            jbzl = data.get('jbzl', {})
+            zjh = jbzl.get('sszjhhy', '')
+            sshy = jbzl.get('sshy', '')
+            return _zjh_to_shenwan(zjh), sshy
     except Exception:
-        return None
+        return None, None
 
 def _preload_industry_from_eastmoney(all_stocks):
-    """v6.9.34: 通过东方财富HTTP API批量获取行业分类（沙箱兼容）"""
-    global _industry_cache
+    """v6.9.35: 通过东方财富HTTP API批量获取行业分类（一级+二级）"""
+    global _industry_cache, _sub_industry_cache
     _load_industry_cache()
     
-    # 收集需要拉取的股票（缓存中未命中且硬编码未覆盖的）
+    # 收集需要拉取的股票
     to_fetch = []
     for s in all_stocks:
         code = s.get('code', '')
-        if code and code not in _industry_cache and code not in HARDCODED_INDUSTRY:
-            to_fetch.append(code)
+        if code and (code not in _industry_cache or code not in _sub_industry_cache):  # v6.9.35: 一级或二级缺一即拉取
+            if code not in HARDCODED_INDUSTRY or code not in _sub_industry_cache:
+                to_fetch.append(code)
+    
+    # 去重
+    to_fetch = list(set(to_fetch))
     
     if not to_fetch:
         print(f"[INFO] 行业缓存: 全部命中，无需拉取")
         return
     
     print(f"[INFO] 东方财富HTTP: 拉取 {len(to_fetch)} 只股票行业分类...")
-    new_count = 0
-    fail_count = 0
+    new_primary = 0; new_secondary = 0; fail_count = 0
     batch_size = 50
     
     for i in range(0, len(to_fetch), batch_size):
         batch = to_fetch[i:i+batch_size]
         for code in batch:
-            industry = _fetch_zjh_industry(code)
-            if industry:
-                _industry_cache[code] = industry
-                new_count += 1
-            else:
+            primary, secondary = _fetch_zjh_industry(code)
+            if primary and code not in _industry_cache:
+                _industry_cache[code] = primary
+                new_primary += 1
+            if secondary and code not in _sub_industry_cache:
+                _sub_industry_cache[code] = secondary
+                new_secondary += 1
+            if not primary and not secondary:
                 fail_count += 1
-            time.sleep(0.15)  # 避免请求过快
-        print(f"  进度: {min(i+batch_size, len(to_fetch))}/{len(to_fetch)} (新增{new_count}, 失败{fail_count})")
+            time.sleep(0.15)
+        print(f"  进度: {min(i+batch_size, len(to_fetch))}/{len(to_fetch)} (一级+{new_primary}, 二级+{new_secondary}, 失败{fail_count})")
     
-    print(f"[INFO] 东方财富HTTP: 新增 {new_count} 条, 失败 {fail_count} 条, 缓存总计 {len(_industry_cache)} 条")
-    if new_count > 0:
+    print(f"[INFO] 东方财富HTTP: 一级{len(_industry_cache)}条, 二级{len(_sub_industry_cache)}条, 失败{fail_count}条")
+    if new_primary > 0 or new_secondary > 0:
         _save_industry_cache()
 
 # v6.6.29: 知名股票硬编码覆盖（代码段查表无法精确区分时）
@@ -1492,81 +1518,23 @@ def step10G_fetch_crowding_data(candidates):
     return inst_holding, margin_overheat
 
 # ============================================================
-# 步骤10H：主营业务拉取（v6.9.31：CoreConception API，提取主营业务描述）
+# 步骤10H：二级行业赋值（v6.9.35：从CompanySurvey缓存读取sshy，替代CoreConception主营业务）
 # ============================================================
-def step10H_fetch_business(candidates):
-    """v6.9.31: 拉取CoreConception API，提取主营业务描述（≤30字）。
-    返回: {code: business_description}"""
-    business_data = {}
-    headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://emweb.securities.eastmoney.com/'}
-    fetched = 0; errors = 0
-    
+def step10H_fetch_sub_industry(candidates):
+    """v6.9.35: 从二级行业缓存读取sshy，无需额外API调用。
+    返回: {code: sub_industry}"""
+    result = {}
+    cached = 0; missing = 0
     for c in candidates:
         code = c.get('code', '')
-        if not code: continue
-        prefix = 'SH' if code.startswith('6') else 'SZ'
-        secode = f'{prefix}{code}'
-        try:
-            url = f'https://emweb.securities.eastmoney.com/PC_HSF10/CoreConception/PageAjax?code={secode}'
-            req = urllib.request.Request(url, headers=headers)
-            raw = urllib.request.urlopen(req, timeout=8).read()
-            data = json.loads(raw.decode('utf-8-sig'))
-            hxtc = data.get('hxtc', [])
-            
-            biz = ''
-            # 策略1: 跳过经营范围，找含"主营/业务/研发/生产/销售"关键词的项
-            for item in hxtc:
-                kw = item.get('KEYWORD', '')
-                content = item.get('MAINPOINT_CONTENT', '')
-                if kw == '经营范围': continue
-                if any(w in kw for w in ['主营', '业务', '研发', '生产', '销售']):
-                    biz = content[:80]
-                    break
-            # 策略2: 匹配内容以"公司名"开头（如"恒工精密主要专注于..."）
-            if not biz:
-                name = c.get('name', '')
-                for item in hxtc:
-                    kw = item.get('KEYWORD', '')
-                    content = item.get('MAINPOINT_CONTENT', '')
-                    if kw == '经营范围': continue
-                    if name and len(name) >= 2 and content.startswith(name[:4]):
-                        biz = content[:80]
-                        break
-            # 策略3: 兜底取第2项或第1项
-            if not biz and len(hxtc) > 1:
-                biz = hxtc[1].get('MAINPOINT_CONTENT', '')[:80]
-            if not biz and len(hxtc) > 0:
-                biz = hxtc[0].get('MAINPOINT_CONTENT', '')[:80]
-            
-            # 截断至30字（中文），超长加省略号
-            biz = biz.strip()
-            if biz:
-                # 去掉句首的冗余前缀
-                for prefix_text in ['报告期内，', '报告期内,', '公司主要从事', '公司主要业务是', '公司主营业务为',
-                                    '公司的主营业务未发生变化。', '公司的主营业务为', '公司深耕', '公司是一家',
-                                    '公司从事', '公司专注于', '公司目前主要从事']:
-                    if biz.startswith(prefix_text):
-                        biz = biz[len(prefix_text):]
-                        break
-                # 去掉"XXX主要专注于"式的公司名前缀
-                if biz and len(name) >= 2 and biz.startswith(name[:4]):
-                    biz = biz[4:]
-                    if biz.startswith('主要专注于'): biz = biz[5:]
-                    elif biz.startswith('专注于'): biz = biz[3:]
-                    elif biz.startswith('主要从事'): biz = biz[4:]
-                if len(biz) > 30:
-                    biz = biz[:28] + '…'
-                business_data[code] = biz
-            fetched += 1
-        except Exception:
-            errors += 1
-            business_data[code] = ''
-        
-        if fetched % 50 == 0 and fetched > 0:
-            time.sleep(0.2)
-    
-    log_alert("INFO", "主营业务", f"CoreConception: {fetched}只成功/{errors}只失败")
-    return business_data
+        if code in _sub_industry_cache:
+            result[code] = _sub_industry_cache[code]
+            cached += 1
+        else:
+            result[code] = ''
+            missing += 1
+    log_alert("INFO", "二级行业", f"缓存命中{cached}只/缺失{missing}只")
+    return result
 
 # ============================================================
 # 步骤11：硬排除
@@ -2446,7 +2414,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
     ]
     if candidates:
         lines.append("## 推荐标的\n")
-        lines.append("| # | 策略 | 标的 | 代码 | 行业 | 主营业务 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 |")
+        lines.append("| # | 策略 | 标的 | 代码 | 行业 | 二级行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 |")
         lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for idx, c in enumerate(candidates, 1):
             code = c.get('code', ''); name = c.get('name', '')
@@ -2663,7 +2631,7 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 </div></section>
 <section><h2>系统告警</h2><div class="alert-list">{alerts_html}</div></section>
 <section><h2>最终推荐标的</h2><div style="overflow-x:auto"><table>
-<thead><tr><th>#</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>主营业务</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th></tr></thead>
+<thead><tr><th>#</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>二级行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th></tr></thead>
 <tbody>{rows_html if rows_html else '<tr><td colspan="16" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div></section>
 <section><h2>策略说明</h2><table>
 <thead><tr><th style="width:18%">策略</th><th style="width:48%">条件</th><th style="width:16%">仓位(震荡)</th><th style="width:18%">仓位(弱市)</th></tr></thead>
@@ -2872,7 +2840,7 @@ def main():
     print("\n[步骤10E] F10基本面..."); fundamental_data = step10E_fetch_fundamentals(ael)
     print("\n[步骤10F] 风险事件..."); unlock_events, cb_events, earnings_window = step10F_fetch_risk_events()
     print("\n[步骤10G] 拥挤度..."); inst_holding, margin_overheat = step10G_fetch_crowding_data(ael)
-    print("\n[步骤10H] 主营业务..."); business_data = step10H_fetch_business(ael)
+    print("\n[步骤10H] 二级行业..."); sub_industry_data = step10H_fetch_sub_industry(ael)
     print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data, fundamental_data, (unlock_events, cb_events, earnings_window), (inst_holding, margin_overheat)); asig = len(asl)
     print("\n[步骤13] 策略匹配..."); sm = step13_strategy_match(asl, kline_data); astr = len(sm)
     print("\n[步骤14] 评分..."); scored = step14_scoring(sm)
@@ -2882,8 +2850,8 @@ def main():
     print("\n[步骤19] 降级..."); final = step19_shortfall_handling(ail); fc = len(final)
     sd = Counter(c.get('strategy') for c in final)
     
-    # 注入主营业务到候选
-    for c in final: c['business'] = business_data.get(c.get('code', ''), '')
+    # 注入二级行业到候选
+    for c in final: c['business'] = sub_industry_data.get(c.get('code', ''), '')
     
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, aind, anew, er)
     print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts); hd = os.path.dirname(hp)
