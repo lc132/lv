@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.29
-36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 27项信号过滤
+A股每日盘前短线标的智能筛选 v6.9.31
+36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 27项信号过滤 | 主营业务
 """
 import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html, gzip, re, ssl
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.29"
+BUILTIN_VERSION = "v6.9.31"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1307,6 +1307,83 @@ def step10G_fetch_crowding_data(candidates):
     return inst_holding, margin_overheat
 
 # ============================================================
+# 步骤10H：主营业务拉取（v6.9.31：CoreConception API，提取主营业务描述）
+# ============================================================
+def step10H_fetch_business(candidates):
+    """v6.9.31: 拉取CoreConception API，提取主营业务描述（≤30字）。
+    返回: {code: business_description}"""
+    business_data = {}
+    headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://emweb.securities.eastmoney.com/'}
+    fetched = 0; errors = 0
+    
+    for c in candidates:
+        code = c.get('code', '')
+        if not code: continue
+        prefix = 'SH' if code.startswith('6') else 'SZ'
+        secode = f'{prefix}{code}'
+        try:
+            url = f'https://emweb.securities.eastmoney.com/PC_HSF10/CoreConception/PageAjax?code={secode}'
+            req = urllib.request.Request(url, headers=headers)
+            raw = urllib.request.urlopen(req, timeout=8).read()
+            data = json.loads(raw.decode('utf-8-sig'))
+            hxtc = data.get('hxtc', [])
+            
+            biz = ''
+            # 策略1: 跳过经营范围，找含"主营/业务/研发/生产/销售"关键词的项
+            for item in hxtc:
+                kw = item.get('KEYWORD', '')
+                content = item.get('MAINPOINT_CONTENT', '')
+                if kw == '经营范围': continue
+                if any(w in kw for w in ['主营', '业务', '研发', '生产', '销售']):
+                    biz = content[:80]
+                    break
+            # 策略2: 匹配内容以"公司名"开头（如"恒工精密主要专注于..."）
+            if not biz:
+                name = c.get('name', '')
+                for item in hxtc:
+                    kw = item.get('KEYWORD', '')
+                    content = item.get('MAINPOINT_CONTENT', '')
+                    if kw == '经营范围': continue
+                    if name and len(name) >= 2 and content.startswith(name[:4]):
+                        biz = content[:80]
+                        break
+            # 策略3: 兜底取第2项或第1项
+            if not biz and len(hxtc) > 1:
+                biz = hxtc[1].get('MAINPOINT_CONTENT', '')[:80]
+            if not biz and len(hxtc) > 0:
+                biz = hxtc[0].get('MAINPOINT_CONTENT', '')[:80]
+            
+            # 截断至30字（中文），超长加省略号
+            biz = biz.strip()
+            if biz:
+                # 去掉句首的冗余前缀
+                for prefix_text in ['报告期内，', '报告期内,', '公司主要从事', '公司主要业务是', '公司主营业务为',
+                                    '公司的主营业务未发生变化。', '公司的主营业务为', '公司深耕', '公司是一家',
+                                    '公司从事', '公司专注于', '公司目前主要从事']:
+                    if biz.startswith(prefix_text):
+                        biz = biz[len(prefix_text):]
+                        break
+                # 去掉"XXX主要专注于"式的公司名前缀
+                if biz and len(name) >= 2 and biz.startswith(name[:4]):
+                    biz = biz[4:]
+                    if biz.startswith('主要专注于'): biz = biz[5:]
+                    elif biz.startswith('专注于'): biz = biz[3:]
+                    elif biz.startswith('主要从事'): biz = biz[4:]
+                if len(biz) > 30:
+                    biz = biz[:28] + '…'
+                business_data[code] = biz
+            fetched += 1
+        except Exception:
+            errors += 1
+            business_data[code] = ''
+        
+        if fetched % 50 == 0 and fetched > 0:
+            time.sleep(0.2)
+    
+    log_alert("INFO", "主营业务", f"CoreConception: {fetched}只成功/{errors}只失败")
+    return business_data
+
+# ============================================================
 # 步骤11：硬排除
 # ============================================================
 def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_data=None, goodwill_data=None, unlock_data=None, fundamental_data=None):
@@ -2184,11 +2261,11 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
     ]
     if candidates:
         lines.append("## 推荐标的\n")
-        lines.append("| # | 策略 | 标的 | 代码 | 行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 |")
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        lines.append("| # | 策略 | 标的 | 代码 | 行业 | 主营业务 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 |")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for idx, c in enumerate(candidates, 1):
             code = c.get('code', ''); name = c.get('name', '')
-            s = c.get('strategy', '?'); ind = c.get('industry', '未知')
+            s = c.get('strategy', '?'); ind = c.get('industry', '未知'); biz = c.get('business', '')
             chg = c.get('change_pct', 0); op = c.get('open', 0) or 0
             close = c.get('close', 0) or 0; amp = c.get('amplitude', 0) or 0
             score = c.get('score', 0); conf = c.get('confidence', '★')
@@ -2215,7 +2292,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
                     if s_ not in seen: seen.add(s_); uniq_s.append(s_)
                 r7d_str = f"{r7d} ({','.join(uniq_s)})"
             url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
-            lines.append(f"| {idx} | {s} | [{name}]({url}) | {code} | {ind} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} |")
+            lines.append(f"| {idx} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} |")
     sd = Counter(c.get('strategy') for c in candidates)
     sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破'}
     lines.append("\n## 策略分布")
@@ -2264,7 +2341,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
               'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05}
     for idx, c in enumerate(candidates, 1):
         code = c.get('code', ''); name = c.get('name', ''); s = c.get('strategy', '?')
-        ind = c.get('industry', '未知'); chg = c.get('change_pct', 0)
+        ind = c.get('industry', '未知'); biz = c.get('business', ''); chg = c.get('change_pct', 0)
         op = c.get('open', 0) or 0; close = c.get('close', 0) or 0
         amp = c.get('amplitude', 0) or 0; score = c.get('score', 0); conf = c.get('confidence', '★')
         entry = calc_entry_price(c)
@@ -2286,7 +2363,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         r7_cls = "recent-7d" if c.get('_recent_7d') else ""
         url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
         rows_html += f"""<tr class="{scl} {r7_cls}"><td>{idx}</td><td><span class="badge {scl}">{s}</span></td>
-        <td><a href="{url}" target="_blank">{html.escape(name)}</a></td><td>{code}</td><td>{ind}</td>
+        <td><a href="{url}" target="_blank">{html.escape(name)}</a></td><td>{code}</td><td>{ind}</td><td>{html.escape(biz)}</td>
         <td class="{chg_cls}">{chg:+.2f}%</td><td>{op:.2f}</td><td>{close:.2f}</td>
         <td>{amp:.2f}%</td><td>{r7d_html}</td><td>{score}</td><td class="conf {conf_cls}">{conf}</td>
         <td class="entry">{entry:.2f}</td><td>{sl:.2f}</td><td>{tp:.2f}</td></tr>"""
@@ -2401,8 +2478,8 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 </div></section>
 <section><h2>系统告警</h2><div class="alert-list">{alerts_html}</div></section>
 <section><h2>最终推荐标的</h2><div style="overflow-x:auto"><table>
-<thead><tr><th>#</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th></tr></thead>
-<tbody>{rows_html if rows_html else '<tr><td colspan="15" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div></section>
+<thead><tr><th>#</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>主营业务</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th></tr></thead>
+<tbody>{rows_html if rows_html else '<tr><td colspan="16" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div></section>
 <section><h2>策略说明</h2><table>
 <thead><tr><th style="width:18%">策略</th><th style="width:48%">条件</th><th style="width:16%">仓位(震荡)</th><th style="width:18%">仓位(弱市)</th></tr></thead>
 <tbody>
@@ -2445,7 +2522,7 @@ def step22_write_history(candidates):
     for c in candidates:
         entry = calc_entry_price(c)
         safe_append_json(hf, {"type": "recommendation", "code": c.get('code'), "name": c.get('name'),
-            "strategy": c.get('strategy'), "industry": c.get('industry'),
+            "strategy": c.get('strategy'), "industry": c.get('industry'), "business": c.get('business', ''),
             "score": c.get('score'), "confidence": c.get('confidence'),
             "entry": entry, "change_pct": c.get('change_pct'),
             "date": data_date, "prediction_date": prediction_date})
@@ -2609,6 +2686,7 @@ def main():
     print("\n[步骤10E] F10基本面..."); fundamental_data = step10E_fetch_fundamentals(ael)
     print("\n[步骤10F] 风险事件..."); unlock_events, cb_events, earnings_window = step10F_fetch_risk_events()
     print("\n[步骤10G] 拥挤度..."); inst_holding, margin_overheat = step10G_fetch_crowding_data(ael)
+    print("\n[步骤10H] 主营业务..."); business_data = step10H_fetch_business(ael)
     print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data, fundamental_data, (unlock_events, cb_events, earnings_window), (inst_holding, margin_overheat)); asig = len(asl)
     print("\n[步骤13] 策略匹配..."); sm = step13_strategy_match(asl, kline_data); astr = len(sm)
     print("\n[步骤14] 评分..."); scored = step14_scoring(sm)
@@ -2617,6 +2695,9 @@ def main():
     print("\n[步骤18] 新闻筛查..."); ail, anew = step18_news_screening(ail)
     print("\n[步骤19] 降级..."); final = step19_shortfall_handling(ail); fc = len(final)
     sd = Counter(c.get('strategy') for c in final)
+    
+    # 注入主营业务到候选
+    for c in final: c['business'] = business_data.get(c.get('code', ''), '')
     
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, aind, anew, er)
     print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts); hd = os.path.dirname(hp)
