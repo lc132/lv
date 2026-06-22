@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.33
-36步完整执行流程 | 腾讯一级 | Baostock行业 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 27项信号过滤 | 主营业务
+A股每日盘前短线标的智能筛选 v6.9.34
+36步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 27项信号过滤 | 主营业务
 """
 import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html, gzip, re, ssl
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.33"
+BUILTIN_VERSION = "v6.9.34"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -29,9 +29,73 @@ def _load_credential(env_key, file_path, fallback=""):
 GITHUB_TOKEN = _load_credential("GITHUB_TOKEN", "/workspace/.github_token")
 FEISHU_WEBHOOK = _load_credential("FEISHU_WEBHOOK", "/workspace/.feishu_webhook")
 
-# v6.9.33: Baostock行业分类集成
-BAOSTOCK_CACHE_FILE = "/workspace/行业缓存.json"
-_baostock_cache = {}  # {code: "申万一级行业"}
+# v6.9.34: 东方财富HTTP行业分类（替代Baostock TCP，解决沙箱网络限制）
+INDUSTRY_CACHE_FILE = "/workspace/行业缓存.json"
+_industry_cache = {}  # {code: "申万一级行业"}
+
+# v6.9.34: 证监会行业 → 申万一级行业映射表
+_ZJH_TO_SHENWAN = {
+    # 制造业（子类映射）
+    '制造业-计算机、通信和其他电子设备制造业': '电子',
+    '制造业-电气机械和器材制造业': '电力设备',
+    '制造业-专用设备制造业': '机械设备',
+    '制造业-通用设备制造业': '机械设备',
+    '制造业-仪器仪表制造业': '机械设备',
+    '制造业-金属制品业': '机械设备',
+    '制造业-化学原料和化学制品制造业': '基础化工',
+    '制造业-化学纤维制造业': '基础化工',
+    '制造业-橡胶和塑料制品业': '基础化工',
+    '制造业-医药制造业': '医药生物',
+    '制造业-汽车制造业': '汽车',
+    '制造业-食品制造业': '食品饮料',
+    '制造业-酒、饮料和精制茶制造业': '食品饮料',
+    '制造业-农副食品加工业': '食品饮料',
+    '制造业-纺织业': '纺织服饰',
+    '制造业-纺织服装、服饰业': '纺织服饰',
+    '制造业-皮革、毛皮、羽毛及其制品和制鞋业': '纺织服饰',
+    '制造业-非金属矿物制品业': '建筑材料',
+    '制造业-有色金属冶炼和压延加工业': '有色金属',
+    '制造业-黑色金属冶炼和压延加工业': '钢铁',
+    '制造业-铁路、船舶、航空航天和其他运输设备制造业': '国防军工',
+    '制造业-造纸和纸制品业': '轻工制造',
+    '制造业-印刷和记录媒介复制业': '轻工制造',
+    '制造业-文教、工美、体育和娱乐用品制造业': '轻工制造',
+    '制造业-家具制造业': '轻工制造',
+    '制造业-木材加工和木、竹、藤、棕、草制品业': '轻工制造',
+    '制造业-石油加工、炼焦和核燃料加工业': '石油石化',
+    '制造业-其他制造业': '综合',
+    # 采矿业
+    '采矿业-煤炭开采和洗选业': '煤炭',
+    '采矿业-石油和天然气开采业': '石油石化',
+    '采矿业-黑色金属矿采选业': '钢铁',
+    '采矿业-有色金属矿采选业': '有色金属',
+    '采矿业-开采辅助活动': '石油石化',
+    '采矿业-其他采矿业': '有色金属',
+    # 金融业
+    '金融业-货币金融服务': '银行',
+    '金融业-资本市场服务': '非银金融',
+    '金融业-保险业': '非银金融',
+    '金融业-其他金融业': '非银金融',
+    # 大类直映射
+    '房地产业': '房地产',
+    '建筑业': '建筑装饰',
+    '批发和零售业': '商贸零售',
+    '交通运输、仓储和邮政业': '交通运输',
+    '电力、热力、燃气及水生产和供应业': '公用事业',
+    '住宿和餐饮业': '社会服务',
+    '租赁和商务服务业': '社会服务',
+    '科学研究和技术服务业': '社会服务',
+    '水利、环境和公共设施管理业': '环保',
+    '教育': '社会服务',
+    '卫生和社会工作': '医药生物',
+    '文化、体育和娱乐业': '传媒',
+    '农、林、牧、渔业': '农林牧渔',
+    '综合': '综合',
+    # 信息传输细分
+    '信息传输、软件和信息技术服务业-软件和信息技术服务业': '计算机',
+    '信息传输、软件和信息技术服务业-电信、广播电视和卫星传输服务': '通信',
+    '信息传输、软件和信息技术服务业-互联网和相关服务': '传媒',
+}
 
 DEFAULT_PARAMS = {
     "search_budget": 25, "northbound_threshold": 3000, "consecutive_weeks": 2,
@@ -745,13 +809,13 @@ INDUSTRY_MAP = {
     '304200-304299': '建筑装饰', '304300-304399': '基础化工',
 }
 def lookup_industry(code):
-    """行业查表：v6.9.33 优先 Baostock API → 硬编码覆盖 → 代码段映射"""
-    # 1. Baostock缓存优先（官方申万行业分类）
-    if code in _baostock_cache and _baostock_cache[code]:
-        return _baostock_cache[code]
-    # 2. 硬编码覆盖
+    """行业查表：v6.9.34 硬编码覆盖 → 东方财富HTTP缓存 → 代码段映射"""
+    # 1. 硬编码覆盖优先（手动校对，最高优先级）
     if code in HARDCODED_INDUSTRY:
         return HARDCODED_INDUSTRY[code]
+    # 2. 东方财富缓存（证监会→申万映射）
+    if code in _industry_cache and _industry_cache[code]:
+        return _industry_cache[code]
     # 3. 代码段映射
     ci = int(code)
     for k, v in INDUSTRY_MAP.items():
@@ -760,60 +824,98 @@ def lookup_industry(code):
     return "未知"
 
 # ==========================================================
-# v6.9.33: Baostock行业分类预加载
+# v6.9.34: 东方财富HTTP行业分类预加载（替代Baostock TCP）
 # ==========================================================
-def _load_baostock_cache():
+def _zjh_to_shenwan(zjh):
+    """证监会行业 → 申万一级行业映射"""
+    if not zjh: return None
+    # 精确匹配
+    if zjh in _ZJH_TO_SHENWAN:
+        return _ZJH_TO_SHENWAN[zjh]
+    # 大类前缀匹配（如"建筑业-房屋建筑业"匹配"建筑业"）
+    if '-' in zjh:
+        broad = zjh.split('-')[0]
+        if broad in _ZJH_TO_SHENWAN:
+            return _ZJH_TO_SHENWAN[broad]
+    return None
+
+def _load_industry_cache():
     """从磁盘加载行业缓存"""
-    global _baostock_cache
-    if os.path.exists(BAOSTOCK_CACHE_FILE):
+    global _industry_cache
+    if os.path.exists(INDUSTRY_CACHE_FILE):
         try:
-            with open(BAOSTOCK_CACHE_FILE, 'r') as f:
-                _baostock_cache = json.load(f)
-            print(f"[INFO] Baostock缓存: 从磁盘加载 {len(_baostock_cache)} 条行业记录")
+            with open(INDUSTRY_CACHE_FILE, 'r') as f:
+                _industry_cache = json.load(f)
+            print(f"[INFO] 行业缓存: 从磁盘加载 {len(_industry_cache)} 条")
         except Exception:
-            _baostock_cache = {}
+            _industry_cache = {}
 
-def _save_baostock_cache():
+def _save_industry_cache():
     """保存行业缓存到磁盘"""
-    if _baostock_cache:
+    if _industry_cache:
         try:
-            with open(BAOSTOCK_CACHE_FILE, 'w') as f:
-                json.dump(_baostock_cache, f, ensure_ascii=False, indent=2)
-            print(f"[INFO] Baostock缓存: 已保存 {len(_baostock_cache)} 条")
+            with open(INDUSTRY_CACHE_FILE, 'w') as f:
+                json.dump(_industry_cache, f, ensure_ascii=False, indent=2)
+            print(f"[INFO] 行业缓存: 已保存 {len(_industry_cache)} 条")
         except Exception as e:
-            print(f"[WARNING] Baostock缓存保存失败: {e}")
+            print(f"[WARNING] 行业缓存保存失败: {e}")
 
-def _preload_baostock_industries():
-    """通过 Baostock API 预加载全量行业分类，失败则使用磁盘缓存"""
-    global _baostock_cache
-    _load_baostock_cache()
+def _fetch_zjh_industry(code):
+    """通过东方财富HTTP API获取单只股票的证监会行业"""
     try:
-        import baostock as bs
-        lg = bs.login()
-        if lg.error_code != '0':
-            print(f"[WARNING] Baostock登录失败: {lg.error_msg}, 使用本地缓存")
-            return
-        print("[INFO] Baostock: 登录成功，拉取全量行业分类...")
-        rs = bs.query_stock_industry()
-        if rs.error_code != '0':
-            print(f"[WARNING] Baostock行业查询失败: {rs.error_msg}, 使用本地缓存")
-            bs.logout()
-            return
-        new_count = 0
-        while rs.next():
-            item = rs.get_row_data()
-            code = item[0]
-            industry = item[2]  # 申万一级行业
-            if code not in _baostock_cache:
-                _baostock_cache[code] = industry
+        market = 'SH' if code.startswith(('6', '9')) else 'SZ'
+        secode = f'{market}{code}'
+        url = f'https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/CompanySurveyAjax?code={secode}'
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0',
+            'Referer': 'https://emweb.securities.eastmoney.com/'
+        })
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            zjh = data.get('jbzl', {}).get('sszjhhy', '')
+            return _zjh_to_shenwan(zjh)
+    except Exception:
+        return None
+
+def _preload_industry_from_eastmoney(all_stocks):
+    """v6.9.34: 通过东方财富HTTP API批量获取行业分类（沙箱兼容）"""
+    global _industry_cache
+    _load_industry_cache()
+    
+    # 收集需要拉取的股票（缓存中未命中且硬编码未覆盖的）
+    to_fetch = []
+    for s in all_stocks:
+        code = s.get('code', '')
+        if code and code not in _industry_cache and code not in HARDCODED_INDUSTRY:
+            to_fetch.append(code)
+    
+    if not to_fetch:
+        print(f"[INFO] 行业缓存: 全部命中，无需拉取")
+        return
+    
+    print(f"[INFO] 东方财富HTTP: 拉取 {len(to_fetch)} 只股票行业分类...")
+    new_count = 0
+    fail_count = 0
+    batch_size = 50
+    
+    for i in range(0, len(to_fetch), batch_size):
+        batch = to_fetch[i:i+batch_size]
+        for code in batch:
+            industry = _fetch_zjh_industry(code)
+            if industry:
+                _industry_cache[code] = industry
                 new_count += 1
-        bs.logout()
-        print(f"[INFO] Baostock: 新增 {new_count} 条行业记录, 缓存总计 {len(_baostock_cache)} 条")
-        _save_baostock_cache()
-    except ImportError:
-        print("[WARNING] baostock 未安装，使用本地缓存+分段查表")
-    except Exception as e:
-        print(f"[WARNING] Baostock 预加载异常: {e}，使用本地缓存+分段查表")
+            else:
+                fail_count += 1
+            time.sleep(0.15)  # 避免请求过快
+        print(f"  进度: {min(i+batch_size, len(to_fetch))}/{len(to_fetch)} (新增{new_count}, 失败{fail_count})")
+    
+    print(f"[INFO] 东方财富HTTP: 新增 {new_count} 条, 失败 {fail_count} 条, 缓存总计 {len(_industry_cache)} 条")
+    if new_count > 0:
+        _save_industry_cache()
 
 # v6.6.29: 知名股票硬编码覆盖（代码段查表无法精确区分时）
 HARDCODED_INDUSTRY = {
@@ -2752,7 +2854,7 @@ def main():
     update_data_source_monitor(ds)
     
     print("\n[步骤10B] 行业补全...")
-    _preload_baostock_industries()  # v6.9.33: Baostock API 预加载全量行业分类
+    _preload_industry_from_eastmoney(all_stocks)  # v6.9.34: 东方财富HTTP API获取行业分类
     for s in all_stocks: s['industry'] = lookup_industry(s.get('code', ''))
     
     print("\n[步骤10C] 历史K线..."); kline_data = step10C_fetch_klines(all_stocks[:500])
