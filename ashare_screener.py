@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.27
-36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 25项信号过滤
+A股每日盘前短线标的智能筛选 v6.9.28
+36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 27项信号过滤
 """
 import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.27"
+BUILTIN_VERSION = "v6.9.28"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1230,6 +1230,72 @@ def step10F_fetch_risk_events():
     return unlock_events, cb_events, earnings_window
 
 # ============================================================
+# 步骤10G：拥挤度数据拉取（v6.9.28：机构持仓+融资过热代理）
+# ============================================================
+def step10G_fetch_crowding_data(candidates):
+    """v6.9.28: 拉取机构持仓数据，计算融资过热代理指标。
+    返回: {inst_holding: {code: {total_fund_ratio, reduce_count}}, margin_overheat: {code: bool}}"""
+    inst_holding = {}
+    margin_overheat = {}
+    headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://emweb.securities.eastmoney.com/'}
+    fetched = 0; errors = 0
+    
+    for c in candidates:
+        code = c.get('code', '')
+        if not code: continue
+        
+        # 1. 机构持仓数据 — F10 ShareholderResearch API
+        prefix = 'SH' if code.startswith('6') else 'SZ'
+        secode = f'{prefix}{code}'
+        try:
+            url = f'https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={secode}'
+            req = urllib.request.Request(url, headers=headers)
+            raw = urllib.request.urlopen(req, timeout=8).read()
+            if raw[:2] == b'\x1f\x8b':
+                import gzip; raw = gzip.decompress(raw)
+            data = json.loads(raw.decode('utf-8'))
+            
+            # 计算基金持仓总占比
+            jjcg = data.get('jjcg', [])
+            total_fund_ratio = sum((item.get('FREESHARES_RATIO') or 0) for item in jjcg)
+            
+            # 统计前十大股东中机构减持数量
+            sdltgd = data.get('sdltgd', [])
+            inst_types = {'基金', '保险公司', '券商', '社保基金', 'QFII', '信托', '银行', '企业年金', '财务公司'}
+            reduce_count = 0
+            for item in sdltgd:
+                if item.get('HOLDER_TYPE', '') in inst_types:
+                    change = item.get('HOLD_NUM_CHANGE', '')
+                    if change and '减' in str(change):
+                        reduce_count += 1
+            
+            inst_holding[code] = {
+                'total_fund_ratio': total_fund_ratio,
+                'reduce_count': reduce_count,
+                'fund_count': len(jjcg),
+            }
+            fetched += 1
+        except Exception:
+            errors += 1
+            inst_holding[code] = {'total_fund_ratio': 0, 'reduce_count': 0, 'fund_count': 0}
+        
+        # 2. 融资过热代理 — 基于已有行情数据
+        # 代理人: 换手率>20% + 量比>2.5 = 融资买入过热的强信号
+        # 逻辑: 融资买入→成交量激增→换手率+量比双双飙升
+        to = c.get('turnover_rate', 0) or 0
+        vr = c.get('volume_ratio', 0) or 0
+        if to > 20 and vr > 2.5:
+            margin_overheat[code] = True
+        
+        if fetched % 100 == 0 and fetched > 0:
+            time.sleep(0.2)
+    
+    n_oh = sum(1 for v in margin_overheat.values() if v)
+    n_reduce = sum(1 for v in inst_holding.values() if v.get('reduce_count', 0) >= 2)
+    log_alert("INFO", "拥挤度", f"机构持仓: {fetched}只成功/{errors}只失败, 减持≥2家: {n_reduce}只, 融资过热代理: {n_oh}只")
+    return inst_holding, margin_overheat
+
+# ============================================================
 # 步骤11：硬排除
 # ============================================================
 def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_data=None, goodwill_data=None, unlock_data=None, fundamental_data=None):
@@ -1304,12 +1370,14 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
 # ============================================================
 # 步骤12：信号过滤
 # ============================================================
-def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, risk_data=None):
-    """v6.9.27: 25项信号过滤（新增#23限售解禁/#24可转债/#25业绩预告窗口）"""
+def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, risk_data=None, crowding_data=None):
+    """v6.9.28: 27项信号过滤（新增#26机构持仓变化/#27融资过热代理）"""
     if kline_data is None: kline_data = {}
     if fundamental_data is None: fundamental_data = {}
     if risk_data is None: risk_data = ({}, {}, False)
+    if crowding_data is None: crowding_data = ({}, {})
     unlock_events, cb_events, earnings_window = risk_data
+    inst_holding, margin_overheat = crowding_data
     passed, excluded = [], []
     for c in candidates:
         chg = c.get('change_pct', 0); close = c.get('close', 0); op = c.get('open', 0)
@@ -1443,6 +1511,17 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
                 q1_net = fd.get('net_profit_yoy', 0) or 0
                 if abs(q1_net) > 50:
                     reason = f"业绩预告窗口(Q1净利{q1_net:+.0f}%)"
+        # 26. 机构持仓变化（v6.9.28: 前十大股东中≥2家机构减持→排除，防止成为对手盘）
+        if not reason:
+            ih = inst_holding.get(code, {})
+            if ih.get('reduce_count', 0) >= 2:
+                reason = f"机构减持({ih['reduce_count']}家)"
+        # 27. 融资买入过热代理（v6.9.28: 换手率>20%+量比>2.5→排除，代理融资买入占比>25%）
+        if not reason:
+            if margin_overheat.get(code):
+                to = c.get('turnover_rate', 0) or 0
+                vr = c.get('volume_ratio', 0) or 0
+                reason = f"融资过热(换手{to:.0f}% 量比{vr:.1f})"
         if reason: excluded.append(c)
         else: passed.append(c)
     log_alert("INFO", "信号过滤", f"通过{len(passed)}只 排除{len(excluded)}只")
@@ -2087,7 +2166,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
         "|------|------|------|------|",
         f"| ①原始标的池 | {total_raw} | - | 全市场活跃TOP500 |",
         f"| ②硬排除 | {ae} | {total_raw - ae} | 13项(持仓/科创/北交/低价/高价/ST/涨幅/停牌/市值/成交额/上市天数/质押商誉解禁已废弃) |",
-        f"| ③信号过滤 | {asig} | {ae - asig} | 25项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉/涨停次日高开低走/布林突破失败/20日涨幅>45%/放量不涨/放量滞跌/长上影线/连续缩量/净利润亏损/冲击成本/限售解禁/可转债/业绩预告) |",
+        f"| ③信号过滤 | {asig} | {ae - asig} | 27项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉/涨停次日高开低走/布林突破失败/20日涨幅>45%/放量不涨/放量滞跌/长上影线/连续缩量/净利润亏损/冲击成本/限售解禁/可转债/业绩预告/机构减持/融资过热) |",
         f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKLMNOPQ十七策略 |",
         f"| ⑤行业+同策略限制 | {aind} | {astr - aind} | 同行业≤4只(弱市)/3只(强/震荡)+同策略≤30% |",
         f"| ⑥新闻筛查 | {aind - anew} | {anew} | Bing/东方财富双源利空检测 |",
@@ -2218,7 +2297,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         bp = cnt / mx * 100
         bar_html += f'<div class="bar-row"><div class="bar-label">{r}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%">{cnt}</div></div></div>'
     
-    stages = [("原始标的池", total_raw), ("硬排除(13项)", ae), ("信号过滤(25项)", asig),
+    stages = [("原始标的池", total_raw), ("硬排除(13项)", ae), ("信号过滤(27项)", asig),
               ("策略匹配(17策略)", astr), ("行业+同策略限制", aind), ("新闻筛查", aind - anew), ("最终推荐", fc)]
     max_f = max(s[1] for s in stages)
     funnel_html = ""
@@ -2519,7 +2598,8 @@ def main():
     print("\n[步骤11] 硬排除..."); ael, _, er = step11_hard_exclude(raw_pool, ahc, kline_data, pledge_data, goodwill_data, unlock_data, {}); ae = len(ael)
     print("\n[步骤10E] F10基本面..."); fundamental_data = step10E_fetch_fundamentals(ael)
     print("\n[步骤10F] 风险事件..."); unlock_events, cb_events, earnings_window = step10F_fetch_risk_events()
-    print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data, fundamental_data, (unlock_events, cb_events, earnings_window)); asig = len(asl)
+    print("\n[步骤10G] 拥挤度..."); inst_holding, margin_overheat = step10G_fetch_crowding_data(ael)
+    print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data, fundamental_data, (unlock_events, cb_events, earnings_window), (inst_holding, margin_overheat)); asig = len(asl)
     print("\n[步骤13] 策略匹配..."); sm = step13_strategy_match(asl, kline_data); astr = len(sm)
     print("\n[步骤14] 评分..."); scored = step14_scoring(sm)
     print("\n[步骤15·16] 综合评分+平局打破..."); ranked = step16_comprehensive_score(scored)
