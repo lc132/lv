@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.26
-36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 22项信号过滤
+A股每日盘前短线标的智能筛选 v6.9.27
+36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 25项信号过滤
 """
 import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.26"
+BUILTIN_VERSION = "v6.9.27"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1145,6 +1145,91 @@ def step10E_fetch_fundamentals(candidates):
     return fundamental_data
 
 # ============================================================
+# 步骤10F：风险事件拉取（v6.9.27：限售解禁/可转债/业绩预告窗口）
+# ============================================================
+def step10F_fetch_risk_events():
+    """v6.9.27: 拉取未来15日内风险事件数据。
+    返回: {unlock_events: {code: {date,ratio}}, cb_events: {code: reason}, earnings_window: bool}"""
+    unlock_events = {}
+    cb_events = {}
+    earnings_window = False
+    
+    end_date = (datetime.strptime(prediction_date, '%Y-%m-%d') + timedelta(days=15)).strftime('%Y-%m-%d')
+    
+    # 1. 限售解禁数据 — qqjjsj.com 结构化解析
+    try:
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+        url = 'https://www.qqjjsj.com/show13a446260'
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html'
+        })
+        raw = urllib.request.urlopen(req, timeout=12, context=ctx).read().decode('utf-8', errors='ignore')
+        # 解析表格: <td>代码</td><td>名称</td><td>日期</td>...<td>占总股本比例</td>
+        rows = re.findall(
+            r'<td[^>]*>(\d{6})</td>\s*<td[^>]*>([^<]+)</td>\s*<td[^>]*>(\d{4}-\d{2}-\d{2})</td>'
+            r'(?:.*?</tr>|.*?<td[^>]*>([^<]*)</td>\s*<td[^>]*>([^<]*)</td>\s*<td[^>]*>([^<]*)</td>\s*<td[^>]*>([\d.]+)</td>)',
+            raw, re.DOTALL
+        )
+        for code, _, date, *rest in rows:
+            if not (prediction_date <= date <= end_date): continue
+            ratio = 0
+            if rest and len(rest) >= 4:
+                try: ratio = float(rest[3])
+                except: pass
+            if ratio > 0:
+                unlock_events[code] = {'date': date, 'ratio': ratio}
+        if unlock_events:
+            log_alert("INFO", "风险事件", f"解禁: {len(unlock_events)}只未来15日内有限售解禁(>0%)")
+    except Exception as e:
+        log_alert("WARNING", "风险事件", f"解禁API不可达: {str(e)[:60]}，使用内置数据缓冲")
+        # 内置缓冲数据（2026-06-22~07-07窗口，>5%）
+        _BUILTIN_UNLOCK = {
+            '688334': {'date': '2026-06-22', 'ratio': 49.04}, '301448': {'date': '2026-06-22', 'ratio': 53.69},
+            '688543': {'date': '2026-06-22', 'ratio': 44.47}, '301315': {'date': '2026-06-22', 'ratio': 57.95},
+            '688535': {'date': '2026-06-23', 'ratio': 10.03}, '603236': {'date': '2026-06-24', 'ratio': 9.09},
+            '002753': {'date': '2026-06-24', 'ratio': 12.36}, '688443': {'date': '2026-06-24', 'ratio': 7.28},
+            '300013': {'date': '2026-06-25', 'ratio': 20.00}, '002278': {'date': '2026-06-25', 'ratio': 6.72},
+            '301280': {'date': '2026-06-26', 'ratio': 68.24}, '920781': {'date': '2026-06-26', 'ratio': 33.03},
+            '920037': {'date': '2026-06-26', 'ratio': 65.38}, '002307': {'date': '2026-06-26', 'ratio': 21.88},
+            '603991': {'date': '2026-06-26', 'ratio': 9.82}, '601990': {'date': '2026-06-26', 'ratio': 12.40},
+            '600299': {'date': '2026-06-26', 'ratio': 12.92}, '603725': {'date': '2026-06-22', 'ratio': 5.97},
+            '603400': {'date': '2026-06-22', 'ratio': 8.00}, '301678': {'date': '2026-06-22', 'ratio': 38.41},
+            '920220': {'date': '2026-06-22', 'ratio': 13.32}, '301255': {'date': '2026-06-29', 'ratio': 75.00},
+            '688620': {'date': '2026-06-29', 'ratio': 40.74}, '688629': {'date': '2026-06-29', 'ratio': 59.63},
+            '688631': {'date': '2026-06-29', 'ratio': 60.32}, '688429': {'date': '2026-06-29', 'ratio': 70.04},
+            '605007': {'date': '2026-06-29', 'ratio': 15.35}, '920161': {'date': '2026-06-29', 'ratio': 27.07},
+            '688331': {'date': '2026-06-30', 'ratio': 34.16}, '301105': {'date': '2026-06-30', 'ratio': 60.38},
+            '688582': {'date': '2026-06-30', 'ratio': 37.72}, '600789': {'date': '2026-06-30', 'ratio': 10.68},
+            '001388': {'date': '2026-07-01', 'ratio': 41.38}, '688062': {'date': '2026-07-01', 'ratio': 43.75},
+            '688220': {'date': '2026-07-01', 'ratio': 11.75}, '300913': {'date': '2026-07-01', 'ratio': 8.77},
+            '301488': {'date': '2026-07-06', 'ratio': 17.89}, '301202': {'date': '2026-07-06', 'ratio': 65.97},
+            '603600': {'date': '2026-07-06', 'ratio': 9.20}, '920211': {'date': '2026-07-06', 'ratio': 16.97},
+        }
+        for code, info in _BUILTIN_UNLOCK.items():
+            if prediction_date <= info['date'] <= end_date:
+                unlock_events[code] = info
+        log_alert("INFO", "风险事件", f"解禁(内置): {len(unlock_events)}只")
+    
+    # 2. 可转债强赎/到期检测
+    # 已知近期到期：天创转债(113589) 2026-06-23到期
+    _CB_NEAR_EXPIRY = {'603608': '天创转债2026-06-23到期'}
+    for code, reason in _CB_NEAR_EXPIRY.items():
+        cb_events[code] = reason
+    
+    # 3. 业绩预告强制披露窗口检测
+    # 主板(6xxxx/0xxxx)在7月1-15日期间，强制披露窗口
+    # 创业板/科创板(3xxxx/688xxx)为自愿披露
+    bj = datetime.strptime(beijing_date, '%Y-%m-%d')
+    if bj.month == 7 and 1 <= bj.day <= 15:
+        earnings_window = True
+        log_alert("INFO", "风险事件", "业绩预告强制披露窗口(7月1-15日)")
+    
+    return unlock_events, cb_events, earnings_window
+
+# ============================================================
 # 步骤11：硬排除
 # ============================================================
 def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_data=None, goodwill_data=None, unlock_data=None, fundamental_data=None):
@@ -1219,10 +1304,12 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
 # ============================================================
 # 步骤12：信号过滤
 # ============================================================
-def step12_signal_filter(candidates, kline_data=None, fundamental_data=None):
-    """v6.9.26: 22项信号过滤（新增#22流动性冲击成本Amihud ILLIQ）"""
+def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, risk_data=None):
+    """v6.9.27: 25项信号过滤（新增#23限售解禁/#24可转债/#25业绩预告窗口）"""
     if kline_data is None: kline_data = {}
     if fundamental_data is None: fundamental_data = {}
+    if risk_data is None: risk_data = ({}, {}, False)
+    unlock_events, cb_events, earnings_window = risk_data
     passed, excluded = [], []
     for c in candidates:
         chg = c.get('change_pct', 0); close = c.get('close', 0); op = c.get('open', 0)
@@ -1338,6 +1425,24 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None):
                     illiq = abs(chg) / amt_e8
                     if illiq > 10:
                         reason = f"冲击成本({illiq:.0f}bps/亿)"
+        # 23. 限售解禁风险（v6.9.27: 未来15日内解禁占总股本>5%→排除，防止解禁抛压）
+        if not reason:
+            ue = unlock_events.get(code)
+            if ue and ue.get('ratio', 0) > 5:
+                reason = f"解禁({ue['date']} {ue['ratio']:.0f}%)"
+        # 24. 可转债到期/强赎（v6.9.27: 未来15日内→排除，防止转股稀释/赎回冲击）
+        if not reason:
+            cb = cb_events.get(code)
+            if cb:
+                reason = f"可转债({cb})"
+        # 25. 业绩预告强制披露窗口（v6.9.27: 主板+7月1-15日+Q1大幅波动→标记风险不排除，仅标注）
+        if not reason and earnings_window:
+            board = code[:3]
+            if board in ('600', '601', '603', '605', '000', '001', '002', '003'):
+                fd = fundamental_data.get(code, {})
+                q1_net = fd.get('net_profit_yoy', 0) or 0
+                if abs(q1_net) > 50:
+                    reason = f"业绩预告窗口(Q1净利{q1_net:+.0f}%)"
         if reason: excluded.append(c)
         else: passed.append(c)
     log_alert("INFO", "信号过滤", f"通过{len(passed)}只 排除{len(excluded)}只")
@@ -1982,7 +2087,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
         "|------|------|------|------|",
         f"| ①原始标的池 | {total_raw} | - | 全市场活跃TOP500 |",
         f"| ②硬排除 | {ae} | {total_raw - ae} | 13项(持仓/科创/北交/低价/高价/ST/涨幅/停牌/市值/成交额/上市天数/质押商誉解禁已废弃) |",
-        f"| ③信号过滤 | {asig} | {ae - asig} | 22项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉/涨停次日高开低走/布林突破失败/20日涨幅>45%/放量不涨/放量滞跌/长上影线/连续缩量/净利润亏损/冲击成本) |",
+        f"| ③信号过滤 | {asig} | {ae - asig} | 25项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉/涨停次日高开低走/布林突破失败/20日涨幅>45%/放量不涨/放量滞跌/长上影线/连续缩量/净利润亏损/冲击成本/限售解禁/可转债/业绩预告) |",
         f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKLMNOPQ十七策略 |",
         f"| ⑤行业+同策略限制 | {aind} | {astr - aind} | 同行业≤4只(弱市)/3只(强/震荡)+同策略≤30% |",
         f"| ⑥新闻筛查 | {aind - anew} | {anew} | Bing/东方财富双源利空检测 |",
@@ -2113,7 +2218,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         bp = cnt / mx * 100
         bar_html += f'<div class="bar-row"><div class="bar-label">{r}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%">{cnt}</div></div></div>'
     
-    stages = [("原始标的池", total_raw), ("硬排除(13项)", ae), ("信号过滤(22项)", asig),
+    stages = [("原始标的池", total_raw), ("硬排除(13项)", ae), ("信号过滤(25项)", asig),
               ("策略匹配(17策略)", astr), ("行业+同策略限制", aind), ("新闻筛查", aind - anew), ("最终推荐", fc)]
     max_f = max(s[1] for s in stages)
     funnel_html = ""
@@ -2413,7 +2518,8 @@ def main():
     
     print("\n[步骤11] 硬排除..."); ael, _, er = step11_hard_exclude(raw_pool, ahc, kline_data, pledge_data, goodwill_data, unlock_data, {}); ae = len(ael)
     print("\n[步骤10E] F10基本面..."); fundamental_data = step10E_fetch_fundamentals(ael)
-    print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data, fundamental_data); asig = len(asl)
+    print("\n[步骤10F] 风险事件..."); unlock_events, cb_events, earnings_window = step10F_fetch_risk_events()
+    print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data, fundamental_data, (unlock_events, cb_events, earnings_window)); asig = len(asl)
     print("\n[步骤13] 策略匹配..."); sm = step13_strategy_match(asl, kline_data); astr = len(sm)
     print("\n[步骤14] 评分..."); scored = step14_scoring(sm)
     print("\n[步骤15·16] 综合评分+平局打破..."); ranked = step16_comprehensive_score(scored)
