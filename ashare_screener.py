@@ -4,7 +4,7 @@
 A股每日盘前短线标的智能筛选 v6.9.28
 36步完整执行流程 | 腾讯一级 | 新浪二级 | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 27项信号过滤
 """
-import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html
+import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html, gzip, re, ssl
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
@@ -1121,7 +1121,6 @@ def step10E_fetch_fundamentals(candidates):
             raw = urllib.request.urlopen(req, timeout=8).read()
             # v6.9.21: 处理gzip压缩响应
             if raw[:2] == b'\x1f\x8b':
-                import gzip
                 raw = gzip.decompress(raw)
             r = json.loads(raw.decode('utf-8'))
             items = r.get('data', [])
@@ -1158,7 +1157,6 @@ def step10F_fetch_risk_events():
     
     # 1. 限售解禁数据 — qqjjsj.com 结构化解析
     try:
-        import ssl
         ctx = ssl.create_default_context()
         ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
         url = 'https://www.qqjjsj.com/show13a446260'
@@ -1252,7 +1250,7 @@ def step10G_fetch_crowding_data(candidates):
             req = urllib.request.Request(url, headers=headers)
             raw = urllib.request.urlopen(req, timeout=8).read()
             if raw[:2] == b'\x1f\x8b':
-                import gzip; raw = gzip.decompress(raw)
+                raw = gzip.decompress(raw)
             data = json.loads(raw.decode('utf-8'))
             
             # 计算基金持仓总占比
@@ -1282,7 +1280,7 @@ def step10G_fetch_crowding_data(candidates):
         # 2. 融资过热代理 — 基于已有行情数据
         # 代理人: 换手率>20% + 量比>2.5 = 融资买入过热的强信号
         # 逻辑: 融资买入→成交量激增→换手率+量比双双飙升
-        to = c.get('turnover_rate', 0) or 0
+        to = c.get('turnover', 0) or 0
         vr = c.get('volume_ratio', 0) or 0
         if to > 20 and vr > 2.5:
             margin_overheat[code] = True
@@ -1380,10 +1378,11 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
     inst_holding, margin_overheat = crowding_data
     passed, excluded = [], []
     for c in candidates:
+        code = c.get('code', '')
         chg = c.get('change_pct', 0); close = c.get('close', 0); op = c.get('open', 0)
         high = c.get('high', 0); low = c.get('low', 0); amp = c.get('amplitude', 0)
         vr = c.get('volume_ratio'); to = c.get('turnover', 0)
-        kd = kline_data.get(c.get('code', ''), {})
+        kd = kline_data.get(code, {})
         reason = None
         # 1. 假动量：高开>3%后回落超2%
         if op > 0 and c.get('prev_close', op) > 0:
@@ -1472,7 +1471,7 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         if not reason and vr is not None and vr < 0.4 and abs(chg) < 1: reason = "连续缩量"
         # 21. 净利润亏损（v6.9.22: F10数据优先，PE<0兜底；PE<0从硬排除迁移至此处）
         if not reason:
-            fd = fundamental_data.get(c.get('code', ''), {})
+            fd = fundamental_data.get(code, {})
             roe = fd.get('roe')
             np_val = fd.get('net_profit')
             if roe is not None and np_val is not None:
@@ -1519,8 +1518,6 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         # 27. 融资买入过热代理（v6.9.28: 换手率>20%+量比>2.5→排除，代理融资买入占比>25%）
         if not reason:
             if margin_overheat.get(code):
-                to = c.get('turnover_rate', 0) or 0
-                vr = c.get('volume_ratio', 0) or 0
                 reason = f"融资过热(换手{to:.0f}% 量比{vr:.1f})"
         if reason: excluded.append(c)
         else: passed.append(c)
