@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.38
-35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 27信号 | 周日全量行业缓存 | 多信号累积+数据缺失区分+集中度ceil+推荐历史日期修复
+A股每日盘前短线标的智能筛选 v6.9.39
+35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | 周日全量行业缓存 | 策略F预计算IO | 质押/商誉信号兜底 | net_profit_yoy | Bing上下文校验
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, ssl
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.38"
+BUILTIN_VERSION = "v6.9.39"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -830,7 +830,10 @@ def lookup_industry(code):
             return v.get('sshy', '') or '未知'
         return v
     # 3. 代码段映射
-    ci = int(code)
+    try:
+        ci = int(code)
+    except (ValueError, TypeError):
+        return "未知"
     for k, v in INDUSTRY_MAP.items():
         lo, hi = k.split('-')
         if int(lo) <= ci <= int(hi): return v
@@ -860,7 +863,7 @@ def _load_industry_cache():
             with open(INDUSTRY_CACHE_FILE, 'r') as f:
                 _industry_cache = json.load(f)
             # v6.9.36: 兼容旧格式dict值自动转字符串
-            _industry_cache = {k: (v.get('sshy', '') or v if isinstance(v, dict) else v) for k, v in _industry_cache.items()}
+            _industry_cache = {k: (v.get('sshy', '') or '未知') if isinstance(v, dict) else v for k, v in _industry_cache.items()}
             print(f"[INFO] 行业缓存: 从磁盘加载 {len(_industry_cache)} 条")
         except Exception:
             _industry_cache = {}
@@ -1347,7 +1350,7 @@ def step10D_fetch_financials():
 # 仅在step11硬排除后调用，对通过候选标的拉取最新财报ROE和净利润。
 # ============================================================
 def step10E_fetch_fundamentals(candidates):
-    """使用F10单股API拉取ROE/净利润，仅对通过硬排除的候选标的"""
+    """使用F10单股API拉取ROE/净利润/净利润同比，仅对通过硬排除的候选标的"""
     fundamental_data = {}
     headers = {'User-Agent': 'Mozilla/5.0'}
     fetched = 0; errors = 0
@@ -1368,13 +1371,24 @@ def step10E_fetch_fundamentals(candidates):
             items = r.get('data', [])
             if items:
                 latest = items[0]  # 最新一期报告
-                fundamental_data[code] = {
+                fd = {
                     'roe': latest.get('ROEJQ'),
                     'net_profit': latest.get('PARENTNETPROFIT'),
                     'revenue': latest.get('TOTALOPERATEREVE'),
                     'eps': latest.get('EPSJB'),
                     'report_date': latest.get('REPORT_DATE', ''),
                 }
+                # v6.9.39: 计算净利润同比（与4期前同季度对比）
+                if len(items) >= 5:
+                    prev_year = items[4]  # 4期前=同季度去年
+                    try:
+                        cur_np = float(latest.get('PARENTNETPROFIT', 0) or 0)
+                        prev_np = float(prev_year.get('PARENTNETPROFIT', 0) or 0)
+                        if prev_np != 0:
+                            fd['net_profit_yoy'] = (cur_np - prev_np) / abs(prev_np) * 100
+                    except (ValueError, TypeError):
+                        pass
+                fundamental_data[code] = fd
                 fetched += 1
         except Exception:
             errors += 1
@@ -1605,19 +1619,9 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
         kd = kline_data.get(code, {})
         if not reason and kd.get('days_listed') is not None and kd['days_listed'] < 60:
             reason = "上市不足60天"
-        # v6.9.4: 质押比例>50%
-        if not reason and code in pledge_data and pledge_data[code] > 50:
-            reason = f"质押过高({pledge_data[code]:.0f}%)"
-        # v6.9.4: 商誉/净资产>30%
-        if not reason and code in goodwill_data:
-            gw, na, ratio = goodwill_data[code]
-            if ratio > 0.30: reason = f"商誉占比{ratio:.0%}"
-        # v6.9.4: 近期大额解禁（解禁比例>10%）
-        if not reason and code in unlock_data:
-            for ud, ratio in unlock_data[code]:
-                if ratio > 10:
-                    reason = f"解禁{ratio:.0f}%({ud})"
-                    break
+        # v6.9.4: 质押比例>50%（v6.9.39: step10D API已废弃，降级为信号标记，见step12信号#28）
+        # v6.9.4: 商誉/净资产>30%（v6.9.39: step10D API已废弃，降级为信号标记，见step12信号#29）
+        # v6.9.4: 近期大额解禁（v6.9.39: 已迁移至step12信号#23，此处不再检查）
         # v6.9.22: PE<0已迁移至信号过滤#21，此处在硬排除中不再检查
         if reason: er[reason.split('(')[0]] += 1; excluded.append(c)
         else: passed.append(c)
@@ -1659,8 +1663,8 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         if amp > 15: reasons.append(f"振幅>{amp:.1f}%")
         # 5. 跌停板边缘：chg<-9%+振幅>12%
         if chg < -9 and amp > 12: reasons.append("跌停板异动")
-        # 6. 缩量下跌（v6.9.23: vr<0.15→真正无流动性排除，避免与B策略超跌反弹冲突）
-        if chg < -3 and vr is not None and vr < 0.15: reasons.append("缩量下跌")
+        # 6. 缩量下跌（v6.9.39: vr<0.15+amp<=3→真正无流动性，amp>3留给B策略超跌反弹）
+        if chg < -3 and vr is not None and vr < 0.15 and amp <= 3: reasons.append("缩量下跌")
         # 7. 高换手低涨幅：换手>20%+涨跌幅<2%
         if to > 20 and abs(chg) < 2: reasons.append("高换手低涨幅")
         # 8. 首阴标记（不排除，仅加分）— v6.9.38: 拆分为独立检测，不受其他信号影响
@@ -1766,6 +1770,23 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         # 27. 融资买入过热代理（v6.9.28: 换手率>20%+量比>2.5→排除，代理融资买入占比>25%）
         if margin_overheat.get(code):
             reasons.append(f"融资过热(换手{to:.0f}% 量比{vr:.1f})")
+        # 28. 质押比例过高（v6.9.39: step10D API已废弃，从F10 fundamental_data兜底读取）
+        fd = fundamental_data.get(code, {})
+        pledge_ratio = fd.get('pledge_ratio')
+        if pledge_ratio is not None:
+            try:
+                if float(pledge_ratio) > 50:
+                    reasons.append(f"质押过高({float(pledge_ratio):.0f}%)")
+            except (ValueError, TypeError):
+                pass
+        # 29. 商誉/净资产>30%（v6.9.39: step10D API已废弃，从F10 fundamental_data兜底读取）
+        goodwill_ratio = fd.get('goodwill_ratio')
+        if goodwill_ratio is not None:
+            try:
+                if float(goodwill_ratio) > 0.30:
+                    reasons.append(f"商誉占比{float(goodwill_ratio):.0%}")
+            except (ValueError, TypeError):
+                pass
         if reasons:
             c['_signal_reasons'] = reasons
             excluded.append(c)
@@ -1779,6 +1800,15 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
 # ============================================================
 def step13_strategy_match(candidates, kline_data=None):
     if kline_data is None: kline_data = {}
+    # v6.9.39: 预计算最近5日推荐次数，避免策略F循环内重复IO
+    recent_5d = {}
+    c5 = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=5)).strftime('%Y-%m-%d')
+    for fname in sorted(os.listdir('/workspace')):
+        if fname.startswith('推荐历史_') and fname.endswith('.json'):
+            for r in safe_read_json(os.path.join('/workspace', fname)):
+                if r.get('type') == 'recommendation' and r.get('date', '') >= c5:
+                    rc = r.get('code', '')
+                    recent_5d[rc] = recent_5d.get(rc, 0) + 1
     matched = []
     for c in candidates:
         chg = c.get('change_pct', 0); amp = c.get('amplitude', 0)
@@ -1806,7 +1836,7 @@ def step13_strategy_match(candidates, kline_data=None):
         if not s and -9.5 <= chg <= -2.5:
             if amp > 3 and low > 0 and close > low * 1.01:
                 s = "B"; reason = f"超跌反弹:跌{chg:.1f}%+振幅{amp:.1f}%+反弹确认"; score = 7
-            elif amp > 8:
+            elif amp > 8 and low > 0 and close > low * 1.02:  # v6.9.39: 宽幅反弹也需确认
                 s = "B"; reason = f"超跌反弹(宽幅):跌{chg:.1f}%+振幅{amp:.1f}%"; score = 6
         # ── C 事件驱动 (v6.9.17: 弱市关闭，追涨风险大) ──
         if not s and 1 <= chg < 2 and market_condition != "弱市":
@@ -1832,31 +1862,15 @@ def step13_strategy_match(candidates, kline_data=None):
                     s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%"; score = 6
                 elif vr is None and to is not None and to >= 1.0:
                     s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 6
-        # ── F 北向资金（v6.9.25: 弱市不折扣，代理base=6与H看齐）──
+        # ── F 北向资金（v6.9.39: 预计算recent_5d字典，避免循环内重复IO）──
         if s == "E":
             mi = c.get('main_inflow')
             if mi is not None and mi > 5000:
-                nb_days = 0
-                for fname in sorted(os.listdir('/workspace')):
-                    if fname.startswith('推荐历史_') and fname.endswith('.json'):
-                        for r in safe_read_json(os.path.join('/workspace', fname)):
-                            if r.get('code') == c.get('code') and r.get('type') == 'recommendation':
-                                rd = r.get('date', '')
-                                if rd >= (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=5)).strftime('%Y-%m-%d'):
-                                    nb_days += 1
-                                    break
+                nb_days = recent_5d.get(c.get('code', ''), 0)
                 if nb_days >= 3:
                     s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi:.0f}万+持续{nb_days}日"; score = 6
             elif mi is None and vr is not None and vr >= 0.8 and to is not None and to >= 1.5:
-                nb_days = 0
-                for fname in sorted(os.listdir('/workspace')):
-                    if fname.startswith('推荐历史_') and fname.endswith('.json'):
-                        for r in safe_read_json(os.path.join('/workspace', fname)):
-                            if r.get('code') == c.get('code') and r.get('type') == 'recommendation':
-                                rd = r.get('date', '')
-                                if rd >= (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=5)).strftime('%Y-%m-%d'):
-                                    nb_days += 1
-                                    break
+                nb_days = recent_5d.get(c.get('code', ''), 0)
                 if nb_days >= 2:
                     s = "F"; reason = f"北向资金(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%+持续{nb_days}日"; score = 6
         # ── G 横盘突破 (v6.9.22: vr≥1.0,弱市不折扣,chg<3.0%避免与D重叠) ──
@@ -1872,7 +1886,7 @@ def step13_strategy_match(candidates, kline_data=None):
             if high > low and low > 0:
                 body = abs(close - op)
                 lower_shadow = min(close, op) - low
-                min_shadow = max(body * 1.5, 0.001 * close)  # body=0时至少0.1%影线
+                min_shadow = max(body * 1.5, 0.01 * close)  # v6.9.39: body=0时至少1%影线，避免过于宽松
                 if lower_shadow >= min_shadow:
                     is_hammer = True
             vr_ok = (vr is not None and vr < 1.0) or (vr is None and to is not None and to < 1.0)
@@ -2032,7 +2046,7 @@ def step14_scoring(candidates):
         amp = c.get('amplitude', 0) or 0
         ma_bonus = 0.05 if amp < 3 and vr > 1.2 else 0
         code = c.get('code', '')
-        c['_tie_score'] = max(0, vs * (0.25 if s == 'D' else 0.30) + ts * (0.35 if s == 'D' else 0.30) + cs * 0.30 + (1.0 - so.get(s, 99) / 10.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
+        c['_tie_score'] = max(0, vs * (0.25 if s == 'D' else 0.30) + ts * (0.35 if s == 'D' else 0.30) + cs * 0.30 + (1.0 - so.get(s, 99) / 16.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
         # 融入最终score
         sc = c.get('score', 0) * 2
         sc += round(c['_tie_score'] * 8)  # v6.9.18: _tie_score 0~1 → 0~8分浮动，扩大区分度
@@ -2045,7 +2059,7 @@ def step14_scoring(candidates):
         if s == 'B':
             if chg < -7: sc += 2
             elif chg < -5: sc += 1
-        if c.get('_first_yin'): sc += 2
+        if c.get('_first_yin') and s not in ('A', 'B'): sc += 2  # v6.9.39: 首阴加分仅适用于回调/低涨幅策略
         c['score'] = max(0, sc)
         if c['score'] >= 18: c['confidence'] = '★★★'
         elif c['score'] >= 12: c['confidence'] = '★★'
@@ -2106,17 +2120,17 @@ def step18_news_screening(candidates):
     ]
     # 假阳性否定词：匹配到关键词但上下文中包含这些词时忽略
     FALSE_POSITIVE_NEGATORS = [
-        '终止减持', '不减持', '解除质押', '回复', '整改完成', '撤销',
-        '上调', '大幅增长', '扭亏', '摘帽', '恢复正常', '已消除',
+        '终止减持', '不减持', '解除质押', '整改完成', '撤销',
+        '大幅增长', '扭亏', '摘帽', '恢复正常', '已消除',
         '不立案', '不处罚', '不予', '驳回', '和解', '撤回',
-        '募集资金', '增持', '回购', '承诺不',
-        '减持完毕', '解除异常', '无违规'  # v6.9.3
+        '增持', '回购', '承诺不',
+        '减持完毕', '解除异常', '无违规'  # v6.9.39: 移除回复/上调/募集资金等过于宽泛的短词
     ]
     
     excluded = []
     passed = []
     # v6.8.8: 仅对评分前20只做个体搜索，保持原始策略优先级排序
-    search_limit = min(20, len(candidates))
+    search_limit = min(30, len(candidates))  # v6.9.39: 从20扩大到30，减少漏检
     top20_codes = {c['code'] for c in sorted(candidates, key=lambda c: -c.get('score', 0))[:search_limit]}
     
     for c in candidates:
@@ -2156,7 +2170,7 @@ def step18_news_screening(candidates):
         except Exception:
             pass
         
-        # 方式2: Bing搜索（备用，带假阳性过滤）
+        # 方式2: Bing搜索（v6.9.39: 增加上下文校验，关键词必须在名称/代码附近）
         if not has_neg:
             try:
                 query = f'{name} {code} 利空 公告'
@@ -2170,10 +2184,17 @@ def step18_news_screening(candidates):
                     for kw in NEGATIVE_KW:
                         if kw not in html:
                             continue
-                        is_false_positive = any(neg in html for neg in FALSE_POSITIVE_NEGATORS)
+                        # v6.9.39: 关键词必须在股票名称或代码300字符内，降低误报
+                        kw_pos = html.find(kw)
+                        ctx_start = max(0, kw_pos - 300)
+                        ctx_end = min(len(html), kw_pos + 300)
+                        context = html[ctx_start:ctx_end]
+                        if name not in context and code not in context:
+                            continue
+                        is_false_positive = any(neg in context for neg in FALSE_POSITIVE_NEGATORS)
                         if not is_false_positive:
                             has_neg = True
-                            neg_reason = kw
+                            neg_reason = f"Bing:{kw}"
                             break
             except Exception:
                 pass
@@ -2727,10 +2748,10 @@ def step26_github_sync(mp, hd, candidates):
         for f in os.listdir('/workspace'):
             if f.startswith('推荐历史_') and f.endswith('.json'):
                 shutil.copy(os.path.join('/workspace', f), os.path.join(rd, f))
-        subprocess.run(["git", "-C", rd, "config", "user.email", "ashare-bot@github.com"], check=True)
-        subprocess.run(["git", "-C", rd, "config", "user.name", "ashare-screener"], check=True)
-        subprocess.run(["git", "-C", rd, "add", "."], check=True)
-        subprocess.run(["git", "-C", rd, "commit", "-m", f"筛选结果 {prediction_date} (v{file_version})", "--allow-empty"], check=True)
+        subprocess.run(["git", "-C", rd, "config", "user.email", "ashare-bot@github.com"], capture_output=True, timeout=15)
+        subprocess.run(["git", "-C", rd, "config", "user.name", "ashare-screener"], capture_output=True, timeout=15)
+        subprocess.run(["git", "-C", rd, "add", "."], capture_output=True, timeout=15)
+        subprocess.run(["git", "-C", rd, "commit", "-m", f"筛选结果 {prediction_date} (v{file_version})", "--allow-empty"], capture_output=True, timeout=15)
         result = subprocess.run(["git", "-C", rd, "push", "origin", "main"], capture_output=True, text=True, timeout=30)
         if result.returncode == 0: log_alert("INFO", "GitHub同步", f"✅ {prediction_date} 已推送")
         else: log_alert("WARNING", "GitHub同步", f"推送失败: {result.stderr[:100].replace(GITHUB_TOKEN, '***')}")
