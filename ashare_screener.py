@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.39
-35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | 周日全量行业缓存 | 策略F预计算IO | 质押/商誉信号兜底 | net_profit_yoy | Bing上下文校验
+A股每日盘前短线标的智能筛选 v6.9.40
+35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | 首次运行缓存初始化 | 策略F预计算IO | 质押/商誉信号兜底 | net_profit_yoy | Bing上下文校验
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, ssl
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.39"
+BUILTIN_VERSION = "v6.9.40"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -917,14 +917,19 @@ def _fetch_zjh_industry(code):
 
 def _preload_industry_from_eastmoney(all_stocks):
     """v6.9.35: 通过东方财富HTTP API批量获取行业分类（一级+二级）。
-    v6.9.36: 仅周日执行全量HTTP拉取更新缓存，其他日仅读取磁盘缓存。"""
+    v6.9.36: 仅周日执行全量HTTP拉取更新缓存，其他日仅读取磁盘缓存。
+    v6.9.40: 首次运行（缓存为空）时，非周日也允许拉取当前股票池行业分类。"""
     global _industry_cache, _sub_industry_cache
     _load_industry_cache()
     
-    # v6.9.36: 仅周日执行全量HTTP拉取，其他日仅读取缓存
-    if beijing_weekday is not None and beijing_weekday != 6:
+    # v6.9.40: 首次运行缓存为空时，允许拉取当前股票池行业分类（不限周日）
+    cache_is_empty = len(_industry_cache) == 0 and len(_sub_industry_cache) == 0
+    if beijing_weekday is not None and beijing_weekday != 6 and not cache_is_empty:
         print(f"[INFO] 行业缓存: 非周日，仅读取缓存 (一级{len(_industry_cache)}条, 二级{len(_sub_industry_cache)}条)")
         return
+    
+    if cache_is_empty and beijing_weekday != 6:
+        print(f"[INFO] 行业缓存: 首次运行（缓存为空），允许非周日拉取当前股票池行业分类")
     
     # 收集需要拉取的股票
     to_fetch = []
