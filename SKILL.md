@@ -1,16 +1,17 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.9.37)。基于前一日收盘数据，通过36步筛选流程（网络授时北京→GitHub持仓跟踪→节假日→极端行情→外围市场→持仓同步→做T→持仓跟踪→持仓危机→全市场API拉取→东方财富HTTP行业(一级+二级)→pytdx历史K线→东方财富财务(已降级)→F10单股API→风险事件→拥挤度→13项硬排除→27项信号过滤→十七策略评分→行业集中度→生成HTML报告→GitHub同步→飞书推送→每周复盘），输出短线标的_YYYYMMDD.md 为Markdown格式，同时生成可视化HTML报告。v6.9.37新增：_industry_str安全函数统一处理dict类型行业值；lookup_industry兼容dict缓存格式；lib/core.py版本号统一为v6.9.37。使用sunday_industry_pull.py可在周日独立执行行业补全。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.9.38)。基于前一日收盘数据，通过35步筛选流程（网络授时北京→GitHub持仓跟踪→节假日→极端行情→外围市场→持仓同步→做T→持仓跟踪→持仓危机→全市场API拉取→东方财富HTTP行业(一级+二级)→pytdx历史K线→东方财富财务(已降级)→F10单股API→风险事件→拥挤度→13项硬排除→27项信号过滤→十七策略评分→行业集中度→生成HTML报告→GitHub同步→飞书推送→每周复盘），输出短线标的_YYYYMMDD.md 为Markdown格式，同时生成可视化HTML报告。v6.9.38新增：多信号累积列表(不再丢失诊断信息)；turnover/vr使用None检查区分数据缺失；行业集中度使用math.ceil替代整数除法；推荐历史文件统一使用prediction_date命名；策略注释修正(ABCDEFGHIJKLMNOPQ，F为E子策略)。使用sunday_industry_pull.py可在周日独立执行行业补全。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.9.37
+# A股盘前短线标的筛选 v6.9.38
 
 ## 版本历史
+- **v6.9.38**: 多信号累积列表；turnover/vr显式None检查；集中度ceil替代//；推荐历史prediction_date统一；策略注释修正；_meta.json/sunday_industry_pull/backtest等全部文件版本统一
 - **v6.9.37**: 行业字段dict类型全面兼容修复；_industry_str统一处理；lookup_industry兼容dict缓存；lib/core.py版本号统一
 - **v6.9.36**: 行业补全仅周日全量拉取，其他日仅读取缓存；二级行业替换主营业务列；_load_industry_cache兼容旧dict格式
 - **v6.9.35**: 二级行业缓存（东方财富sshy）；步骤10H从CompanySurvey读取sshy替代CoreConception主营业务
 - **v6.9.34**: 东方财富HTTP行业分类替代Baostock TCP；新增证监会→申万映射表
 
-## 十五、完整执行步骤
+## 完整执行步骤
 
 ### 步骤0: 北京时间
 使用内置 `step0_get_beijing_time()` 获取北京时间，同时计算 `data_date`（数据来源日期）和 `prediction_date`（预测日期）。
@@ -51,11 +52,11 @@ pytdx拉取历史K线数据(KDJ迭代+BOLL)。
 
 ### 步骤11-19: 筛选流程
 - 步骤11: 13项硬排除
-- 步骤12: 27项信号过滤
-- 步骤13: 十七策略匹配
-- 步骤14: 评分
-- 步骤15-16: 综合评分+平局打破
-- 步骤17: 行业限制
+- 步骤12: 27项信号过滤（v6.9.38: 多信号累积，不再丢失诊断信息）
+- 步骤13: 十七策略匹配（ABCDEFGHIJKLMNOPQ，F为E子策略升级）
+- 步骤14: 评分（v6.9.38: turnover/vr显式None检查）
+- 步骤16: 综合评分+平局打破（步骤15冲突检测已合并入步骤14）
+- 步骤17: 行业限制（v6.9.38: math.ceil替代整数除法，下限2）
 - 步骤18: 新闻筛查
 - 步骤19: 降级
 
@@ -63,7 +64,7 @@ pytdx拉取历史K线数据(KDJ迭代+BOLL)。
 - 步骤20: Markdown输出（行业列 + 二级行业列）
 - 步骤20B: HTML报告
 - 步骤21: 最终验证
-- 步骤22: 推荐历史
+- 步骤22: 推荐历史（v6.9.38: 文件名统一使用prediction_date）
 
 ### 步骤26-27: 同步推送
 - 步骤26: GitHub同步
@@ -75,9 +76,10 @@ pytdx拉取历史K线数据(KDJ迭代+BOLL)。
 - 更新 `行业缓存.json` 和 `二级行业缓存.json`
 - 自动推送到GitHub仓库
 
-## v6.9.37 修复详情
-- **`_industry_str(c)`**: 新增安全函数，统一处理 industry 字段的 dict/string 类型
-- **`lookup_industry(code)`**: 兼容 dict 格式缓存值，自动提取 `sshy` 字段
-- **`_load_industry_cache()`**: 加载时自动将旧 dict 格式转为字符串
-- **`lib/core.py`**: 版本号从 v6.6.46 统一为 v6.9.37，`strategy_concentration_pct` 从 60 统一为 30
-- **所有 `c.get('industry')`**: 替换为 `_industry_str(c)` 调用（5处）
+## v6.9.38 修复详情
+- **多信号累积**: 步骤12信号过滤改为 `reasons = []` 列表累积，`c['_signal_reasons']` 保留完整诊断
+- **数据缺失区分**: `vr`/`to` 使用 `if vr is not None else 0` 替代 `or 0`，区分None和真实0
+- **集中度优化**: 步骤17使用 `math.ceil(len * pct / 100)` 并 `max(2, ...)` 保证小样本区分度
+- **推荐历史统一**: 文件名和写入字段统一使用 `prediction_date`，避免周末重复覆盖
+- **策略注释修正**: 步骤13注释修正为 `ABCDEFGHIJKLMNOPQ`，F为E的北向资金升级
+- **全文件版本统一**: `_meta.json`、`backtest.py`、`sunday_industry_pull.py`、`lib/core.py`、`ashare_screener_part1/2.py` 均统一为 v6.9.38

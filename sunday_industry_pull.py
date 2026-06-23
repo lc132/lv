@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-周日行业补全拉取 v6.9.36
+周日行业补全拉取 v6.9.38
 每周日执行：全量拉取东方财富HTTP行业分类（一级+二级），更新缓存文件并推送到GitHub。
 """
 import urllib.request, json, os, time, ssl, subprocess, sys
@@ -99,7 +99,7 @@ def _fetch_industry(code):
 
 def main():
     print("=" * 60)
-    print("周日行业补全拉取 v6.9.36")
+    print("周日行业补全拉取 v6.9.38")
     print("=" * 60)
     
     # 1. Clone repo
@@ -195,7 +195,7 @@ def main():
         print("  无变更，跳过推送")
         return
     
-    subprocess.run(["git", "commit", "-m", f"周日行业补全 v6.9.36 (一级{new_primary}+二级{new_secondary})"], capture_output=True)
+    subprocess.run(["git", "commit", "-m", f"周日行业补全 v6.9.38 (一级{new_primary}+二级{new_secondary})"], capture_output=True)
     push_result = subprocess.run(["git", "push", "origin", "main"], capture_output=True, text=True)
     if push_result.returncode == 0:
         print("  ✅ 推送成功")
