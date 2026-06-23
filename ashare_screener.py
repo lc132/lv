@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.36
-36步完整执行流程 | 腾讯一级 | 东方财富HTTP行业(一/二级) | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 27项信号过滤 | 周日全量拉取行业缓存
+A股每日盘前短线标的智能筛选 v6.9.37
+36步完整执行流程 | 腾讯一级 | 东方财富HTTP行业(一/二级) | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 27项信号过滤 | 周日全量拉取行业缓存 | industry dict兼容修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html, gzip, re, ssl
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.36"
+BUILTIN_VERSION = "v6.9.37"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -112,6 +112,13 @@ DEFAULT_PARAMS = {
 # ============================================================
 # 工具函数
 # ============================================================
+def _industry_str(c):
+    """v6.9.36: 安全提取行业字符串，处理dict类型的industry值"""
+    ind = c.get('industry', '')
+    if isinstance(ind, dict):
+        return ind.get('sshy', '') or '未知'
+    return ind if ind else '未知'
+
 def log_alert(level, module, message, timestamp=None):
     if timestamp is None: timestamp = datetime.now()
     ts = timestamp.strftime('%Y-%m-%d %H:%M:%S') if hasattr(timestamp, 'strftime') else str(timestamp)
@@ -816,9 +823,12 @@ def lookup_industry(code):
     # 1. 硬编码覆盖优先（手动校对，最高优先级）
     if code in HARDCODED_INDUSTRY:
         return HARDCODED_INDUSTRY[code]
-    # 2. 东方财富缓存（证监会→申万映射）
+    # 2. 东方财富缓存（证监会→申万映射）。v6.9.36: 兼容dict格式值
     if code in _industry_cache and _industry_cache[code]:
-        return _industry_cache[code]
+        v = _industry_cache[code]
+        if isinstance(v, dict):
+            return v.get('sshy', '') or '未知'
+        return v
     # 3. 代码段映射
     ci = int(code)
     for k, v in INDUSTRY_MAP.items():
@@ -1994,7 +2004,7 @@ def step14_scoring(candidates):
     sector_ad = defaultdict(list)
     for c in candidates:
         if c.get('strategy') in ('A', 'D', 'G', 'I', 'K', 'N'):
-            sector_ad[c.get('industry', '')].append(c)
+            sector_ad[_industry_str(c)].append(c)
     sector_bonus = {}
     for ind, clist in sector_ad.items():
         if len(clist) >= 3:
@@ -2060,7 +2070,7 @@ def step17_industry_limit(candidates):
         return (-c.get('score', 0), so.get(c.get('strategy', 'Z'), 99), -(c.get('_tie_score', 0)),
                 -vr, to_penalty)
     ig = defaultdict(list)
-    for c in candidates: ig[c.get('industry', '未知')].append(c)
+    for c in candidates: ig[_industry_str(c)].append(c)
     limited = []
     elastic_added = 0
     # v6.9.22: 弱市行业上限3→4，增加标的多样性
@@ -2426,7 +2436,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
         lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for idx, c in enumerate(candidates, 1):
             code = c.get('code', ''); name = c.get('name', '')
-            s = c.get('strategy', '?'); ind = c.get('industry', '未知'); biz = c.get('business', '')
+            s = c.get('strategy', '?'); ind = _industry_str(c); biz = c.get('business', '')
             chg = c.get('change_pct', 0); op = c.get('open', 0) or 0
             close = c.get('close', 0) or 0; amp = c.get('amplitude', 0) or 0
             score = c.get('score', 0); conf = c.get('confidence', '★')
@@ -2502,7 +2512,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
               'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05}
     for idx, c in enumerate(candidates, 1):
         code = c.get('code', ''); name = c.get('name', ''); s = c.get('strategy', '?')
-        ind = c.get('industry', '未知'); biz = c.get('business', ''); chg = c.get('change_pct', 0)
+        ind = _industry_str(c); biz = c.get('business', ''); chg = c.get('change_pct', 0)
         op = c.get('open', 0) or 0; close = c.get('close', 0) or 0
         amp = c.get('amplitude', 0) or 0; score = c.get('score', 0); conf = c.get('confidence', '★')
         entry = calc_entry_price(c)
@@ -2683,7 +2693,7 @@ def step22_write_history(candidates):
     for c in candidates:
         entry = calc_entry_price(c)
         safe_append_json(hf, {"type": "recommendation", "code": c.get('code'), "name": c.get('name'),
-            "strategy": c.get('strategy'), "industry": c.get('industry'), "business": c.get('business', ''),
+            "strategy": c.get('strategy'), "industry": _industry_str(c), "business": c.get('business', ''),
             "score": c.get('score'), "confidence": c.get('confidence'),
             "entry": entry, "change_pct": c.get('change_pct'),
             "date": data_date, "prediction_date": prediction_date})

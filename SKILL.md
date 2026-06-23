@@ -1,10 +1,11 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.9.36)。基于前一日收盘数据，通过 38步筛选流程（网络授时北京→GitHub持仓跟踪→节假日→极端行情→外围市场→持仓同步→做T→持仓跟踪→持仓危机→全市场API拉取→东方财富HTTP行业(一级+二级)→pytdx历史K线→东方财富财务(已降级)→F10单股API→风险事件→拥挤度→13项硬排除→27项信号过滤→十七策略评分→行业集中度→生成HTML报告→GitHub同步→飞书推送→每周复盘），输出短线标的_YYYYMMDD.md 为Markdown格式，同时生成可视化HTML报告。v6.9.36新增：行业补全仅周日全量HTTP拉取更新缓存，其他日仅读取缓存；二级行业列替换主营业务。使用sunday_industry_pull.py可在周日独立执行行业补全。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.9.37)。基于前一日收盘数据，通过36步筛选流程（网络授时北京→GitHub持仓跟踪→节假日→极端行情→外围市场→持仓同步→做T→持仓跟踪→持仓危机→全市场API拉取→东方财富HTTP行业(一级+二级)→pytdx历史K线→东方财富财务(已降级)→F10单股API→风险事件→拥挤度→13项硬排除→27项信号过滤→十七策略评分→行业集中度→生成HTML报告→GitHub同步→飞书推送→每周复盘），输出短线标的_YYYYMMDD.md 为Markdown格式，同时生成可视化HTML报告。v6.9.37新增：_industry_str安全函数统一处理dict类型行业值；lookup_industry兼容dict缓存格式；lib/core.py版本号统一为v6.9.37。使用sunday_industry_pull.py可在周日独立执行行业补全。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.9.36
+# A股盘前短线标的筛选 v6.9.37
 
 ## 版本历史
+- **v6.9.37**: 行业字段dict类型全面兼容修复；_industry_str统一处理；lookup_industry兼容dict缓存；lib/core.py版本号统一
 - **v6.9.36**: 行业补全仅周日全量拉取，其他日仅读取缓存；二级行业替换主营业务列；_load_industry_cache兼容旧dict格式
 - **v6.9.35**: 二级行业缓存（东方财富sshy）；步骤10H从CompanySurvey读取sshy替代CoreConception主营业务
 - **v6.9.34**: 东方财富HTTP行业分类替代Baostock TCP；新增证监会→申万映射表
@@ -12,10 +13,10 @@ description: A股每日盘前短线标的智能筛选(v6.9.36)。基于前一日
 ## 十五、完整执行步骤
 
 ### 步骤0: 北京时间
-使用 `lib/core.py` 的 `step0_get_beijing_time()` 获取北京时间。
+使用内置 `step0_get_beijing_time()` 获取北京时间，同时计算 `data_date`（数据来源日期）和 `prediction_date`（预测日期）。
 
 ### 步骤0A: 拉取持仓
-使用 `lib/holdings.py` 同步持仓跟踪.xlsx和推荐历史JSON。
+从 GitHub 同步持仓跟踪.xlsx 和推荐历史JSON文件。
 
 ### 步骤1-9C: 市场环境检查
 - 步骤1: 节假日检查
@@ -24,7 +25,7 @@ description: A股每日盘前短线标的智能筛选(v6.9.36)。基于前一日
 - 步骤3A: 大盘代理
 - 步骤4-4C: 持仓同步/做T/持仓跟踪/持仓危机
 - 步骤5: 推荐历史清理
-- 步骤6: 文件初始化
+- 步骤6: 文件初始化（版本检查）
 - 步骤7: 财报季
 - 步骤8: 大盘环境判断
 - 步骤9-9C: 板块轮动/最大持仓天数/回撤断路器/兑现率闭环
@@ -73,3 +74,10 @@ pytdx拉取历史K线数据(KDJ迭代+BOLL)。
 - 拉取全量A股行业分类（一级+二级）
 - 更新 `行业缓存.json` 和 `二级行业缓存.json`
 - 自动推送到GitHub仓库
+
+## v6.9.37 修复详情
+- **`_industry_str(c)`**: 新增安全函数，统一处理 industry 字段的 dict/string 类型
+- **`lookup_industry(code)`**: 兼容 dict 格式缓存值，自动提取 `sshy` 字段
+- **`_load_industry_cache()`**: 加载时自动将旧 dict 格式转为字符串
+- **`lib/core.py`**: 版本号从 v6.6.46 统一为 v6.9.37，`strategy_concentration_pct` 从 60 统一为 30
+- **所有 `c.get('industry')`**: 替换为 `_industry_str(c)` 调用（5处）

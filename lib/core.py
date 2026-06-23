@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的筛选 v6.6.21 — 核心工具模块
+A股每日盘前短线标的筛选 v6.9.36 — 核心工具模块
 全局配置、工具函数
 """
 import os, sys, json, time, urllib.request, urllib.error, subprocess, shutil, re
@@ -11,7 +11,7 @@ from collections import Counter
 # ============================================================
 # 全局配置
 # ============================================================
-BUILTIN_VERSION = "v6.6.46"
+BUILTIN_VERSION = "v6.9.36"
 DATA_DIR = "/workspace"
 TEMP_DIR = "/data/user/work"
 # GitHub Token 从外部文件读取（不入git，防止泄露）
@@ -44,7 +44,7 @@ DEFAULT_PARAMS = {
     "win_rate_drop_threshold": 10, "limit_down_threshold": 100,
     "max_adjust_params": 3, "confidence_position_enabled": True,
     "max_holding_days": 5, "circuit_breaker_threshold_pct": 3.0,
-    "strategy_concentration_pct": 60, "do_t_success_reset_count": 3,
+    "strategy_concentration_pct": 30, "do_t_success_reset_count": 3,
     "conversion_rate_window_days": 10, "conversion_rate_threshold": 0.3,
     "conversion_rate_restore": 0.6, "conversion_rate_consecutive_days": 3,
     "data_tier_l2_skip_on_unavailable": True,
