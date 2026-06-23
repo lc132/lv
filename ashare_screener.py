@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.37
-36步完整执行流程 | 腾讯一级 | 东方财富HTTP行业(一/二级) | pytdx历史K线 | 东方财富财务 | 31行业覆盖 | 17策略匹配 | 27项信号过滤 | 周日全量拉取行业缓存 | industry dict兼容修复
+A股每日盘前短线标的智能筛选 v6.9.38
+35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 27信号 | 周日全量行业缓存 | 多信号累积+数据缺失区分+集中度ceil+推荐历史日期修复
 """
-import urllib.request, urllib.error, urllib.parse, json, os, time, shutil, subprocess, html, gzip, re, ssl
+import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, ssl
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.37"
+BUILTIN_VERSION = "v6.9.38"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -437,7 +437,7 @@ def step4A_doT_eval(holdings):
                       "date": data_date, "pnl_pct": pnl, "do_T_feasible": f,
                       "position_ratio": "≤1/3" if f == "True" else ("≤1/4" if f == "谨慎" else "不操作")})
     if recs:
-        hist_file = f"/workspace/推荐历史_{data_date.replace('-', '')}.json"
+        hist_file = f"/workspace/推荐历史_{prediction_date.replace('-', '')}.json"
         safe_write_json(hist_file, safe_read_json(hist_file) + recs)
     return recs
 
@@ -532,7 +532,7 @@ def step6_file_init():
     if lc and lc.get('version') != file_version:
         log_alert("INFO", "版本检查", f"历史版本≠策略调整版本{file_version}")
     if lc is None or (lc and lc.get('version') != file_version):
-        hf = f"/workspace/推荐历史_{data_date.replace('-', '')}.json"
+        hf = f"/workspace/推荐历史_{prediction_date.replace('-', '')}.json"
         safe_append_json(hf, {"type": "strategy_check", "version": file_version, "params": params, "date": data_date})
 
 def step7_earnings_season():
@@ -1644,156 +1644,146 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         high = c.get('high', 0); low = c.get('low', 0); amp = c.get('amplitude', 0)
         vr = c.get('volume_ratio'); to = c.get('turnover', 0)
         kd = kline_data.get(code, {})
-        reason = None
+        reasons = []
         # 1. 假动量：高开>3%后回落超2%
         if op > 0 and c.get('prev_close', op) > 0:
             pc = c.get('prev_close', op)
-            if (op - pc) / pc > 0.03 and close < op * 0.98: reason = "假动量"
+            if (op - pc) / pc > 0.03 and close < op * 0.98: reasons.append("假动量")
         # 2. 诱多：冲高>5%后回落至开盘附近
-        if not reason and high > 0 and op > 0:
+        if high > 0 and op > 0:
             pc = c.get('prev_close', 0)
-            if pc > 0 and (high - pc) / pc > 0.05 and close < op * 1.01: reason = "诱多"
+            if pc > 0 and (high - pc) / pc > 0.05 and close < op * 1.01: reasons.append("诱多")
         # 3. 缩量涨停：涨幅>5%+量比<0.5
-        if not reason and chg > 5 and vr is not None and vr < 0.5: reason = "缩量涨停"
+        if chg > 5 and vr is not None and vr < 0.5: reasons.append("缩量涨停")
         # 4. 振幅过大：>15%
-        if not reason and amp > 15: reason = f"振幅>{amp:.1f}%"
+        if amp > 15: reasons.append(f"振幅>{amp:.1f}%")
         # 5. 跌停板边缘：chg<-9%+振幅>12%
-        if not reason and chg < -9 and amp > 12: reason = "跌停板异动"
+        if chg < -9 and amp > 12: reasons.append("跌停板异动")
         # 6. 缩量下跌（v6.9.23: vr<0.15→真正无流动性排除，避免与B策略超跌反弹冲突）
-        if not reason and chg < -3 and vr is not None and vr < 0.15: reason = "缩量下跌"
+        if chg < -3 and vr is not None and vr < 0.15: reasons.append("缩量下跌")
         # 7. 高换手低涨幅：换手>20%+涨跌幅<2%
-        if not reason and to > 20 and abs(chg) < 2: reason = "高换手低涨幅"
-        # 8. 首阴标记（不排除，仅加分）
-        if not reason and -3 < chg < 0 and to > 3: c['_first_yin'] = True
+        if to > 20 and abs(chg) < 2: reasons.append("高换手低涨幅")
+        # 8. 首阴标记（不排除，仅加分）— v6.9.38: 拆分为独立检测，不受其他信号影响
+        if -3 < chg < 0 and to > 3: c['_first_yin'] = True
         # 9. 均线空头排列（MA5<MA10<MA20）
-        if not reason:
-            ma5 = kd.get('ma5', 0); ma10 = kd.get('ma10', 0); ma20 = kd.get('ma20', 0)
-            if ma5 > 0 and ma10 > 0 and ma20 > 0 and ma5 < ma10 < ma20:
-                reason = "均线空头排列"
+        ma5 = kd.get('ma5', 0); ma10 = kd.get('ma10', 0); ma20 = kd.get('ma20', 0)
+        if ma5 > 0 and ma10 > 0 and ma20 > 0 and ma5 < ma10 < ma20:
+            reasons.append("均线空头排列")
         # 10. MACD顶背离
-        if not reason:
-            high20 = kd.get('high20', 0); dif = kd.get('dif', 0)
-            closes_h = kd.get('closes', [])
-            if high20 > 0 and len(closes_h) >= 20:
-                difs_list = []
-                ema12 = closes_h[0]; ema26 = closes_h[0]
-                for pr in closes_h[1:]:
-                    ema12 = ema12 * 11/13 + pr * 2/13
-                    ema26 = ema26 * 25/27 + pr * 2/27
-                    difs_list.append(ema12 - ema26)
-                dif_20d_max = max(difs_list[-20:]) if len(difs_list) >= 20 else dif
-                if high >= high20 * 0.995 and dif < dif_20d_max * 0.9:
-                    reason = "MACD顶背离"
+        high20 = kd.get('high20', 0); dif = kd.get('dif', 0)
+        closes_h = kd.get('closes', [])
+        if high20 > 0 and len(closes_h) >= 20:
+            difs_list = []
+            ema12 = closes_h[0]; ema26 = closes_h[0]
+            for pr in closes_h[1:]:
+                ema12 = ema12 * 11/13 + pr * 2/13
+                ema26 = ema26 * 25/27 + pr * 2/27
+                difs_list.append(ema12 - ema26)
+            dif_20d_max = max(difs_list[-20:]) if len(difs_list) >= 20 else dif
+            if high >= high20 * 0.995 and dif < dif_20d_max * 0.9:
+                reasons.append("MACD顶背离")
         # 11. RSI超买（RSI(14)>80）
-        if not reason:
-            rsi14 = kd.get('rsi14', 50)
-            if rsi14 > 80: reason = f"RSI超买({rsi14:.0f})"
+        rsi14 = kd.get('rsi14', 50)
+        if rsi14 > 80: reasons.append(f"RSI超买({rsi14:.0f})")
         # 12. 缩量反弹（v6.9.3: 连续3日量能递减+当日反弹>2%）
-        if not reason and chg > 2:
+        if chg > 2:
             vols = kd.get('volumes', [])
             if len(vols) >= 4 and vr is not None and vr < 0.6:
                 if vols[-4] > vols[-3] > vols[-2] and vols[-1] > 0:
-                    reason = "缩量反弹"
+                    reasons.append("缩量反弹")
         # 13. KDJ高位死叉（v6.9.3: J值>100后下穿K/D线）
-        if not reason:
-            j_val = kd.get('j', 50); k_val = kd.get('k', 50)
-            if j_val > 100 and j_val < k_val:
-                reason = f"KDJ死叉(J={j_val:.0f})"
+        j_val = kd.get('j', 50); k_val = kd.get('k', 50)
+        if j_val > 100 and j_val < k_val:
+            reasons.append(f"KDJ死叉(J={j_val:.0f})")
         # 14. 涨停次日高开低走（v6.9.3: 前日涨停+当日高开低走收阴）
-        if not reason:
-            closes_h = kd.get('closes', []); highs_h = kd.get('highs', [])
-            if len(closes_h) >= 3 and closes_h[-2] > 0 and highs_h[-2] > 0:
-                yday_chg = (closes_h[-2] - closes_h[-3]) / closes_h[-3] if closes_h[-3] > 0 else 0
-                yday_limit = yday_chg >= 0.095 and closes_h[-2] >= highs_h[-2] * 0.98
-                if yday_limit and op > 0 and close < op and chg < 0:
-                    reason = "涨停次日高开低走"
+        closes_h = kd.get('closes', []); highs_h = kd.get('highs', [])
+        if len(closes_h) >= 3 and closes_h[-2] > 0 and highs_h[-2] > 0:
+            yday_chg = (closes_h[-2] - closes_h[-3]) / closes_h[-3] if closes_h[-3] > 0 else 0
+            yday_limit = yday_chg >= 0.095 and closes_h[-2] >= highs_h[-2] * 0.98
+            if yday_limit and op > 0 and close < op and chg < 0:
+                reasons.append("涨停次日高开低走")
         # 15. 布林带收窄突破失败（v6.9.3: 带宽<5%+当日放量但收阴）
-        if not reason:
-            boll_width = kd.get('boll_width', 999)
-            if boll_width < 0.05 and vr is not None and vr >= 1.5 and close < op:
-                reason = f"布林突破失败(带宽{boll_width:.1%})"
+        boll_width = kd.get('boll_width', 999)
+        if boll_width < 0.05 and vr is not None and vr >= 1.5 and close < op:
+            reasons.append(f"布林突破失败(带宽{boll_width:.1%})")
         # 16. 20日涨幅>45%风控（v6.9.5: 防止追高爆炒股）
-        if not reason:
-            closes_h = kd.get('closes', [])
-            if len(closes_h) >= 20 and closes_h[-20] > 0:
-                rally_20d_v2 = (close - closes_h[-20]) / closes_h[-20]
-                if rally_20d_v2 > 0.45:
-                    reason = f"20日涨幅{rally_20d_v2:.0%}>45%"
+        closes_h = kd.get('closes', [])
+        if len(closes_h) >= 20 and closes_h[-20] > 0:
+            rally_20d_v2 = (close - closes_h[-20]) / closes_h[-20]
+            if rally_20d_v2 > 0.45:
+                reasons.append(f"20日涨幅{rally_20d_v2:.0%}>45%")
         # 17. 放量不涨（v6.9.10: 量比>2+涨跌<1%→放量不涨，疑似出货）
-        if not reason and vr is not None and vr > 2 and 0 < chg < 1: reason = "放量不涨"
+        if vr is not None and vr > 2 and 0 < chg < 1: reasons.append("放量不涨")
         # 18. 放量滞跌（v6.9.22: 量比>1.5+微跌+收阴+振幅>2%→放量滞跌，下跌中继，振幅辅助减少误杀）
-        if not reason and vr is not None and vr > 1.5 and -1 < chg < 0 and close < op and amp is not None and amp > 2: reason = "放量滞跌"
+        if vr is not None and vr > 1.5 and -1 < chg < 0 and close < op and amp is not None and amp > 2: reasons.append("放量滞跌")
         # 19. 高位长上影线（v6.9.11: 涨>5%+上影线>实体2倍→高位抛压）
-        if not reason and chg > 5 and high > max(close, op) and low > 0:
+        if chg > 5 and high > max(close, op) and low > 0:
             body = abs(close - op); upper_shadow = high - max(close, op)
             if upper_shadow > body * 2 and upper_shadow / close > 0.03:
-                reason = "长上影线"
+                reasons.append("长上影线")
         # 20. 连续缩量（v6.9.11: 量比<0.4+涨跌<1%→无人气横盘）
-        if not reason and vr is not None and vr < 0.4 and abs(chg) < 1: reason = "连续缩量"
+        if vr is not None and vr < 0.4 and abs(chg) < 1: reasons.append("连续缩量")
         # 21. 净利润亏损（v6.9.22: F10数据优先，PE<0兜底；PE<0从硬排除迁移至此处）
-        if not reason:
-            fd = fundamental_data.get(code, {})
-            roe = fd.get('roe')
-            np_val = fd.get('net_profit')
-            if roe is not None and np_val is not None:
-                try:
-                    if float(roe) < 0 or float(np_val) < 0:
-                        reason = f"净利润亏损(ROE={float(roe):.1f}%)"
-                except (ValueError, TypeError):
-                    pass
-            elif c.get('pe_ttm') is not None and c.get('pe_ttm', 0) < 0:
-                # F10数据不可达时，PE<0兜底排除
-                reason = "PE负值(亏损)"
+        fd = fundamental_data.get(code, {})
+        roe = fd.get('roe')
+        np_val = fd.get('net_profit')
+        if roe is not None and np_val is not None:
+            try:
+                if float(roe) < 0 or float(np_val) < 0:
+                    reasons.append(f"净利润亏损(ROE={float(roe):.1f}%)")
+            except (ValueError, TypeError):
+                pass
+        elif c.get('pe_ttm') is not None and c.get('pe_ttm', 0) < 0:
+            reasons.append("PE负值(亏损)")
         # 22. 流动性冲击成本（v6.9.26: Amihud ILLIQ=|chg%|/(成交额/亿)→排除>10的标的，避免短线交易滑点侵蚀利润）
-        if not reason:
-            amt = c.get('amount', 0)
-            if amt is not None and amt > 0:
-                amt_e8 = amt / 1e8  # 成交额(亿元)
-                if amt_e8 > 0:
-                    illiq = abs(chg) / amt_e8
-                    if illiq > 10:
-                        reason = f"冲击成本({illiq:.0f}bps/亿)"
+        amt = c.get('amount', 0)
+        if amt is not None and amt > 0:
+            amt_e8 = amt / 1e8
+            if amt_e8 > 0:
+                illiq = abs(chg) / amt_e8
+                if illiq > 10:
+                    reasons.append(f"冲击成本({illiq:.0f}bps/亿)")
         # 23. 限售解禁风险（v6.9.27: 未来15日内解禁占总股本>5%→排除，防止解禁抛压）
-        if not reason:
-            ue = unlock_events.get(code)
-            if ue and ue.get('ratio', 0) > 5:
-                reason = f"解禁({ue['date']} {ue['ratio']:.0f}%)"
+        ue = unlock_events.get(code)
+        if ue and ue.get('ratio', 0) > 5:
+            reasons.append(f"解禁({ue['date']} {ue['ratio']:.0f}%)")
         # 24. 可转债到期/强赎（v6.9.27: 未来15日内→排除，防止转股稀释/赎回冲击）
-        if not reason:
-            cb = cb_events.get(code)
-            if cb:
-                reason = f"可转债({cb})"
+        cb = cb_events.get(code)
+        if cb:
+            reasons.append(f"可转债({cb})")
         # 25. 业绩预告强制披露窗口（v6.9.27: 主板+7月1-15日+Q1大幅波动→标记风险不排除，仅标注）
-        if not reason and earnings_window:
+        if earnings_window:
             board = code[:3]
             if board in ('600', '601', '603', '605', '000', '001', '002', '003'):
                 fd = fundamental_data.get(code, {})
                 q1_net = fd.get('net_profit_yoy', 0) or 0
                 if abs(q1_net) > 50:
-                    reason = f"业绩预告窗口(Q1净利{q1_net:+.0f}%)"
+                    reasons.append(f"业绩预告窗口(Q1净利{q1_net:+.0f}%)")
         # 26. 机构持仓变化（v6.9.28: 前十大股东中≥2家机构减持→排除，防止成为对手盘）
-        if not reason:
-            ih = inst_holding.get(code, {})
-            if ih.get('reduce_count', 0) >= 2:
-                reason = f"机构减持({ih['reduce_count']}家)"
+        ih = inst_holding.get(code, {})
+        if ih.get('reduce_count', 0) >= 2:
+            reasons.append(f"机构减持({ih['reduce_count']}家)")
         # 27. 融资买入过热代理（v6.9.28: 换手率>20%+量比>2.5→排除，代理融资买入占比>25%）
-        if not reason:
-            if margin_overheat.get(code):
-                reason = f"融资过热(换手{to:.0f}% 量比{vr:.1f})"
-        if reason: excluded.append(c)
-        else: passed.append(c)
+        if margin_overheat.get(code):
+            reasons.append(f"融资过热(换手{to:.0f}% 量比{vr:.1f})")
+        if reasons:
+            c['_signal_reasons'] = reasons
+            excluded.append(c)
+        else:
+            passed.append(c)
     log_alert("INFO", "信号过滤", f"通过{len(passed)}只 排除{len(excluded)}只")
     return passed, excluded
 
 # ============================================================
-# 步骤13：十七策略匹配（ABCDEFGHIJKLMNOPQMNO按优先级顺序，v6.9.3新增M/N/O）
+# 步骤13：十七策略匹配（ABCDEFGHIJKLMNOPQ，F为E子策略升级，v6.9.38修正注释）
 # ============================================================
 def step13_strategy_match(candidates, kline_data=None):
     if kline_data is None: kline_data = {}
     matched = []
     for c in candidates:
         chg = c.get('change_pct', 0); amp = c.get('amplitude', 0)
-        amt = c.get('amount', 0); vr = c.get('volume_ratio'); to = c.get('turnover', 0)
+        amt = c.get('amount', 0) if False else 0  # v6.9.38: 预留，策略匹配中未使用
+        vr = c.get('volume_ratio'); to = c.get('turnover', 0)
         close = c.get('close', 0); op = c.get('open', 0)
         high = c.get('high', 0); low = c.get('low', 0)
         s = None; reason = ""; score = 0
@@ -2011,7 +2001,9 @@ def step14_scoring(candidates):
             for c in clist:
                 sector_bonus[c.get('code', '')] = 0.10
     for c in candidates:
-        vr = c.get('volume_ratio') or 0; to = c.get('turnover') or 0; chg = c.get('change_pct') or 0
+        vr = c.get('volume_ratio'); vr = vr if vr is not None else 0
+        to = c.get('turnover'); to = to if to is not None else 0
+        chg = c.get('change_pct') or 0
         vs = min(vr / 3.0, 1.0)
         if to < 2: ts = 0.2
         elif to <= 5: ts = 0.6
@@ -2086,7 +2078,7 @@ def step17_industry_limit(candidates):
             if tn > 0 and tn1 / tn >= elastic_threshold:
                 limited.append(g[industry_limit])
                 elastic_added += 1
-    max_s = max(1, len(limited) * params.get('strategy_concentration_pct', 30) // 100)
+    max_s = max(2, math.ceil(len(limited) * params.get('strategy_concentration_pct', 30) / 100))
     sg = defaultdict(list)
     for c in limited: sg[c.get('strategy', 'Z')].append(c)
     final = []
@@ -2204,7 +2196,7 @@ def step18_news_screening(candidates):
     return passed, nex
 
 def step16_comprehensive_score(candidates):
-    # v6.9.10: _tie_score已在step14计算并融入score，step16仅负责排序
+    # v6.9.38: 步骤15(冲突检测)已合并入步骤14评分，步骤16仅负责排序
     so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16}
     def _tie_key(c):
         vr = c.get('volume_ratio') or 0
@@ -2711,7 +2703,7 @@ def step26_github_sync(mp, hd, candidates):
         if os.path.exists(rd): shutil.rmtree(rd, ignore_errors=True)
         subprocess.run(["git", "clone", "--depth", "1", "--branch", "main", repo_url, rd],
                        capture_output=True, text=True, timeout=30, check=True)
-        c15 = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=15)).strftime('%Y-%m-%d').replace('-', '')
+        c15 = (datetime.strptime(prediction_date, '%Y-%m-%d') - timedelta(days=15)).strftime('%Y-%m-%d').replace('-', '')
         for f in list(os.listdir(rd)):
             for prefix in ['短线标的_', '推荐历史_']:
                 if f.startswith(prefix):
@@ -2862,7 +2854,7 @@ def main():
     print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data, fundamental_data, (unlock_events, cb_events, earnings_window), (inst_holding, margin_overheat)); asig = len(asl)
     print("\n[步骤13] 策略匹配..."); sm = step13_strategy_match(asl, kline_data); astr = len(sm)
     print("\n[步骤14] 评分..."); scored = step14_scoring(sm)
-    print("\n[步骤15·16] 综合评分+平局打破..."); ranked = step16_comprehensive_score(scored)
+    print("\n[步骤16] 综合评分+平局打破..."); ranked = step16_comprehensive_score(scored)
     print("\n[步骤17] 行业限制..."); ail = step17_industry_limit(ranked); aind = len(ail)
     print("\n[步骤18] 新闻筛查..."); ail, anew = step18_news_screening(ail)
     print("\n[步骤19] 降级..."); final = step19_shortfall_handling(ail); fc = len(final)
