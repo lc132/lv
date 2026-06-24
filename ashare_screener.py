@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.40
-35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | 首次运行缓存初始化 | 策略F预计算IO | 质押/商誉信号兜底 | net_profit_yoy | Bing上下文校验
+A股每日盘前短线标的智能筛选 v6.9.41
+35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | 首次运行缓存初始化 | 排除创业板 | 策略F预计算IO | 质押/商誉信号兜底
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, ssl
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.40"
+BUILTIN_VERSION = "v6.9.41"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -918,11 +918,11 @@ def _fetch_zjh_industry(code):
 def _preload_industry_from_eastmoney(all_stocks):
     """v6.9.35: 通过东方财富HTTP API批量获取行业分类（一级+二级）。
     v6.9.36: 仅周日执行全量HTTP拉取更新缓存，其他日仅读取磁盘缓存。
-    v6.9.40: 首次运行（缓存为空）时，非周日也允许拉取当前股票池行业分类。"""
+    v6.9.41: 首次运行（缓存为空）时，非周日也允许拉取当前股票池行业分类。"""
     global _industry_cache, _sub_industry_cache
     _load_industry_cache()
     
-    # v6.9.40: 首次运行缓存为空时，允许拉取当前股票池行业分类（不限周日）
+    # v6.9.41: 首次运行缓存为空时，允许拉取当前股票池行业分类（不限周日）
     cache_is_empty = len(_industry_cache) == 0 and len(_sub_industry_cache) == 0
     if beijing_weekday is not None and beijing_weekday != 6 and not cache_is_empty:
         print(f"[INFO] 行业缓存: 非周日，仅读取缓存 (一级{len(_industry_cache)}条, 二级{len(_sub_industry_cache)}条)")
@@ -1577,7 +1577,7 @@ def step10H_fetch_sub_industry(candidates):
 # 步骤11：硬排除
 # ============================================================
 def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_data=None, goodwill_data=None, unlock_data=None, fundamental_data=None):
-    """v6.9.24: 13项硬排除（PE<0已迁移至信号过滤#21，质押/商誉/解禁API已废弃降级跳过）"""
+    """v6.9.41: 14项硬排除（新增创业板，PE<0已迁移至信号过滤#21，质押/商誉/解禁API已废弃降级跳过）"""
     if kline_data is None: kline_data = {}
     if pledge_data is None: pledge_data = {}
     if goodwill_data is None: goodwill_data = {}
@@ -1612,6 +1612,7 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
             reason = "当前持仓"
         elif code.startswith('688'): reason = "科创板"
         elif code.startswith('8'): reason = "北交所"
+        elif code.startswith('300'): reason = "创业板"
         elif close < 5: reason = f"股价<5元"
         elif close > 100: reason = f"股价>100元"
         elif c.get('name', '').startswith('ST') or c.get('name', '').startswith('*ST'): reason = "ST/*ST"

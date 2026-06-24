@@ -1,12 +1,12 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.9.40)。基于前一日收盘数据，通过35步筛选流程（网络授时北京→GitHub持仓跟踪→节假日→极端行情→外围市场→持仓同步→做T→持仓跟踪→持仓危机→全市场API拉取→东方财富HTTP行业(一级+二级)→pytdx历史K线→东方财富财务(已降级)→F10单股API→风险事件→拥挤度→13项硬排除→27项信号过滤→十七策略评分→行业集中度→生成HTML报告→GitHub同步→飞书推送→每周复盘），输出短线标的_YYYYMMDD.md 为Markdown格式，同时生成可视化HTML报告。v6.9.40新增：首次运行缓存初始化（行业缓存为空时允许非周日拉取当前股票池行业分类）。使用sunday_industry_pull.py可在周日独立执行行业补全。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
+description: A股每日盘前短线标的智能筛选(v6.9.41)。基于前一日收盘数据，通过35步筛选流程（网络授时北京→GitHub持仓跟踪→节假日→极端行情→外围市场→持仓同步→做T→持仓跟踪→持仓危机→全市场API拉取→东方财富HTTP行业(一级+二级)→pytdx历史K线→东方财富财务(已降级)→F10单股API→风险事件→拥挤度→14项硬排除→27项信号过滤→十七策略评分→行业集中度→生成HTML报告→GitHub同步→飞书推送→每周复盘），输出短线标的_YYYYMMDD.md 为Markdown格式，同时生成可视化HTML报告。v6.9.41新增：硬排除规则增加创业板(300xxx)排除。使用sunday_industry_pull.py可在周日独立执行行业补全。当用户需要运行盘前筛选、A股短线选股、每日标的预测时使用。
 ---
-# A股盘前短线标的筛选 v6.9.40
+# A股盘前短线标的筛选 v6.9.41
 
 ## 版本历史
-- **v6.9.40**: 首次运行缓存初始化（行业缓存为空时允许非周日拉取当前股票池行业分类）；ashare_screener.py脚本版本统一
-- **v6.9.38**: 多信号累积列表；turnover/vr显式None检查；集中度ceil替代//；推荐历史prediction_date统一；策略注释修正；_meta.json/sunday_industry_pull/backtest等全部文件版本统一
+- **v6.9.41**: 硬排除增加创业板(300xxx)；首次运行缓存初始化；全文件版本统一
+- **v6.9.38**: 多信号累积列表；turnover/vr显式None检查；集中度ceil替代//；推荐历史prediction_date统一；策略注释修正
 - **v6.9.37**: 行业字段dict类型全面兼容修复；_industry_str统一处理；lookup_industry兼容dict缓存；lib/core.py版本号统一
 - **v6.9.36**: 行业补全仅周日全量拉取，其他日仅读取缓存；二级行业替换主营业务列；_load_industry_cache兼容旧dict格式
 - **v6.9.35**: 二级行业缓存（东方财富sshy）；步骤10H从CompanySurvey读取sshy替代CoreConception主营业务
