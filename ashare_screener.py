@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.42
-35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | 首次运行缓存初始化 | 排除创业板 | 策略F预计算IO | 质押/商誉信号兜底 | 排序键修复(成交额优先) | 原始池预过滤 | 行业缓存首次运行降级
+A股每日盘前短线标的智能筛选 v6.9.43
+35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, ssl
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.42"
+BUILTIN_VERSION = "v6.9.43"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -642,7 +642,7 @@ def step10A_fetch_all_stocks():
                             "amount": float(parts[9]) if len(parts) > 9 and parts[9] else 0,
                             "high": high_v, "low": low_v, "prev_close": prev_close,
                             "turnover": 0, "amplitude": amplitude_v,
-                            "volume_ratio": None, "main_inflow": None, "total_cap": None,
+                            "volume_ratio": None, "main_inflow": None, "total_cap": float(parts[14]) * 1e8 if len(parts) > 14 and parts[14] else None,  # v6.9.43: 新浪API补充total_cap
                         })
                     except Exception: continue
                 if i % (batch_size * 10) == 0: time.sleep(0.02)
@@ -896,7 +896,7 @@ def _fetch_zjh_industry(code):
     """v6.9.35: 通过东方财富HTTP API获取证监会行业和二级行业(sshy)。
     返回: (申万一级行业, 二级行业) 或 (None, None)"""
     try:
-        market = 'SH' if code.startswith(('6', '9')) else 'SZ'
+        market = 'SH' if code.startswith('6') else 'SZ'  # v6.9.43: 去除'9'前缀误匹配（9xxxxx不进入此函数）
         secode = f'{market}{code}'
         url = f'https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/CompanySurveyAjax?code={secode}'
         req = urllib.request.Request(url, headers={
@@ -1318,7 +1318,9 @@ def step10C_fetch_klines(candidates):
                 if first_date:
                     try:
                         fd = datetime.strptime(str(first_date)[:8], '%Y%m%d')
-                        days_listed = (datetime.now() - fd).days
+                        # v6.9.43: 使用data_date替代datetime.now()保持一致性
+                        ref_date = datetime.strptime(data_date, '%Y-%m-%d') if data_date else datetime.now()
+                        days_listed = (ref_date - fd).days
                     except: pass
                 kline_data[code] = {
                     'ma5': ma5, 'ma10': ma10, 'ma20': ma20,
@@ -1383,6 +1385,8 @@ def step10E_fetch_fundamentals(candidates):
                     'revenue': latest.get('TOTALOPERATEREVE'),
                     'eps': latest.get('EPSJB'),
                     'report_date': latest.get('REPORT_DATE', ''),
+                    'pledge_ratio': latest.get('PLEDGERATIO'),        # v6.9.43: 质押比例（信号#28用）
+                    'goodwill_ratio': latest.get('GOODWILLRATIO'),   # v6.9.43: 商誉占比（信号#29用）
                 }
                 # v6.9.39: 计算净利润同比（与4期前同季度对比）
                 if len(items) >= 5:
@@ -1578,7 +1582,7 @@ def step10H_fetch_sub_industry(candidates):
 # 步骤11：硬排除
 # ============================================================
 def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_data=None, goodwill_data=None, unlock_data=None, fundamental_data=None):
-    """v6.9.41: 14项硬排除（新增创业板，PE<0已迁移至信号过滤#21，质押/商誉/解禁API已废弃降级跳过）"""
+    """v6.9.43: 14项硬排除（创业板/PE<0/质押/商誉已迁移至信号过滤，解禁API已废弃）"""
     if kline_data is None: kline_data = {}
     if pledge_data is None: pledge_data = {}
     if goodwill_data is None: goodwill_data = {}
@@ -1700,9 +1704,9 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         if chg > 2:
             vols = kd.get('volumes', [])
             if len(vols) >= 4 and vr is not None and vr < 0.6:
-                if vols[-4] > vols[-3] > vols[-2] and vols[-1] > 0:
+                if vols[-4] > vols[-3] > vols[-2] and vols[-1] > 0 and vols[-1] < vols[-2]:  # v6.9.43: 当日量<前日量(真正缩量)
                     reasons.append("缩量反弹")
-        # 13. KDJ高位死叉（v6.9.3: J值>100后下穿K/D线）
+        # 13. KDJ高位死叉（J=3K-2D, J>100且J<K⇔K<D即死叉, v6.9.43注释修正）
         j_val = kd.get('j', 50); k_val = kd.get('k', 50)
         if j_val > 100 and j_val < k_val:
             reasons.append(f"KDJ死叉(J={j_val:.0f})")
@@ -2863,7 +2867,6 @@ def main():
     _preload_industry_from_eastmoney(all_stocks)  # v6.9.34: 东方财富HTTP API获取行业分类
     for s in all_stocks: s['industry'] = lookup_industry(s.get('code', ''))
     
-    print("\n[步骤10C] 历史K线..."); kline_data = step10C_fetch_klines(all_stocks[:500])
     print("\n[步骤10D] 财务数据..."); pledge_data, goodwill_data, unlock_data = step10D_fetch_financials()
     
     raw_pool = [s for s in all_stocks if s.get('change_pct') is not None and s.get('change_pct') >= -9.5
@@ -2878,6 +2881,8 @@ def main():
     raw_pool = raw_pool[:500]
     total_raw = len(raw_pool)
     print(f"  原始池: {total_raw}只")
+    
+    print("\n[步骤10C] 历史K线..."); kline_data = step10C_fetch_klines(raw_pool)  # v6.9.43: 传入raw_pool而非all_stocks[:500]
     
     print("\n[步骤11] 硬排除..."); ael, _, er = step11_hard_exclude(raw_pool, ahc, kline_data, pledge_data, goodwill_data, unlock_data, {}); ae = len(ael)
     print("\n[步骤10E] F10基本面..."); fundamental_data = step10E_fetch_fundamentals(ael)
