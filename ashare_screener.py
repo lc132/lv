@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.48
+A股每日盘前短线标的智能筛选 v6.9.49
 35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, ssl
@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.48"
+BUILTIN_VERSION = "v6.9.49"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1619,7 +1619,7 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
             # 先复制历史数据
             c['_recent_7d'] = recent_7d_count.get(code, 0)
             c['_recent_7d_strategies'] = dict(recent_7d_strategies.get(code, {}))
-            # v6.9.48: 补入当日推荐（步骤22才写入历史，步骤11时尚未存在），确保7日列≥1
+            # v6.9.49: 补入当日推荐（步骤22才写入历史，步骤11时尚未存在），确保7日列≥1
             c['_recent_7d'] += 1
             c['_recent_7d_strategies'][data_date] = c.get('strategy', '?')
         if code in all_holdings_codes:
@@ -2236,6 +2236,75 @@ def step18_news_screening(candidates):
     
     return passed, nex
 
+# ============================================================
+# 步骤18B：TOP10 龙虎榜+新闻正面情感采集（v6.9.49）
+# ============================================================
+def step18B_top10_enrichment(candidates):
+    """对TOP10盈亏比精选标的，采集龙虎榜和正面新闻数据，丰富推荐理由"""
+    if not candidates: return
+    # 按盈亏比取TOP10
+    top10 = sorted(candidates, key=lambda c: -c.get('_pl_ratio', 0))[:10]
+    if not top10: return
+    
+    POSITIVE_KW = ['业绩增长', '业绩预增', '净利润', '中标', '签约', '合同', '订单', '突破', '利好',
+                   '回购', '增持', '分红', '送转', '战略合作', '获批', '量产', '扩产', '新品',
+                   '订单饱满', '产能释放', '量价齐升', '龙头', '市占率', '政策利好', '补贴',
+                   '全球领先', '自主可控', '国产替代', '技术突破', '研发成功']
+    
+    tot_lh = 0; tot_news = 0
+    for c in top10:
+        code = c.get('code', '')
+        name = c.get('name', '')
+        market = '1' if code.startswith('6') else '0'
+        c['_longhu'] = ''
+        c['_news_positive'] = ''
+        
+        # ── 龙虎榜 ──
+        try:
+            lh_url = f'https://datacenter.eastmoney.com/securities/api/data/v1/get?reportName=RPT_DAILY_BILLBOARDTRADING&columns=TRADE_DATE,BILLBOARD_NET_AMT,BILLBOARD_BUY_AMT,BILLBOARD_SELL_AMT,EXPLANATION&filter=(SECUCODE="{code}")&pageNumber=1&pageSize=3&sortTypes=-1&sortColumns=TRADE_DATE'
+            req = urllib.request.Request(lh_url, headers={
+                'User-Agent': 'Mozilla/5.0', 'Referer': 'https://data.eastmoney.com/'})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                lh_data = json.loads(resp.read().decode('utf-8'))
+                lh_rows = lh_data.get('result', {}).get('data', []) if lh_data.get('result') else []
+                if lh_rows:
+                    latest = lh_rows[0]
+                    lh_date = latest.get('TRADE_DATE', '')[:10]
+                    lh_net = latest.get('BILLBOARD_NET_AMT', 0) or 0
+                    lh_net_wan = lh_net / 10000
+                    lh_dir = '净买入' if lh_net_wan > 0 else '净卖出'
+                    lh_abs = abs(lh_net_wan)
+                    if lh_abs >= 10000:
+                        lh_amt_str = f'{lh_abs/10000:.1f}亿'
+                    else:
+                        lh_amt_str = f'{lh_abs:.0f}万'
+                    c['_longhu'] = f'{lh_date} {lh_dir} {lh_amt_str}'
+                    tot_lh += 1
+        except Exception: pass
+        
+        # ── 正面新闻 ──
+        try:
+            news_url = f'https://push2.eastmoney.com/api/qt/stock/news/get?secid={market}.{code}&pageNum=1&pageSize=5&_={int(time.time()*1000)}'
+            req = urllib.request.Request(news_url, headers={
+                'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.eastmoney.com/'})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                news_data = json.loads(resp.read().decode('utf-8'))
+                news_list = news_data.get('data', {}).get('list', []) if isinstance(news_data, dict) else []
+                pos_titles = []
+                for news in news_list:
+                    title = news.get('title', '')
+                    if any(kw in title for kw in POSITIVE_KW[:15]):
+                        # 取前20字
+                        short = title[:20] + ('...' if len(title) > 20 else '')
+                        pos_titles.append(short)
+                    if len(pos_titles) >= 2: break
+                if pos_titles:
+                    c['_news_positive'] = '; '.join(pos_titles)
+                    tot_news += 1
+        except Exception: pass
+    
+    log_alert("INFO", "TOP10增强", f"龙虎榜{tot_lh}/10只 正面新闻{tot_news}/10只")
+
 def step16_comprehensive_score(candidates):
     # v6.9.38: 步骤15(冲突检测)已合并入步骤14评分，步骤16仅负责排序
     so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16}
@@ -2599,6 +2668,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         sl = round(entry * sl_map.get(s, 0.96), 2)
         tp = round(entry * tp_map.get(s, 1.05), 2)
         pl_ratio = round((tp - entry) / max(entry - sl, 0.01), 2)
+        c['_entry'] = entry; c['_stop'] = sl; c['_target'] = tp; c['_pl_ratio'] = pl_ratio
         top10_mark = "⭐" if code in _top10_codes else ""
         r7d_html = str(c.get('_recent_7d')) if c.get('_recent_7d') is not None else ""
         # v6.6.44: 7日列附带历史策略标注
@@ -2663,6 +2733,65 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
     else:
         alerts_html = '<div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">今日无异常告警</span></div>'
     
+    # ── v6.9.49: TOP10盈亏比精选推荐理由（含龙虎榜+正面新闻）──
+    top10_cards_html = ""
+    top10_sorted = sorted(candidates, key=lambda c: -c.get('_pl_ratio', 0))[:10]
+    if top10_sorted:
+        cards = []
+        for i, c in enumerate(top10_sorted):
+            idx = i + 1
+            code = c.get('code', '')
+            name = c.get('name', '')
+            strat = c.get('strategy', '?')
+            score = c.get('score', 0)
+            conf = c.get('confidence', '')
+            conf_stars = '★★★' if conf == 'high' else ('★★' if conf == 'mid' else '★')
+            change_pct = c.get('change_pct', 0)
+            ampl = c.get('amplitude', 0)
+            strat_badge = f'strat_{strat.lower()}'
+            entry = c.get('_entry', 0)
+            stop = c.get('_stop', 0)
+            target = c.get('_target', 0)
+            plr = c.get('_pl_ratio', 0)
+            lh = c.get('_longhu', '')
+            news = c.get('_news_positive', '')
+            industry = _industry_str(c)
+            business = c.get('business', '')
+            
+            # 策略名称
+            sname = {'A':'动量延续','B':'超跌反弹','C':'事件驱动','D':'回调企稳','E':'资金埋伏',
+                     'F':'北向资金','G':'横盘突破','H':'地量见底','I':'均线突破','J':'龙回头',
+                     'K':'缺口回补','L':'黄金坑','M':'涨停回调','N':'新高突破','O':'回踩均线',
+                     'P':'地量反弹','Q':'W底突破'}.get(strat, '')
+            
+            # 构建推荐理由
+            reason_parts = []
+            reason_parts.append(f'<strong>当日表现：</strong>涨幅{change_pct:+.2f}%，振幅{ampl:.1f}%，{industry}行业')
+            if business: reason_parts.append(f'<strong>二级行业：</strong>{business}')
+            reason_parts.append(f'<strong>进场区间：</strong>{entry:.2f}元进场，止损{stop:.2f}元（{(1-stop/entry)*100:.1f}%），止盈{target:.2f}元（+{(target/entry-1)*100:.1f}%）')
+            
+            # 龙虎榜
+            if lh:
+                reason_parts.append(f'<strong>🐉 龙虎榜：</strong>{lh}')
+            # 正面新闻
+            if news:
+                reason_parts.append(f'<strong>📰 正面新闻：</strong>{news}')
+            
+            reason = '<br>'.join(reason_parts)
+            
+            cards.append(f'''<div class="top10-card">
+<div class="top10-card-header"><span class="rank">#{idx}</span><span class="name">{name}</span><span class="code">{code}</span><span class="badge {strat_badge}">{strat} {sname}</span></div>
+<div class="top10-card-metrics">
+<div class="metric"><div class="val ratio-hl">{plr:.2f}</div><div class="lbl">盈亏比</div></div>
+<div class="metric"><div class="val">{entry:.2f}</div><div class="lbl">进场</div></div>
+<div class="metric"><div class="val">{stop:.2f}</div><div class="lbl">止损</div></div>
+<div class="metric"><div class="val">{target:.2f}</div><div class="lbl">止盈</div></div>
+<div class="metric"><div class="val">{score}</div><div class="lbl">评分</div></div>
+<div class="metric"><div class="val">{conf_stars}</div><div class="lbl">置信</div></div>
+</div>
+<div class="top10-card-reason">{reason}</div></div>''')
+        top10_cards_html = '\n'.join(cards)
+    
     html_content = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>A股短线标的筛选 — {prediction_date}</title>
 <style>
@@ -2714,6 +2843,24 @@ tr.top10-row{{background:rgba(56,189,248,0.1);border-left:3px solid #38bdf8}} tr
 .footer .disclaimer{{color:#ef4444;font-weight:bold;margin-top:.5rem}}
 a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 @media(max-width:768px){{.chart-grid{{grid-template-columns:1fr}}.container{{padding:.5rem}}th,td{{font-size:.7rem;padding:.3rem}}}}
+/* v6.9.49: TOP10盈亏比精选卡片 */
+.top10-cards{{display:grid;grid-template-columns:1fr;gap:14px;margin-top:1rem}}
+.top10-card{{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:16px 20px;transition:border-color .2s}}
+.top10-card:hover{{border-color:#38bdf8}}
+.top10-card-header{{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}}
+.top10-card-header .rank{{font-size:1.3rem;font-weight:800;color:#38bdf8;min-width:28px}}
+.top10-card-header .name{{font-size:1rem;font-weight:700;color:#f8fafc}}
+.top10-card-header .code{{font-size:.75rem;color:#94a3b8;margin-left:2px}}
+.top10-card-metrics{{display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:8px;margin-bottom:12px}}
+.top10-card-metrics .metric{{text-align:center}}
+.top10-card-metrics .metric .val{{font-size:1rem;font-weight:700;color:#f8fafc}}
+.top10-card-metrics .metric .lbl{{font-size:.68rem;color:#94a3b8}}
+.top10-card-metrics .ratio-hl{{color:#38bdf8!important;font-size:1.2rem!important}}
+.top10-card-reason{{font-size:.82rem;color:#94a3b8;line-height:1.6}}
+.top10-card-reason strong{{color:#e2e8f0}}
+.top10-conclusion{{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:16px 20px;margin-top:20px}}
+.top10-conclusion h3{{font-size:1rem;color:#38bdf8;margin-bottom:10px}}
+.top10-conclusion p{{font-size:.82rem;color:#94a3b8;line-height:1.7;margin-top:8px}}
 </style></head><body>
 <div class="header"><h1>A股短线标的筛选报告</h1><div class="sub">{prediction_date} | 规则版本 {file_version}</div></div>
 <div class="container">
@@ -2755,7 +2902,9 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 <tr><td><span class="badge strat_o">O回踩均线</span></td><td style="white-space:normal;word-break:break-all">60日涨>15%+回踩MA20±3%+缩量vr<1.0收阳+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
 <tr><td><span class="badge strat_p">P地量反弹</span></td><td style="white-space:normal;word-break:break-all">连续3日缩量至地量+当日放量vr≥1.2+涨1.0-5%阳线+弱市跳过</td><td>6-8%</td><td>3-5%</td></tr>
 <tr><td><span class="badge strat_q">Q W底突破</span></td><td style="white-space:normal;word-break:break-all">20日内两底相差<5%+放量vr≥1.2突破颈线+阳线+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
-</tbody></table></section></div>
+</tbody></table></section>
+<section><h2>TOP10 盈亏比精选推荐理由</h2>
+<div class="top10-cards">{top10_cards_html if top10_cards_html else '<div style="color:#94a3b8;padding:1rem">暂无TOP10数据</div>'}</div></section></div>
 <div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p style="color:#fb923c;margin-top:.3rem">★ 7日 = 近7日内已推荐标的（橙色高亮行），可持续关注但不建议重复建仓</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
     
     with open(hp, 'w', encoding='utf-8') as f: f.write(html_content)
@@ -2768,7 +2917,7 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 def step21_final_verify(mp, fc):
     if os.path.exists(mp):
         with open(mp, 'r', encoding='utf-8') as f: content = f.read()
-        # v6.9.48: 仅统计推荐标的表（TOP10精选表之前的部分），排除TOP10表干扰
+        # v6.9.49: 仅统计推荐标的表（TOP10精选表之前的部分），排除TOP10表干扰
         main_section = content.split('## TOP10')[0] if '## TOP10' in content else content
         tr = sum(1 for l in main_section.split('\n') if l.strip().startswith('| ') and l.split('|')[1].strip().isdigit())
         if tr != fc: log_alert("ERROR", "数量校验", f"概况{fc}≠MD表格{tr}")
@@ -2957,6 +3106,7 @@ def main():
     print("\n[步骤16] 综合评分+平局打破..."); ranked = step16_comprehensive_score(scored)
     print("\n[步骤17] 行业限制..."); ail = step17_industry_limit(ranked); aind = len(ail)
     print("\n[步骤18] 新闻筛查..."); ail, anew = step18_news_screening(ail)
+    print("\n[步骤18B] TOP10龙虎榜+正面新闻..."); step18B_top10_enrichment(ail)
     print("\n[步骤19] 降级..."); final = step19_shortfall_handling(ail); fc = len(final)
     sd = Counter(c.get('strategy') for c in final)
     
