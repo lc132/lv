@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-A股盘前短线标的筛选 v6.9.44 - Part 2: 步骤9-27 (核心筛选+输出)
+A股盘前短线标的筛选 v6.9.46 - Part 2: 步骤9-27 (核心筛选+输出)
 """
 import urllib.request, urllib.parse, urllib.error, json, os, sys, time, re, subprocess, shutil
 from datetime import datetime, timedelta
@@ -18,7 +18,7 @@ beijing_weekday = 5
 beijing_hour = 13
 beijing_now = datetime(2026, 6, 13, 13, 9, 57)
 market_env = "震荡"
-file_version = "v6.9.44"
+file_version = "v6.9.46"
 
 # 策略参数
 params = {
@@ -1463,7 +1463,7 @@ def step27_feishu_push(summary_text):
 # ============================================================
 def run_part2():
     print("=" * 60)
-    print("A股盘前短线标的筛选 v6.9.44 - Part 2: 步骤9-27")
+    print("A股盘前短线标的筛选 v6.9.46 - Part 2: 步骤9-27")
     print("=" * 60)
     
     # 步骤9: 板块轮动
