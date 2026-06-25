@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.43
+A股每日盘前短线标的智能筛选 v6.9.44
 35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, ssl
@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.43"
+BUILTIN_VERSION = "v6.9.44"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1203,6 +1203,12 @@ HARDCODED_INDUSTRY = {
     '300438': '电力设备',  # 鹏辉能源（锂离子电池，在300400-300499段但非机械设备）
     '300538': '基础化工',  # 同益股份（化工材料分销，在300500-300599段但非建筑装饰）
     '300938': '社会服务',  # 信测标准（检测认证服务，在300900-300999段但非电力设备）
+    # v6.9.44: 5只行业修正（基于2026-06-25筛选结果校对，行业缓存补全后余量修正）
+    '000688': '有色金属',  # 国城矿业（铅锌铜矿开采，在000600-000699段但非公用事业）
+    '600598': '农林牧渔',  # 北大荒（农业种植，在600500-600599段但非食品饮料）
+    '000672': '建筑材料',  # 上峰材料（水泥建材，在000600-000699段但非公用事业）
+    '002549': '环保',      # 凯美特气（工业废气回收，在002500-002599段但非基础化工）
+    '002015': '公用事业',  # 协鑫能科（清洁能源发电，在002000-002099段但非电子）
 }
 
 # ============================================================
