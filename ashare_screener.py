@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.44
-35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级
+A股每日盘前短线标的智能筛选 v6.9.46
+35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, ssl
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.44"
+BUILTIN_VERSION = "v6.9.46"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -2461,9 +2461,34 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
         f"| ★最终推荐 | {len(candidates)} | {aind - anew - len(candidates)} | 评分门控+降级 |", "",
     ]
     if candidates:
+        # v6.9.46: 计算盈亏比，筛选TOP10
+        sl_map = {'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965, 'F': 0.965, 'G': 0.95, 'H': 0.94,
+                  'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95}
+        tp_map = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06,
+                  'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05}
+        # 预计算所有标的盈亏比，用于TOP10排序
+        _pl_data = []
+        for c in candidates:
+            s = c.get('strategy', '?')
+            entry = calc_entry_price(c)
+            sl = round(entry * sl_map.get(s, 0.96), 2)
+            tp = round(entry * tp_map.get(s, 1.05), 2)
+            pl_ratio = round((tp - entry) / max(entry - sl, 0.01), 2)
+            _pl_data.append((c.get('code', ''), pl_ratio))
+        # 按盈亏比降序取TOP10
+        _pl_sorted = sorted(_pl_data, key=lambda x: x[1], reverse=True)
+        _top10_codes = set(c for c, _ in _pl_sorted[:10])
+        # 存储盈亏比到候选对象
+        for c in candidates:
+            code = c.get('code', '')
+            for cd, pl in _pl_data:
+                if cd == code:
+                    c['_pl_ratio'] = pl
+                    break
+
         lines.append("## 推荐标的\n")
-        lines.append("| # | 策略 | 标的 | 代码 | 行业 | 二级行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 |")
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        lines.append("| # | TOP10 | 策略 | 标的 | 代码 | 行业 | 二级行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 | 盈亏比 |")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for idx, c in enumerate(candidates, 1):
             code = c.get('code', ''); name = c.get('name', '')
             s = c.get('strategy', '?'); ind = _industry_str(c); biz = c.get('business', '')
@@ -2472,28 +2497,39 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
             score = c.get('score', 0); conf = c.get('confidence', '★')
             chg_e = "🔴" if chg >= 0 else "🟢"
             entry = calc_entry_price(c)
-            # v6.9.18: 策略差异化止损止盈
-            sl_map = {'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965, 'F': 0.965, 'G': 0.95, 'H': 0.94,
-                      'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95}
-            tp_map = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06,
-                      'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05}
             sl = round(entry * sl_map.get(s, 0.96), 2)
             tp = round(entry * tp_map.get(s, 1.05), 2)
+            pl_ratio = c.get('_pl_ratio', round((tp - entry) / max(entry - sl, 0.01), 2))
+            top10_mark = "⭐" if code in _top10_codes else ""
             r7d = c.get('_recent_7d')
             r7d_str = str(r7d) if r7d is not None else ""
             # v6.6.44: 7日列附带历史策略标注
             r7s = c.get('_recent_7d_strategies', {})
             if r7d_str and r7s:
-                # 按日期排序，取策略列表（去重）如 "1(A,B)" 表示1天前，策略A/B
                 sorted_dates = sorted(r7s.keys())
                 strats = [r7s[d] for d in sorted_dates]
-                # 去重并保持顺序
                 seen = set(); uniq_s = []
                 for s_ in strats:
                     if s_ not in seen: seen.add(s_); uniq_s.append(s_)
                 r7d_str = f"{r7d} ({','.join(uniq_s)})"
             url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
-            lines.append(f"| {idx} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} |")
+            lines.append(f"| {idx} | {top10_mark} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} | {pl_ratio} |")
+        # v6.9.46: TOP10盈亏比精选
+        lines.append("\n## TOP10 盈亏比精选\n")
+        lines.append("| # | 标的 | 代码 | 策略 | 行业 | 盈亏比 | 进场 | 止损 | 止盈 | 评分 |")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|")
+        for ti, (tcode, tpl) in enumerate(_pl_sorted[:10], 1):
+            tc = next((ct for ct in candidates if ct.get('code') == tcode), None)
+            if tc:
+                ts = tc.get('strategy', '?')
+                tind = _industry_str(tc)
+                tname = tc.get('name', '')
+                tentry = calc_entry_price(tc)
+                tsl = round(tentry * sl_map.get(ts, 0.96), 2)
+                ttp = round(tentry * tp_map.get(ts, 1.05), 2)
+                tscore = tc.get('score', 0)
+                turl = f"https://quote.eastmoney.com/sh{tcode}.html" if tcode.startswith('6') else f"https://quote.eastmoney.com/sz{tcode}.html"
+                lines.append(f"| {ti} | [{tname}]({turl}) | {tcode} | {ts} | {tind} | {tpl} | {tentry:.2f} | {tsl:.2f} | {ttp:.2f} | {tscore} |")
     sd = Counter(c.get('strategy') for c in candidates)
     sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破'}
     lines.append("\n## 策略分布")
@@ -2535,11 +2571,22 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             index_cards += f'<div class="index-card"><div class="idx-name">{name}</div><div class="idx-price">-</div><div class="idx-chg">数据不可得</div></div>'
     
     rows_html = ""
-    # v6.9.18: 策略差异化止损止盈（与step20 MD报告保持一致）
+    # v6.9.46: 盈亏比TOP10计算
     sl_map = {'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965, 'F': 0.965, 'G': 0.95, 'H': 0.94,
               'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95}
     tp_map = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06,
               'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05}
+    # 预计算盈亏比TOP10
+    _pl_data = []
+    for c in candidates:
+        s = c.get('strategy', '?')
+        entry = calc_entry_price(c)
+        sl_v = round(entry * sl_map.get(s, 0.96), 2)
+        tp_v = round(entry * tp_map.get(s, 1.05), 2)
+        pl_ratio = round((tp_v - entry) / max(entry - sl_v, 0.01), 2)
+        _pl_data.append((c.get('code', ''), pl_ratio))
+    _pl_sorted = sorted(_pl_data, key=lambda x: x[1], reverse=True)
+    _top10_codes = set(c for c, _ in _pl_sorted[:10])
     for idx, c in enumerate(candidates, 1):
         code = c.get('code', ''); name = c.get('name', ''); s = c.get('strategy', '?')
         ind = _industry_str(c); biz = c.get('business', ''); chg = c.get('change_pct', 0)
@@ -2548,6 +2595,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         entry = calc_entry_price(c)
         sl = round(entry * sl_map.get(s, 0.96), 2)
         tp = round(entry * tp_map.get(s, 1.05), 2)
+        pl_ratio = round((tp - entry) / max(entry - sl, 0.01), 2)
+        top10_mark = "⭐" if code in _top10_codes else ""
         r7d_html = str(c.get('_recent_7d')) if c.get('_recent_7d') is not None else ""
         # v6.6.44: 7日列附带历史策略标注
         r7s = c.get('_recent_7d_strategies', {})
@@ -2562,12 +2611,13 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
         scl = f"strat_{s.lower()}"
         r7_cls = "recent-7d" if c.get('_recent_7d') else ""
+        top10_cls = "top10-row" if code in _top10_codes else ""
         url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
-        rows_html += f"""<tr class="{scl} {r7_cls}"><td>{idx}</td><td><span class="badge {scl}">{s}</span></td>
+        rows_html += f"""<tr class="{scl} {r7_cls} {top10_cls}"><td>{idx}</td><td>{top10_mark}</td><td><span class="badge {scl}">{s}</span></td>
         <td><a href="{url}" target="_blank">{html.escape(name)}</a></td><td>{code}</td><td>{ind}</td><td>{html.escape(biz)}</td>
         <td class="{chg_cls}">{chg:+.2f}%</td><td>{op:.2f}</td><td>{close:.2f}</td>
         <td>{amp:.2f}%</td><td>{r7d_html}</td><td>{score}</td><td class="conf {conf_cls}">{conf}</td>
-        <td class="entry">{entry:.2f}</td><td>{sl:.2f}</td><td>{tp:.2f}</td></tr>"""
+        <td class="entry">{entry:.2f}</td><td>{sl:.2f}</td><td>{tp:.2f}</td><td>{pl_ratio}</td></tr>"""
     
     seg_html = ""; legend_html = ""
     total_m = sum(sd.values())
@@ -2651,6 +2701,7 @@ tr:hover{{background:#2d3b4f}}
 tr.strat_a{{background:rgba(34,197,94,0.05)}}tr.strat_b{{background:rgba(59,130,246,0.05)}}tr.strat_c{{background:rgba(139,92,246,0.05)}}
 tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72,153,0.05)}}tr.strat_f{{background:rgba(6,182,212,0.05)}}tr.strat_g{{background:rgba(16,185,129,0.05)}}tr.strat_h{{background:rgba(249,115,22,0.05)}}tr.strat_i{{background:rgba(20,184,166,0.05)}}tr.strat_j{{background:rgba(239,68,68,0.05)}}tr.strat_k{{background:rgba(168,85,247,0.05)}}tr.strat_l{{background:rgba(234,179,8,0.05)}}tr.strat_m{{background:rgba(244,114,182,0.05)}}tr.strat_n{{background:rgba(132,204,22,0.05)}}tr.strat_o{{background:rgba(56,189,248,0.05)}}tr.strat_p{{background:rgba(251,146,60,0.05)}}tr.strat_q{{background:rgba(34,211,238,0.05)}}
 tr.recent-7d{{background:rgba(251,146,60,0.12)}} tr.recent-7d:hover{{background:rgba(251,146,60,0.2)}}
+tr.top10-row{{background:rgba(56,189,248,0.1);border-left:3px solid #38bdf8}} tr.top10-row:hover{{background:rgba(56,189,248,0.2)}}
 .conf{{font-weight:bold}}.conf.high{{color:#22c55e}}.conf.mid{{color:#f59e0b}}.conf.low{{color:#ef4444}}
 .entry{{color:#38bdf8;font-weight:bold}}
 .alert-item{{display:flex;gap:.8rem;padding:.4rem 0;border-bottom:1px solid #334155;font-size:.8rem}}
@@ -2679,8 +2730,8 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 </div></section>
 <section><h2>系统告警</h2><div class="alert-list">{alerts_html}</div></section>
 <section><h2>最终推荐标的</h2><div style="overflow-x:auto"><table>
-<thead><tr><th>#</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>二级行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th></tr></thead>
-<tbody>{rows_html if rows_html else '<tr><td colspan="16" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div></section>
+<thead><tr><th>#</th><th>TOP10</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>二级行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th><th>盈亏比</th></tr></thead>
+<tbody>{rows_html if rows_html else '<tr><td colspan="18" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div></section>
 <section><h2>策略说明</h2><table>
 <thead><tr><th style="width:18%">策略</th><th style="width:48%">条件</th><th style="width:16%">仓位(震荡)</th><th style="width:18%">仓位(弱市)</th></tr></thead>
 <tbody>
