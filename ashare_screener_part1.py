@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-A股盘前短线标的筛选 v6.9.41 - Part 1: 步骤0-8 (前置检查)
+A股盘前短线标的筛选 v6.9.42 - Part 1: 步骤0-8 (前置检查)
 """
 import urllib.request, urllib.parse, urllib.error, json, os, sys, time
 from datetime import datetime, timedelta
@@ -15,7 +15,7 @@ beijing_hour = None
 beijing_weekday = None
 prediction_date = None
 data_date = None
-file_version = "v6.9.41"
+file_version = "v6.9.42"
 
 # 各阶段计数
 total_raw = 0

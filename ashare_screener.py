@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.41
-35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | 首次运行缓存初始化 | 排除创业板 | 策略F预计算IO | 质押/商誉信号兜底
+A股每日盘前短线标的智能筛选 v6.9.42
+35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | 首次运行缓存初始化 | 排除创业板 | 策略F预计算IO | 质押/商誉信号兜底 | 排序键修复(成交额优先) | 原始池预过滤 | 行业缓存首次运行降级
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, ssl
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.41"
+BUILTIN_VERSION = "v6.9.42"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -918,18 +918,19 @@ def _fetch_zjh_industry(code):
 def _preload_industry_from_eastmoney(all_stocks):
     """v6.9.35: 通过东方财富HTTP API批量获取行业分类（一级+二级）。
     v6.9.36: 仅周日执行全量HTTP拉取更新缓存，其他日仅读取磁盘缓存。
-    v6.9.41: 首次运行（缓存为空）时，非周日也允许拉取当前股票池行业分类。"""
+    v6.9.42: 首次运行缓存为空时使用代码段映射降级，不阻塞非周日（避免4929只×0.15s=739s超时）。"""
     global _industry_cache, _sub_industry_cache
     _load_industry_cache()
     
-    # v6.9.41: 首次运行缓存为空时，允许拉取当前股票池行业分类（不限周日）
     cache_is_empty = len(_industry_cache) == 0 and len(_sub_industry_cache) == 0
-    if beijing_weekday is not None and beijing_weekday != 6 and not cache_is_empty:
-        print(f"[INFO] 行业缓存: 非周日，仅读取缓存 (一级{len(_industry_cache)}条, 二级{len(_sub_industry_cache)}条)")
-        return
     
-    if cache_is_empty and beijing_weekday != 6:
-        print(f"[INFO] 行业缓存: 首次运行（缓存为空），允许非周日拉取当前股票池行业分类")
+    # v6.9.42: 非周日统一跳过拉取（包括首次运行），使用代码段映射降级
+    if beijing_weekday is not None and beijing_weekday != 6:
+        if cache_is_empty:
+            print(f"[INFO] 行业缓存: 首次运行缓存为空，使用代码段映射降级（周日将全量拉取）")
+        else:
+            print(f"[INFO] 行业缓存: 非周日，仅读取缓存 (一级{len(_industry_cache)}条, 二级{len(_sub_industry_cache)}条)")
+        return
     
     # 收集需要拉取的股票
     to_fetch = []
@@ -2867,8 +2868,13 @@ def main():
     
     raw_pool = [s for s in all_stocks if s.get('change_pct') is not None and s.get('change_pct') >= -9.5
                 and s.get('close') is not None and s.get('close') > 0]
-    if ds == 'tencent': raw_pool.sort(key=lambda x: ((x.get('turnover', 0) or 0), (x.get('amount', 0) or 0)), reverse=True)
-    else: raw_pool.sort(key=lambda x: ((x.get('turnover', 0) or 0), (x.get('amount', 0) or 0)), reverse=True)  # v6.8.5: 统一使用turnover优先
+    # v6.9.42: 预过滤明显不合格标的（ST/科创/北交/创业板/低价/高价），避免占用500名额
+    raw_pool = [s for s in raw_pool
+                if not (s.get('name', '').startswith('ST') or s.get('name', '').startswith('*ST'))
+                and not s.get('code', '').startswith(('688', '8', '300', '301'))
+                and 5 <= s.get('close', 0) <= 100]
+    # v6.9.42: 排序键切换为成交额优先（原换手率优先导致小盘股挤占蓝筹名额）
+    raw_pool.sort(key=lambda x: ((x.get('amount', 0) or 0), (x.get('turnover', 0) or 0)), reverse=True)
     raw_pool = raw_pool[:500]
     total_raw = len(raw_pool)
     print(f"  原始池: {total_raw}只")
