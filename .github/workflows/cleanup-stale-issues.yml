@@ -1,0 +1,175 @@
+name: 清理过期 Issues
+
+on:
+  schedule:
+    # 每周日北京时间 9:00 执行 (UTC 1:00)
+    - cron: '0 1 * * 0'
+  workflow_dispatch: # 支持手动触发
+
+permissions:
+  issues: write
+
+env:
+  # 标题关键词筛选（用 | 分隔多个关键词）
+  TITLE_KEYWORDS: "短线标的|推荐历史"
+  # 标签筛选（用逗号分隔多个标签名，留空则不按标签筛选）
+  LABELS: ""
+  # 过期天数阈值
+  STALE_DAYS: 7
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 清理过期 Issues
+        id: cleanup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== 开始清理过期 Issues ==="
+          REPO="${{ github.repository }}"
+          CUTOFF_DATE=$(date -d "$STALE_DAYS days ago" +%Y-%m-%dT00:00:00Z)
+          echo "仓库: $REPO"
+          echo "截止日期: $CUTOFF_DATE"
+          echo "标题关键词: $TITLE_KEYWORDS"
+          echo "标签: $LABELS"
+          echo ""
+
+          # 构建搜索查询
+          SEARCH_QUERY="is:issue is:open created:<${CUTOFF_DATE}"
+
+          # 获取所有符合条件的 open issues
+          ALL_ISSUES=$(gh issue list --repo "$REPO" --search "$SEARCH_QUERY" --json number,title,labels,createdAt --limit 500 --jq '.[]')
+
+          if [ -z "$ALL_ISSUES" ]; then
+            echo "没有找到超过 $STALE_DAYS 天的 open Issues"
+            echo "count=0" >> $GITHUB_OUTPUT
+            echo "details=无" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 筛选匹配的 Issues
+          MATCHED_NUMBERS=""
+          MATCHED_TITLES=""
+          COUNT=0
+
+          while IFS= read -r line; do
+            if [ -z "$line" ]; then
+              continue
+            fi
+
+            NUMBER=$(echo "$line" | jq -r '.number')
+            TITLE=$(echo "$line" | jq -r '.title')
+            ISSUE_LABELS=$(echo "$line" | jq -r '[.labels[].name] | join(",")')
+
+            MATCHED=false
+
+            # 检查标题关键词
+            if echo "$TITLE" | grep -qE "$TITLE_KEYWORDS"; then
+              MATCHED=true
+            fi
+
+            # 检查标签
+            if [ -n "$LABELS" ]; then
+              IFS=',' read -ra LABEL_ARRAY <<< "$LABELS"
+              for LABEL in "${LABEL_ARRAY[@]}"; do
+                LABEL=$(echo "$LABEL" | xargs) # trim whitespace
+                if [ -n "$LABEL" ] && echo "$ISSUE_LABELS" | grep -q "$LABEL"; then
+                  MATCHED=true
+                  break
+                fi
+              done
+            fi
+
+            if [ "$MATCHED" = true ]; then
+              echo "匹配 Issue #$NUMBER: $TITLE"
+              # 关闭 Issue（比删除更安全，可恢复）
+              gh issue close "$NUMBER" --repo "$REPO" --comment "自动清理：此 Issue 已超过 $STALE_DAYS 天未处理，自动关闭。如需恢复请重新打开。"
+              COUNT=$((COUNT + 1))
+              if [ -n "$MATCHED_NUMBERS" ]; then
+                MATCHED_NUMBERS="$MATCHED_NUMBERS, #$NUMBER"
+                MATCHED_TITLES="$MATCHED_TITLES\n- #$NUMBER $TITLE"
+              else
+                MATCHED_NUMBERS="#$NUMBER"
+                MATCHED_TITLES="- #$NUMBER $TITLE"
+              fi
+            fi
+          done <<< "$ALL_ISSUES"
+
+          echo ""
+          echo "=== 清理完成 ==="
+          echo "共处理 $COUNT 条 Issues"
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "details=$MATCHED_NUMBERS" >> $GITHUB_OUTPUT
+          # 保存多行详情到文件
+          echo -e "$MATCHED_TITLES" > /tmp/issue_details.txt
+
+      - name: 发送飞书通知
+        if: always()
+        env:
+          WEBHOOK_URL: "https://open.feishu.cn/open-apis/bot/v2/hook/792265f9-12d5-4e78-a163-08cad5699fa1"
+        run: |
+          COUNT="${{ steps.cleanup.outputs.count }}"
+          DETAILS="${{ steps.cleanup.outputs.details }}"
+          TODAY=$(date +%Y-%m-%d)
+          REPO="${{ github.repository }}"
+
+          if [ -z "$COUNT" ]; then
+            COUNT="0"
+          fi
+
+          # 构建通知内容
+          if [ "$COUNT" = "0" ] || [ -z "$DETAILS" ] || [ "$DETAILS" = "无" ]; then
+            CONTENT="**仓库**: ${REPO}\n**日期**: ${TODAY}\n**结果**: 本周无需清理的过期 Issues"
+          else
+            # 读取详情文件
+            ISSUE_LIST=$(cat /tmp/issue_details.txt 2>/dev/null || echo "$DETAILS")
+            CONTENT="**仓库**: ${REPO}\n**日期**: ${TODAY}\n**清理数量**: ${COUNT} 条\n**已关闭 Issues**:\n${ISSUE_LIST}"
+          fi
+
+          # 构建飞书卡片消息
+          JSON_PAYLOAD=$(cat <<EOF
+          {
+            "msg_type": "interactive",
+            "card": {
+              "header": {
+                "title": {
+                  "tag": "plain_text",
+                  "content": "GitHub 过期 Issues 清理报告"
+                },
+                "template": "blue"
+              },
+              "elements": [
+                {
+                  "tag": "div",
+                  "text": {
+                    "tag": "lark_md",
+                    "content": "${CONTENT}"
+                  }
+                },
+                {
+                  "tag": "note",
+                  "elements": [
+                    {
+                      "tag": "plain_text",
+                      "content": "由 GitHub Actions 自动执行"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+          EOF
+          )
+
+          # 发送通知
+          HTTP_CODE=$(curl -s -o /tmp/feishu_response.txt -w "%{http_code}" \
+            -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$JSON_PAYLOAD")
+
+          echo "飞书通知发送结果: HTTP $HTTP_CODE"
+          cat /tmp/feishu_response.txt
