@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.46
-35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10
+A股每日盘前短线标的智能筛选 v6.9.47
+35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, ssl
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.46"
+BUILTIN_VERSION = "v6.9.47"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -2765,7 +2765,9 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 def step21_final_verify(mp, fc):
     if os.path.exists(mp):
         with open(mp, 'r', encoding='utf-8') as f: content = f.read()
-        tr = sum(1 for l in content.split('\n') if l.strip().startswith('| ') and l.split('|')[1].strip().isdigit())
+        # v6.9.47: 仅统计推荐标的表（TOP10精选表之前的部分），排除TOP10表干扰
+        main_section = content.split('## TOP10')[0] if '## TOP10' in content else content
+        tr = sum(1 for l in main_section.split('\n') if l.strip().startswith('| ') and l.split('|')[1].strip().isdigit())
         if tr != fc: log_alert("ERROR", "数量校验", f"概况{fc}≠MD表格{tr}")
         else: log_alert("INFO", "最终验证", f"通过（{fc}只）")
 
