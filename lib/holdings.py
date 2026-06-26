@@ -34,8 +34,8 @@ def step4_holdings_sync(ctx):
                 'User-Agent': 'Mozilla/5.0',
                 'Referer': 'https://finance.sina.com.cn'
             })
-            resp = urllib.request.urlopen(req, timeout=5)
-            text = resp.read().decode('gbk')
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                text = resp.read().decode('gbk')
             
             if text and '=""' not in text:
                 parts = text.split('"')[1].split(',')

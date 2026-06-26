@@ -43,8 +43,8 @@ def step18_news_screening(ctx):
                 'User-Agent': 'Mozilla/5.0',
                 'Referer': 'https://so.eastmoney.com/'
             })
-            resp = urllib.request.urlopen(req, timeout=3)
-            news_data = json.loads(resp.read())
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                news_data = json.loads(resp.read())
             articles = news_data.get('Data', [])
             
             for art in articles:
@@ -68,7 +68,7 @@ def step18_news_screening(ctx):
                             decay_weight = 0.3
                         else:
                             decay_weight = 0.0
-                except:
+                except Exception:
                     pass
                 
                 if decay_weight == 0.0:

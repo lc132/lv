@@ -155,8 +155,8 @@ def _batch_sector_lookup_clist(codes):
             'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://quote.eastmoney.com/'
         })
-        resp = urllib.request.urlopen(req, timeout=8)
-        data = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read())
         if data and data.get('data') and data['data'].get('diff'):
             for item in data['data']['diff']:
                 code = str(item.get('f12', ''))
@@ -220,8 +220,8 @@ def step10A_fetch_all_stocks(ctx):
                 }
                 try:
                     req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers=headers)
-                    resp = urllib.request.urlopen(req, timeout=15)
-                    data = json.loads(resp.read())
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        data = json.loads(resp.read())
                 except Exception:
                     if page == 1:
                         raise
@@ -338,8 +338,8 @@ def step10A_fetch_all_stocks(ctx):
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
                         'Referer': 'https://quote.eastmoney.com/'
                     })
-                    resp = urllib.request.urlopen(req, timeout=10)
-                    text = resp.read().decode('gbk')
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        text = resp.read().decode('gbk')
                     for line in text.strip().split('\n'):
                         if not line or '=""' in line:
                             continue
@@ -399,9 +399,7 @@ def step10A_fetch_all_stocks(ctx):
             print(f"  ⚠️ 腾讯gtimg不可达: {str(e)[:60]}，降级新浪")
             stocks = None
     
-    # 方案二：东方财富 clist API（非沙箱环境可用，沙箱中被封锁）
-    if stocks is None:
-    # 方案二：新浪批处理
+    # 方案二（降级）：新浪批处理
     if stocks is None:
         try:
             stocks = []
@@ -428,8 +426,8 @@ def step10A_fetch_all_stocks(ctx):
                         'User-Agent': 'Mozilla/5.0',
                         'Referer': 'https://finance.sina.com.cn'
                     })
-                    resp = urllib.request.urlopen(req, timeout=5)
-                    text = resp.read().decode('gbk')
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        text = resp.read().decode('gbk')
                     for line in text.strip().split('\n'):
                         if not line or '=""' in line:
                             continue

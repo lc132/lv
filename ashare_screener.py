@@ -130,7 +130,7 @@ def safe_read_json(path, default=None):
     try:
         if not os.path.exists(path): return default if default is not None else []
         with open(path, 'r', encoding='utf-8') as f: return json.load(f)
-    except: return default if default is not None else []
+    except Exception: return default if default is not None else []
 
 def safe_write_json(path, data):
     try:
@@ -158,7 +158,7 @@ def _parse_tencent_field(raw, idx, default=None):
         v = raw[idx]
         if v in ('', '-', None): return default
         return float(v)
-    except: return default
+    except Exception: return default
 
 def fetch_tencent_index(codes):
     """拉取指数行情，返回 {code: {name,price,prev_close,change_pct,change_amount}}"""
@@ -166,8 +166,8 @@ def fetch_tencent_index(codes):
     try:
         url = f"{TENCENT_API}{','.join(codes)}"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        resp = urllib.request.urlopen(req, timeout=5)
-        text = resp.read().decode('gbk', errors='replace')
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            text = resp.read().decode('gbk', errors='replace')
         for line in text.strip().split('\n'):
             if not line or '="' not in line: continue
             try:
@@ -192,8 +192,8 @@ def fetch_tencent_stocks(codes):
         try:
             url = f"{TENCENT_API}{','.join(batch)}"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            resp = urllib.request.urlopen(req, timeout=10)
-            text = resp.read().decode('gbk', errors='replace')
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                text = resp.read().decode('gbk', errors='replace')
             for line in text.strip().split('\n'):
                 if not line or '="' not in line: continue
                 try:
@@ -242,8 +242,8 @@ def step0_get_beijing_time():
                      'http://worldclockapi.com/api/json/cst/now']:
         try:
             req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0'})
-            resp = urllib.request.urlopen(req, timeout=5)
-            data = json.loads(resp.read())
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
             dt_str = data.get('dateTime') or data.get('datetime') or data.get('currentDateTime')
             if not dt_str: continue
             # 清理时区后缀 +08:00 → 纯ISO格式
@@ -385,12 +385,12 @@ def step3_external_markets():
             try:
                 url = f"https://hq.sinajs.cn/list=gb_{code}"
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'})
-                resp = urllib.request.urlopen(req, timeout=5)
-                text = resp.read().decode('gbk')
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    text = resp.read().decode('gbk')
                 if '=""' in text: all_down = False; break
                 chg = float(text.split('"')[1].split(',')[1]) if ',' in text.split('"')[1] else 0
                 if chg > -2: all_down = False; break
-            except: api_failures += 1; continue  # 单指数失败不中断，继续检查其他
+            except Exception: api_failures += 1; continue  # 单指数失败不中断，继续检查其他
         if api_failures >= 2:
             log_alert("WARNING", "外围市场", f"新浪API {api_failures}/3 不可达，跳过美股检测")
             all_down = False  # 数据不可达时不触发弱市
@@ -647,8 +647,8 @@ def step10A_fetch_all_stocks():
             try:
                 url = f"https://hq.sinajs.cn/list={','.join(batch)}"
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'})
-                resp = urllib.request.urlopen(req, timeout=5)
-                text = resp.read().decode('gbk')
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    text = resp.read().decode('gbk')
                 for line in text.strip().split('\n'):
                     if not line or '=""' in line: continue
                     try:
@@ -1354,7 +1354,7 @@ def step10C_fetch_klines(candidates):
                         # v6.9.43: 使用data_date替代datetime.now()保持一致性
                         ref_date = datetime.strptime(data_date, '%Y-%m-%d') if data_date else datetime.now()
                         days_listed = (ref_date - fd).days
-                    except: pass
+                    except Exception: pass
                 kline_data[code] = {
                     'ma5': ma5, 'ma10': ma10, 'ma20': ma20,
                     'dif': dif, 'dea': dea_val, 'macd_hist': macd_hist,
@@ -1404,7 +1404,8 @@ def step10E_fetch_fundamentals(candidates):
         try:
             url = f'https://emweb.securities.eastmoney.com/PC_HSF10/NewFinanceAnalysis/ZYZBAjaxNew?type=0&code={secode}'
             req = urllib.request.Request(url, headers=headers)
-            raw = urllib.request.urlopen(req, timeout=8).read()
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                raw = resp.read()
             # v6.9.21: 处理gzip压缩响应
             if raw[:2] == b'\x1f\x8b':
                 raw = gzip.decompress(raw)
@@ -1461,7 +1462,8 @@ def step10F_fetch_risk_events():
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'text/html'
         })
-        raw = urllib.request.urlopen(req, timeout=12).read().decode('utf-8', errors='ignore')
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            raw = resp.read().decode('utf-8', errors='ignore')
         # 解析表格: <td>代码</td><td>名称</td><td>日期</td>...<td>占总股本比例</td>
         rows = re.findall(
             r'<td[^>]*>(\d{6})</td>\s*<td[^>]*>([^<]+)</td>\s*<td[^>]*>(\d{4}-\d{2}-\d{2})</td>'
@@ -1473,7 +1475,7 @@ def step10F_fetch_risk_events():
             ratio = 0
             if rest and len(rest) >= 4:
                 try: ratio = float(rest[3])
-                except: pass
+                except Exception: pass
             if ratio > 0:
                 unlock_events[code] = {'date': date, 'ratio': ratio}
         if unlock_events:
@@ -1545,7 +1547,8 @@ def step10G_fetch_crowding_data(candidates):
         try:
             url = f'https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={secode}'
             req = urllib.request.Request(url, headers=headers)
-            raw = urllib.request.urlopen(req, timeout=8).read()
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                raw = resp.read()
             if raw[:2] == b'\x1f\x8b':
                 raw = gzip.decompress(raw)
             data = json.loads(raw.decode('utf-8'))
@@ -2857,9 +2860,9 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             # 2. 基本面
             fin_parts = []
             try: roe_f = float(roe); fin_parts.append(f'ROE {roe_f:.1f}%') if roe_f != 0 else None
-            except: pass
+            except Exception: pass
             try: np_f = float(np_yoy); fin_parts.append(f'净利润同比 {np_f:+.1f}%') if np_f != 0 else None
-            except: pass
+            except Exception: pass
             if main_in and main_in != 0:
                 fin_parts.append(f'主力净流入 {main_in/1e4:+.0f}万')
             if fin_parts:
@@ -3126,8 +3129,8 @@ def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, anew, sd):
                 {"tag": "note", "elements": [{"tag": "plain_text", "content": "⚠️ 仅供参考，不构成投资建议"}]}]}}
         req = urllib.request.Request(FEISHU_WEBHOOK, data=json.dumps(card, ensure_ascii=False).encode('utf-8'),
                                      headers={'Content-Type': 'application/json'}, method='POST')
-        resp = urllib.request.urlopen(req, timeout=10)
-        result = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
         if result.get('code') == 0:
             log_alert("INFO", "飞书推送", f"✅ {prediction_date} 已推送")
         else: log_alert("WARNING", "飞书推送", f"推送失败: {result.get('msg','')}")

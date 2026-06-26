@@ -176,7 +176,7 @@ def step26_github_sync(ctx):
                     if f_date < cutoff_date:
                         os.remove(os.path.join(repo_dir, f))
                         print(f"  清理旧文件: {f}")
-                except:
+                except Exception:
                     pass
             if (f.startswith("短线标的_") and f.endswith(".md")):
                 try:
@@ -185,7 +185,7 @@ def step26_github_sync(ctx):
                     if f_date < cutoff_date:
                         os.remove(os.path.join(repo_dir, f))
                         print(f"  清理旧文件: {f}")
-                except:
+                except Exception:
                     pass
         
         for f in os.listdir(repo_dir):
@@ -196,7 +196,7 @@ def step26_github_sync(ctx):
                     if f_date < cutoff_date:
                         shutil.rmtree(os.path.join(repo_dir, f), ignore_errors=True)
                         print(f"  清理旧目录: {f}")
-                except:
+                except Exception:
                     pass
         
         # 复制文件
@@ -370,8 +370,8 @@ def step27_feishu_push(ctx):
             headers={'Content-Type': 'application/json'},
             method='POST'
         )
-        resp = urllib.request.urlopen(req, timeout=10)
-        result = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
         if result.get('code') == 0:
             print(f"  ✅ 飞书推送成功（GitHub Pages: {pages_report}）")
             log_alert("INFO", "飞书推送", f"✅ {prediction_date} 已推送到飞书群（Pages: {pages_report}）")
@@ -465,7 +465,7 @@ def step28_weekly_review(ctx):
                                         win_count += 1
                                 except ValueError:
                                     pass
-                            except:
+                            except Exception:
                                 pass
                     elif in_table and not stripped.startswith('| '):
                         in_table = False

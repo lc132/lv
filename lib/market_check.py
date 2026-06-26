@@ -31,8 +31,8 @@ def step1_holiday_check(ctx):
             'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://finance.sina.com.cn'
         })
-        resp = urllib.request.urlopen(req, timeout=5)
-        klines = json.loads(resp.read().decode('gbk'))
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            klines = json.loads(resp.read().decode('gbk'))
         latest_date = klines[-1].get('day', '') if klines and len(klines) > 0 else ''
         
         if latest_date != data_date:
@@ -52,7 +52,7 @@ def step1_holiday_check(ctx):
                     params['search_budget'] = params.get('search_budget', 25) + 5
                     ctx['params'] = params
                     print(f"  ⚠️ 长休{gap_days}日→弱市+仓位≤30%+搜索预算+5({params['search_budget']})")
-            except:
+            except Exception:
                 pass
         else:
             print(f"  data_date={data_date} K线确认: 交易日，正常筛选")
@@ -83,8 +83,8 @@ def step2_extreme_market(ctx):
         req = urllib.request.Request(url, headers={
             'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'
         })
-        resp = urllib.request.urlopen(req, timeout=5)
-        text = resp.read().decode('gbk')
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            text = resp.read().decode('gbk')
         if text and '=""' not in text:
             parts = text.split('"')[1].split(',')
             if len(parts) > 3:
@@ -101,8 +101,8 @@ def step2_extreme_market(ctx):
         try:
             url = "https://qt.gtimg.cn/q=sh000001"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            resp = urllib.request.urlopen(req, timeout=5)
-            text = resp.read().decode('gbk')
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                text = resp.read().decode('gbk')
             parts = text.split('~')
             if len(parts) > 4:
                 current = float(parts[3]) if parts[3] and parts[3] != '' else 0
@@ -147,8 +147,8 @@ def _fetch_yahoo_chg(symbol, label):
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2d"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        resp = urllib.request.urlopen(req, timeout=5)
-        data = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
         result = data.get('chart', {}).get('result', [])
         if result:
             quotes = result[0].get('indicators', {}).get('quote', [{}])[0]
@@ -168,8 +168,8 @@ def _fetch_sina_chg(sina_code, label):
         req = urllib.request.Request(url, headers={
             'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'
         })
-        resp = urllib.request.urlopen(req, timeout=5)
-        text = resp.read().decode('gbk')
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            text = resp.read().decode('gbk')
         if text and '=""' not in text:
             parts = text.split('"')[1].split(',')
             if len(parts) > 3 and parts[3] and parts[3] != '':
@@ -234,8 +234,8 @@ def step3_foreign_market(ctx):
         req = urllib.request.Request(url, headers={
             'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'
         })
-        resp = urllib.request.urlopen(req, timeout=5)
-        text = resp.read().decode('gbk')
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            text = resp.read().decode('gbk')
         if text and '=""' not in text:
             parts = text.split('"')[1].split(',')
             # 格式: time,bid,ask,last,?,high,low,open,prev_close,...
@@ -251,8 +251,8 @@ def step3_foreign_market(ctx):
         try:
             cny_url = "https://query1.finance.yahoo.com/v8/finance/chart/CNY=X?interval=1d&range=2d"
             req = urllib.request.Request(cny_url, headers={'User-Agent': 'Mozilla/5.0'})
-            resp = urllib.request.urlopen(req, timeout=5)
-            data = json.loads(resp.read())
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
             result = data.get('chart', {}).get('result', [])
             if result:
                 quotes = result[0].get('indicators', {}).get('quote', [{}])[0]
@@ -298,8 +298,8 @@ def step3A_futures(ctx):
             req = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'
             })
-            resp = urllib.request.urlopen(req, timeout=5)
-            text = resp.read().decode('gbk')
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                text = resp.read().decode('gbk')
             if text and '=""' not in text:
                 parts = text.split('"')[1].split(',')
                 # 期货格式: current,?,?,?,high,low,time,prev_settle,...

@@ -159,8 +159,8 @@ def step8_market_judgment(ctx):
             'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://finance.sina.com.cn'
         })
-        resp = urllib.request.urlopen(req, timeout=5)
-        klines = json.loads(resp.read().decode('gbk'))
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            klines = json.loads(resp.read().decode('gbk'))
         
         if klines and len(klines) >= 20:
             volumes = []
@@ -308,8 +308,8 @@ def step9_sector_rotation(ctx):
             'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://finance.sina.com.cn'
         })
-        resp = urllib.request.urlopen(req, timeout=5)
-        html = resp.read().decode('gbk')
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            html = resp.read().decode('gbk')
         
         # 解析HTML获取行业名称和涨幅
         sectors = []
@@ -355,7 +355,7 @@ def step9A_max_holding(ctx):
         if start_date:
             try:
                 days = (datetime.strptime(data_date, '%Y-%m-%d') - datetime.strptime(start_date, '%Y-%m-%d')).days
-            except:
+            except Exception:
                 pass
         
         # T+5 硬止损：持仓≥5天且跌幅>5%
