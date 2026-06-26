@@ -1,23 +1,39 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-周日行业补全拉取 v6.9.46
+周日行业补全拉取 v6.9.53
 每周日执行：全量拉取东方财富HTTP行业分类（一级+二级），更新缓存文件并推送到GitHub。
 """
-import urllib.request, json, os, time, ssl, subprocess, sys
+import urllib.request, json, os, time, subprocess, sys, tempfile
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 if not GITHUB_TOKEN:
     # 尝试从文件读取
     token_file = "/workspace/.github_token"
     if os.path.exists(token_file):
-        with open(token_file, 'r') as f:
+        with open(token_file, 'r', encoding='utf-8') as f:
             GITHUB_TOKEN = f.read().strip()
 if not GITHUB_TOKEN:
     print("ERROR: 未找到GitHub Token，请设置GITHUB_TOKEN环境变量或创建/workspace/.github_token文件")
     sys.exit(1)
 GITHUB_REPO = "lc132/lv"
 WORK_DIR = "/tmp/sunday_industry_pull"
+
+def _git_with_token(cmd_args, timeout=60, check=True):
+    """使用 GIT_ASKPASS 安全传递 Token，避免 Token 出现在进程列表中"""
+    askpass_script = None
+    try:
+        fd, askpass_script = tempfile.mkstemp(prefix='git_askpass_', suffix='.sh')
+        with os.fdopen(fd, 'w') as f:
+            f.write('#!/bin/bash\necho "$GIT_TOKEN"\n')
+        os.chmod(askpass_script, 0o700)
+        env = os.environ.copy()
+        env['GIT_ASKPASS'] = askpass_script
+        env['GIT_TOKEN'] = GITHUB_TOKEN
+        return subprocess.run(cmd_args, capture_output=True, text=True, timeout=timeout, env=env, check=check)
+    finally:
+        if askpass_script and os.path.exists(askpass_script):
+            os.remove(askpass_script)
 
 # 证监会行业 → 申万一级行业映射表
 _ZJH_TO_SHENWAN = {
@@ -76,7 +92,7 @@ def _zjh_to_shenwan(zjh):
     return None
 
 def _fetch_industry(code):
-    """通过东方财富HTTP API获取行业分类"""
+    """通过东方财富HTTP API获取行业分类（使用默认SSL验证）"""
     try:
         market = 'SH' if code.startswith(('6', '9')) else 'SZ'
         secode = f'{market}{code}'
@@ -85,10 +101,7 @@ def _fetch_industry(code):
             'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://emweb.securities.eastmoney.com/'
         })
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
             jbzl = data.get('jbzl', {})
             zjh = jbzl.get('sszjhhy', '')
@@ -99,16 +112,18 @@ def _fetch_industry(code):
 
 def main():
     print("=" * 60)
-    print("周日行业补全拉取 v6.9.46")
+    print("周日行业补全拉取 v6.9.53")
     print("=" * 60)
     
     # 1. Clone repo
     print("\n[1] 拉取仓库...")
     if os.path.exists(WORK_DIR):
-        subprocess.run(["rm", "-rf", WORK_DIR])
-    clone_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
-    result = subprocess.run(["git", "clone", "--depth", "1", "--branch", "main", clone_url, WORK_DIR],
-                          capture_output=True, text=True)
+        subprocess.run(["rm", "-rf", WORK_DIR], capture_output=True)
+    repo_url = f"https://github.com/{GITHUB_REPO}.git"
+    result = _git_with_token(
+        ["git", "clone", "--depth", "1", "--branch", "main", repo_url, WORK_DIR],
+        timeout=60
+    )
     if result.returncode != 0:
         print(f"ERROR: git clone失败: {result.stderr}")
         sys.exit(1)
@@ -122,11 +137,11 @@ def main():
     industry_cache = {}
     sub_industry_cache = {}
     if os.path.exists(cache_file):
-        with open(cache_file, 'r') as f:
+        with open(cache_file, 'r', encoding='utf-8') as f:
             industry_cache = json.load(f)
         print(f"  一级行业缓存: {len(industry_cache)} 条")
     if os.path.exists(sub_cache_file):
-        with open(sub_cache_file, 'r') as f:
+        with open(sub_cache_file, 'r', encoding='utf-8') as f:
             sub_industry_cache = json.load(f)
         print(f"  二级行业缓存: {len(sub_industry_cache)} 条")
     
@@ -176,9 +191,9 @@ def main():
     
     # 6. Save caches
     print("\n[6] 保存缓存文件...")
-    with open(cache_file, 'w') as f:
+    with open(cache_file, 'w', encoding='utf-8') as f:
         json.dump(industry_cache, f, ensure_ascii=False, indent=2)
-    with open(sub_cache_file, 'w') as f:
+    with open(sub_cache_file, 'w', encoding='utf-8') as f:
         json.dump(sub_industry_cache, f, ensure_ascii=False, indent=2)
     print(f"  行业缓存: {cache_file}")
     print(f"  二级行业缓存: {sub_cache_file}")
@@ -195,8 +210,8 @@ def main():
         print("  无变更，跳过推送")
         return
     
-    subprocess.run(["git", "commit", "-m", f"周日行业补全 v6.9.46 (一级{new_primary}+二级{new_secondary})"], capture_output=True)
-    push_result = subprocess.run(["git", "push", "origin", "main"], capture_output=True, text=True)
+    subprocess.run(["git", "commit", "-m", f"周日行业补全 v6.9.53 (一级{new_primary}+二级{new_secondary})"], capture_output=True)
+    push_result = _git_with_token(["git", "push", "origin", "main"], timeout=60, check=False)
     if push_result.returncode == 0:
         print("  ✅ 推送成功")
     else:
