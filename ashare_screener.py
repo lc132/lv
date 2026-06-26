@@ -26,10 +26,9 @@ MIN_POSITION_PCT = 20  # v6.8.7: 全局仓位下限
 
 def _load_credential(env_key, file_path, fallback=""):
     if env_key in os.environ: return os.environ[env_key]
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f: return f.read().strip()
-        except Exception: pass
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f: return f.read().strip()
+    except Exception: pass
     return fallback
 
 GITHUB_TOKEN = _load_credential("GITHUB_TOKEN", "/workspace/.github_token")
@@ -134,13 +133,16 @@ def log_alert(level, module, message, timestamp=None):
 
 def safe_read_json(path, default=None):
     try:
-        if not os.path.exists(path): return default if default is not None else []
         with open(path, 'r', encoding='utf-8') as f: return json.load(f)
     except Exception: return default if default is not None else []
 
 def safe_write_json(path, data):
+    """原子写入：先写临时文件再重命名，防止写入中断导致数据损坏"""
     try:
-        with open(path, 'w', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False, indent=2)
+        tmp_path = path + '.tmp'
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)  # 原子操作(POSIX)
     except Exception as e: log_alert("ERROR", "safe_write_json", f"{path}: {str(e)[:80]}")
 
 def safe_append_json(path, record):

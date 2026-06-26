@@ -64,7 +64,7 @@ def step24_alert_summary(ctx):
     print("=" * 60)
     
     alert_path = f"{DATA_DIR}/系统告警.log"
-    if os.path.exists(alert_path):
+    try:
         with open(alert_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
         today_lines = [l for l in lines if ctx['data_date'] in l]
@@ -74,7 +74,7 @@ def step24_alert_summary(ctx):
                 print(f"    {l.strip()}")
         else:
             print("  今日无异常")
-    else:
+    except FileNotFoundError:
         print("  今日无异常")
 
 # ============================================================

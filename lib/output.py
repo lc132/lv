@@ -228,7 +228,7 @@ def step20B_html_report(ctx):
     # 告警日志
     alert_html = ""
     alert_path = f"{DATA_DIR}/系统告警.log"
-    if os.path.exists(alert_path):
+    try:
         with open(alert_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
         today_lines = [l for l in lines if data_date in l]
@@ -241,6 +241,8 @@ def step20B_html_report(ctx):
                 alert_html += f'<div style="display:flex;align-items:flex-start;margin:4px 0"><span style="background:{level_color};color:#fff;padding:2px 8px;border-radius:3px;font-size:10px;min-width:50px;text-align:center;margin-right:8px">{level}</span><span style="font-size:12px;color:#555">{l.split("]", 2)[-1].strip() if "]" in l else l.strip()}</span></div>'
         else:
             alert_html = '<div style="color:#999;font-size:13px">今日无异常</div>'
+    except FileNotFoundError:
+        alert_html = '<div style="color:#999;font-size:13px">今日无异常</div>'
     
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">

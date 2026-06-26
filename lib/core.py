@@ -17,23 +17,21 @@ TEMP_DIR = "/data/user/work"
 # GitHub Token 从外部文件读取（不入git，防止泄露）
 GITHUB_TOKEN = None
 _token_path = os.path.join(DATA_DIR, '.github_token')
-if os.path.exists(_token_path):
-    try:
-        with open(_token_path, 'r', encoding='utf-8') as _tf:
-            GITHUB_TOKEN = _tf.read().strip()
-    except Exception:
-        pass
+try:
+    with open(_token_path, 'r', encoding='utf-8') as _tf:
+        GITHUB_TOKEN = _tf.read().strip()
+except Exception:
+    pass
 if not GITHUB_TOKEN:
     GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
 # 飞书Webhook URL 从外部文件读取（不入git，防止泄露）
 FEISHU_WEBHOOK = None
 _feishu_path = os.path.join(DATA_DIR, '.feishu_webhook')
-if os.path.exists(_feishu_path):
-    try:
-        with open(_feishu_path, 'r', encoding='utf-8') as _ff:
-            FEISHU_WEBHOOK = _ff.read().strip()
-    except Exception:
-        pass
+try:
+    with open(_feishu_path, 'r', encoding='utf-8') as _ff:
+        FEISHU_WEBHOOK = _ff.read().strip()
+except Exception:
+    pass
 if not FEISHU_WEBHOOK:
     FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK', '')
 GITHUB_REPO = "lc132/lv"

@@ -45,21 +45,23 @@ def log_alert(level, module, message, timestamp=None):
 
 def safe_read_json(path, default=None):
     try:
-        if not os.path.exists(path): return default if default is not None else []
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
             if not isinstance(data, list):
                 log_alert("WARNING", "safe_read_json", f"{path} 格式异常")
                 return default if default is not None else []
             return data
-    except (json.JSONDecodeError, PermissionError) as e:
+    except (json.JSONDecodeError, PermissionError, FileNotFoundError) as e:
         log_alert("ERROR", "safe_read_json", f"{path}: {str(e)}")
         return default if default is not None else []
 
 def safe_write_json(path, data):
+    """原子写入：先写临时文件再重命名，防止写入中断导致数据损坏"""
     try:
-        with open(path, 'w', encoding='utf-8') as f:
+        tmp_path = path + '.tmp'
+        with open(tmp_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)  # 原子操作(POSIX)
     except Exception as e:
         log_alert("ERROR", "safe_write_json", f"{path}: {str(e)}")
 
