@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.49
+A股每日盘前短线标的智能筛选 v6.9.50
 35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, ssl
@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.49"
+BUILTIN_VERSION = "v6.9.50"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1619,7 +1619,7 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
             # 先复制历史数据
             c['_recent_7d'] = recent_7d_count.get(code, 0)
             c['_recent_7d_strategies'] = dict(recent_7d_strategies.get(code, {}))
-            # v6.9.49: 补入当日推荐（步骤22才写入历史，步骤11时尚未存在），确保7日列≥1
+            # v6.9.50: 补入当日推荐（步骤22才写入历史，步骤11时尚未存在），确保7日列≥1
             c['_recent_7d'] += 1
             c['_recent_7d_strategies'][data_date] = c.get('strategy', '?')
         if code in all_holdings_codes:
@@ -2237,10 +2237,10 @@ def step18_news_screening(candidates):
     return passed, nex
 
 # ============================================================
-# 步骤18B：TOP10 龙虎榜+新闻正面情感采集（v6.9.49）
+# 步骤18B：TOP10 龙虎榜+正面新闻+公司公告采集（v6.9.50）
 # ============================================================
 def step18B_top10_enrichment(candidates):
-    """对TOP10盈亏比精选标的，采集龙虎榜和正面新闻数据，丰富推荐理由"""
+    """对TOP10盈亏比精选标的，采集龙虎榜、正面新闻、公司公告数据"""
     if not candidates: return
     # 按盈亏比取TOP10
     top10 = sorted(candidates, key=lambda c: -c.get('_pl_ratio', 0))[:10]
@@ -2250,14 +2250,31 @@ def step18B_top10_enrichment(candidates):
                    '回购', '增持', '分红', '送转', '战略合作', '获批', '量产', '扩产', '新品',
                    '订单饱满', '产能释放', '量价齐升', '龙头', '市占率', '政策利好', '补贴',
                    '全球领先', '自主可控', '国产替代', '技术突破', '研发成功']
+    # 公告利好关键词（需精确匹配，避免"投资者"误触发"投资"）
+    ANN_POSITIVE_KW = ['合同', '中标', '签约', '订单', '回购', '增持', '投资设立', '投资建设', '扩产',
+                       '项目中标', '获批', '突破', '量产', '战略合作', '分红', '送转', '激励',
+                       '收购', '出售', '业绩预增', '业绩增长', '产能释放',
+                       '取得', '获得', '研发成功', '专利', '许可', '认证', '通过',
+                       '设立', '增资', '子公司', '出资', '竞得', '签订', '竞标',
+                       '重组', '发行可转债', '非公开发行', '引进战略',
+                       '拟投资', '项目投资', '产能', '量产', '新产品', '新产线',
+                       '中标项目', '预中标', '募投', '承接', '交付',
+                       '签订合同', '签订协议', '签署协议', '签订战略',
+                       '权益分派', '利润分配', '回购注销', '回购股份']
+    # 公告利空关键词（排除）
+    ANN_NEGATIVE_KW = ['减持', '违规', '处罚', '问询', '警示', 'ST', '*ST', '退市', '更正',
+                       '会计差错', '异常波动', '诉讼', '仲裁', '冻结', '质押', '延期',
+                       '终止', '取消', '撤销', '暂停', '亏损', '预亏', '未通过', '否决',
+                       '破产', '清算', '重整', '无法表示意见', '保留意见']
     
-    tot_lh = 0; tot_news = 0
+    tot_lh = 0; tot_news = 0; tot_ann = 0
     for c in top10:
         code = c.get('code', '')
         name = c.get('name', '')
         market = '1' if code.startswith('6') else '0'
         c['_longhu'] = ''
         c['_news_positive'] = ''
+        c['_announcement'] = ''
         
         # ── 龙虎榜 ──
         try:
@@ -2294,7 +2311,6 @@ def step18B_top10_enrichment(candidates):
                 for news in news_list:
                     title = news.get('title', '')
                     if any(kw in title for kw in POSITIVE_KW[:15]):
-                        # 取前20字
                         short = title[:20] + ('...' if len(title) > 20 else '')
                         pos_titles.append(short)
                     if len(pos_titles) >= 2: break
@@ -2302,8 +2318,37 @@ def step18B_top10_enrichment(candidates):
                     c['_news_positive'] = '; '.join(pos_titles)
                     tot_news += 1
         except Exception: pass
+        
+        # ── 公司公告（v6.9.50）──
+        try:
+            ann_url = f'https://np-anotice-stock.eastmoney.com/api/security/ann?page_size=5&page_index=1&stock_list={code}&ann_type=A'
+            req = urllib.request.Request(ann_url, headers={
+                'User-Agent': 'Mozilla/5.0', 'Referer': 'https://data.eastmoney.com/'})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                ann_data = json.loads(resp.read().decode('utf-8'))
+                ann_list = ann_data.get('data', {}).get('list', []) if ann_data.get('success') else []
+                pos_anns = []
+                for ann in ann_list:
+                    title = ann.get('title_ch', '') or ann.get('title', '')
+                    columns = ann.get('columns', [])
+                    col_names = [col.get('column_name', '') for col in columns]
+                    # 过滤利空
+                    has_negative = any(kw in title for kw in ANN_NEGATIVE_KW[:5])
+                    if has_negative: continue
+                    # 检查利好关键词
+                    has_positive = any(kw in title for kw in ANN_POSITIVE_KW)
+                    if has_positive:
+                        # 取公告类型
+                        col_str = col_names[0] if col_names else ''
+                        short = title[:16] + ('...' if len(title) > 16 else '')
+                        pos_anns.append(f'{col_str}:{short}')
+                    if len(pos_anns) >= 2: break
+                if pos_anns:
+                    c['_announcement'] = '; '.join(pos_anns)
+                    tot_ann += 1
+        except Exception: pass
     
-    log_alert("INFO", "TOP10增强", f"龙虎榜{tot_lh}/10只 正面新闻{tot_news}/10只")
+    log_alert("INFO", "TOP10增强", f"龙虎榜{tot_lh}/10 正面新闻{tot_news}/10 公司公告{tot_ann}/10")
 
 def step16_comprehensive_score(candidates):
     # v6.9.38: 步骤15(冲突检测)已合并入步骤14评分，步骤16仅负责排序
@@ -2733,7 +2778,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
     else:
         alerts_html = '<div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">今日无异常告警</span></div>'
     
-    # ── v6.9.49: TOP10盈亏比精选推荐理由（含龙虎榜+正面新闻）──
+    # ── v6.9.50: TOP10盈亏比精选推荐理由（含龙虎榜+正面新闻+公司公告）──
     top10_cards_html = ""
     top10_sorted = sorted(candidates, key=lambda c: -c.get('_pl_ratio', 0))[:10]
     if top10_sorted:
@@ -2755,6 +2800,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             plr = c.get('_pl_ratio', 0)
             lh = c.get('_longhu', '')
             news = c.get('_news_positive', '')
+            ann = c.get('_announcement', '')
             industry = _industry_str(c)
             business = c.get('business', '')
             
@@ -2776,6 +2822,9 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             # 正面新闻
             if news:
                 reason_parts.append(f'<strong>📰 正面新闻：</strong>{news}')
+            # 公司公告
+            if ann:
+                reason_parts.append(f'<strong>📋 公司公告：</strong>{ann}')
             
             reason = '<br>'.join(reason_parts)
             
@@ -2843,7 +2892,7 @@ tr.top10-row{{background:rgba(56,189,248,0.1);border-left:3px solid #38bdf8}} tr
 .footer .disclaimer{{color:#ef4444;font-weight:bold;margin-top:.5rem}}
 a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 @media(max-width:768px){{.chart-grid{{grid-template-columns:1fr}}.container{{padding:.5rem}}th,td{{font-size:.7rem;padding:.3rem}}}}
-/* v6.9.49: TOP10盈亏比精选卡片 */
+/* v6.9.50: TOP10盈亏比精选卡片 */
 .top10-cards{{display:grid;grid-template-columns:1fr;gap:14px;margin-top:1rem}}
 .top10-card{{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:16px 20px;transition:border-color .2s}}
 .top10-card:hover{{border-color:#38bdf8}}
@@ -2917,7 +2966,7 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 def step21_final_verify(mp, fc):
     if os.path.exists(mp):
         with open(mp, 'r', encoding='utf-8') as f: content = f.read()
-        # v6.9.49: 仅统计推荐标的表（TOP10精选表之前的部分），排除TOP10表干扰
+        # v6.9.50: 仅统计推荐标的表（TOP10精选表之前的部分），排除TOP10表干扰
         main_section = content.split('## TOP10')[0] if '## TOP10' in content else content
         tr = sum(1 for l in main_section.split('\n') if l.strip().startswith('| ') and l.split('|')[1].strip().isdigit())
         if tr != fc: log_alert("ERROR", "数量校验", f"概况{fc}≠MD表格{tr}")
