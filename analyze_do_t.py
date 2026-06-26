@@ -180,9 +180,11 @@ def determine_direction(trend_desc, pnl_pct, amp_pct):
 
 def calc_entry_exit(current_price, cost_price, amp_pct, direction):
     """计算做T参考价位"""
+    if current_price is None or current_price <= 0:
+        return {'buy_zone': None, 'sell_target': None, 'stop_loss': None, 'buy_back': None}
     if amp_pct is None or amp_pct <= 0:
         amp_pct = 3  # 默认3%振幅
-    half_range = (amp_pct or 3) / 2 / 100 * current_price
+    half_range = amp_pct / 2 / 100 * current_price
 
     if "正T" in direction:
         buy_zone = (current_price * (1 - amp_pct/300), current_price * (1 - amp_pct/500))
@@ -255,6 +257,8 @@ def analyze_do_t(holdings, market_data):
         prices = calc_entry_exit(
             h.get("current", h.get("cost")), h.get("cost"),
             md.get("amp_pct", 3), direction)
+        if prices.get("sell_target") is None:
+            continue  # 无法计算价位，跳过
 
         # 仓位
         sizing = position_sizing(h.get("position_pct"), h.get("pnl_pct"))

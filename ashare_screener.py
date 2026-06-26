@@ -119,6 +119,13 @@ DEFAULT_PARAMS = {
     "data_tier_l3_downgrade_to_signal": True, "strategy_a_weak_market": "closed"
 }
 
+# 模块级策略映射表（DRY：避免函数内重复定义）
+_STRATEGY_ORDER = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16}
+_STRATEGY_NAMES = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破'}
+_STRATEGY_COLORS = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4', 'G': '#10b981', 'H': '#f97316', 'I': '#14b8a6', 'J': '#ef4444', 'K': '#a855f7', 'L': '#eab308', 'M': '#f472b6', 'N': '#84cc16', 'O': '#38bdf8', 'P': '#fb923c', 'Q': '#22d3ee'}
+_STRATEGY_STOP_LOSS = {'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965, 'F': 0.965, 'G': 0.95, 'H': 0.94, 'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95}
+_STRATEGY_TAKE_PROFIT = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06, 'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05}
+
 # ============================================================
 # 工具函数
 # ============================================================
@@ -2059,7 +2066,7 @@ def step13_strategy_match(candidates, kline_data=None):
 # ============================================================
 def step14_scoring(candidates):
     # v6.9.10: 先计算_tie_score（原在step16），再融入最终score
-    so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16}
+    so = _STRATEGY_ORDER
     sector_ad = defaultdict(list)
     for c in candidates:
         if c.get('strategy') in ('A', 'D', 'G', 'I', 'K', 'N'):
@@ -2123,7 +2130,7 @@ def step14_scoring(candidates):
 
 def step17_industry_limit(candidates):
     # v6.6.46: 保留 step16 综合评分排序(_tie_score)，五级二次评估打破平局
-    so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16}
+    so = _STRATEGY_ORDER
     def _tie_key(c):
         vr = c.get('volume_ratio') or 0
         to = c.get('turnover') or 0
@@ -2392,7 +2399,7 @@ def step18B_top10_enrichment(candidates):
 
 def step16_comprehensive_score(candidates):
     # v6.9.38: 步骤15(冲突检测)已合并入步骤14评分，步骤16仅负责排序
-    so = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16}
+    so = _STRATEGY_ORDER
     def _tie_key(c):
         vr = c.get('volume_ratio') or 0
         to = c.get('turnover') or 0
@@ -2619,10 +2626,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
     ]
     if candidates:
         # v6.9.46: 计算盈亏比，筛选TOP10
-        sl_map = {'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965, 'F': 0.965, 'G': 0.95, 'H': 0.94,
-                  'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95}
-        tp_map = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06,
-                  'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05}
+        sl_map = _STRATEGY_STOP_LOSS
+        tp_map = _STRATEGY_TAKE_PROFIT
         # 预计算所有标的盈亏比，用于TOP10排序
         _pl_data = []
         for c in candidates:
@@ -2688,7 +2693,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
                 turl = f"https://quote.eastmoney.com/sh{tcode}.html" if tcode.startswith('6') else f"https://quote.eastmoney.com/sz{tcode}.html"
                 lines.append(f"| {ti} | [{tname}]({turl}) | {tcode} | {ts} | {tind} | {tpl} | {tentry:.2f} | {tsl:.2f} | {ttp:.2f} | {tscore} |")
     sd = Counter(c.get('strategy') for c in candidates)
-    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破'}
+    sn = _STRATEGY_NAMES
     lines.append("\n## 策略分布")
     for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q']:
         if sd.get(s, 0) > 0: lines.append(f"- {s} {sn.get(s, '')}: {sd[s]}只")
@@ -2707,8 +2712,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
     os.makedirs(hd, exist_ok=True)
     hp = f"{hd}/ashare-screening-{pred_yyyymmdd}.html"
     sd = Counter(c.get('strategy') for c in candidates)
-    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破'}
-    sc = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4', 'G': '#10b981', 'H': '#f97316', 'I': '#14b8a6', 'J': '#ef4444', 'K': '#a855f7', 'L': '#eab308', 'M': '#f472b6', 'N': '#84cc16', 'O': '#38bdf8', 'P': '#fb923c', 'Q': '#22d3ee'}
+    sn = _STRATEGY_NAMES
+    sc = _STRATEGY_COLORS
     fc = len(candidates)
     
     # 指数卡片HTML
@@ -2729,10 +2734,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
     
     rows_html = ""
     # v6.9.46: 盈亏比TOP10计算
-    sl_map = {'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965, 'F': 0.965, 'G': 0.95, 'H': 0.94,
-              'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95}
-    tp_map = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06,
-              'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05}
+    sl_map = _STRATEGY_STOP_LOSS
+    tp_map = _STRATEGY_TAKE_PROFIT
     # 预计算盈亏比TOP10
     _pl_data = []
     for c in candidates:
@@ -2853,10 +2856,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             np_yoy = c.get('_fd_net_profit_yoy') or 0
             
             # 策略名称
-            sname = {'A':'动量延续','B':'超跌反弹','C':'事件驱动','D':'回调企稳','E':'资金埋伏',
-                     'F':'北向资金','G':'横盘突破','H':'地量见底','I':'均线突破','J':'龙回头',
-                     'K':'缺口回补','L':'黄金坑','M':'涨停回调','N':'新高突破','O':'回踩均线',
-                     'P':'地量反弹','Q':'W底突破'}.get(strat, '')
+            sname = _STRATEGY_NAMES.get(strat, '')
             
             # 构建推荐理由
             reason_parts = []
@@ -3123,7 +3123,7 @@ def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, anew, sd):
     if not FEISHU_WEBHOOK: log_alert("WARNING", "飞书推送", "无Webhook"); return
     try:
         fc = len(candidates)
-        sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破'}
+        sn = _STRATEGY_NAMES
         ss = " | ".join([f"{s}{sn.get(s,'')}:{sd.get(s,0)}只" for s in ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q'] if sd.get(s, 0) > 0]) or "无推荐标的"
         pb = "https://lc132.github.io/lv"
         pr = f"{pb}/ashare-screening-{pred_yyyymmdd}/ashare-screening-{pred_yyyymmdd}.html"
@@ -3268,7 +3268,7 @@ def main():
     print("=" * 60)
     print(f"prediction_date={prediction_date} (数据来源:{data_date})")
     print(f"①原始:N={total_raw} → ②硬排除:N={ae} → ③信号过滤:N={asig} → ④策略:N={astr} → ⑤行业限制:N={aind} → ⑥新闻筛查:N={aind - anew} → ★ 最终:N={fc}")
-    sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破'}
+    sn = _STRATEGY_NAMES
     print(f"策略分布: " + " ".join([f"{s}:{sd.get(s,0)}" for s in ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q']]))
     print(f"排除TOP5: " + " ".join([f"{r}:{c}只" for r, c in er.most_common(5)]))
     print("=" * 60)
