@@ -66,7 +66,6 @@ def log_alert(level, module, message, timestamp=None):
 
 def safe_read_json(path, default=None):
     try:
-        if not os.path.exists(path): return default if default is not None else []
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
             if not isinstance(data, list):
@@ -75,6 +74,8 @@ def safe_read_json(path, default=None):
             return data
     except (json.JSONDecodeError, PermissionError) as e:
         log_alert("ERROR", "safe_read_json", f"{path}: {str(e)}")
+        return default if default is not None else []
+    except FileNotFoundError:
         return default if default is not None else []
 
 def safe_write_json(path, data):

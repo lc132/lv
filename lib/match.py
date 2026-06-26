@@ -5,6 +5,9 @@
 """
 from lib.core import *
 
+# 策略优先级排序（与主脚本 _STRATEGY_ORDER 保持一致，A-E 子集）
+_MATCH_STRATEGY_ORDER = {'A': 0, 'D': 1, 'C': 2, 'B': 3, 'E': 4}
+
 # ============================================================
 # 步骤13: 五策略筛选
 # ============================================================
@@ -164,7 +167,7 @@ def step13_strategy_match(ctx):
                         c['_d_fake_breakout'] = True
             
             # 按优先级排序: A>D>C>B>E（D回调企稳比B超跌反弹可靠性更高，SKILL §五.13）
-            strategies.sort(key=lambda x: {'A': 0, 'D': 1, 'C': 2, 'B': 3, 'E': 4}[x[0]])
+            strategies.sort(key=lambda x: _MATCH_STRATEGY_ORDER.get(x[0], 99))
             best = strategies[0]
             c['strategy'] = best[0]
             c['strategy_reason'] = best[1]

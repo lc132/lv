@@ -494,7 +494,6 @@ def step4A_doT_eval(holdings):
 def step4B_sync_holdings_xlsx(holdings):
     try:
         p = "/workspace/持仓跟踪.xlsx"
-        if not os.path.exists(p): return
         wb = load_workbook(p); ws = wb["持仓明细"]
         cr = {}
         for row in range(2, ws.max_row + 1):
@@ -914,22 +913,20 @@ def _zjh_to_shenwan(zjh):
 def _load_industry_cache():
     """从磁盘加载行业缓存。v6.9.36: 兼容旧格式dict值自动转字符串。"""
     global _industry_cache, _sub_industry_cache
-    if os.path.exists(INDUSTRY_CACHE_FILE):
-        try:
-            with open(INDUSTRY_CACHE_FILE, 'r', encoding='utf-8') as f:
-                _industry_cache = json.load(f)
-            # v6.9.36: 兼容旧格式dict值自动转字符串
-            _industry_cache = {k: (v.get('sshy', '') or '未知') if isinstance(v, dict) else v for k, v in _industry_cache.items()}
-            print(f"[INFO] 行业缓存: 从磁盘加载 {len(_industry_cache)} 条")
-        except Exception:
-            _industry_cache = {}
-    if os.path.exists(SUB_INDUSTRY_CACHE_FILE):
-        try:
-            with open(SUB_INDUSTRY_CACHE_FILE, 'r', encoding='utf-8') as f:
-                _sub_industry_cache = json.load(f)
-            print(f"[INFO] 二级行业缓存: 从磁盘加载 {len(_sub_industry_cache)} 条")
-        except Exception:
-            _sub_industry_cache = {}
+    try:
+        with open(INDUSTRY_CACHE_FILE, 'r', encoding='utf-8') as f:
+            _industry_cache = json.load(f)
+        # v6.9.36: 兼容旧格式dict值自动转字符串
+        _industry_cache = {k: (v.get('sshy', '') or '未知') if isinstance(v, dict) else v for k, v in _industry_cache.items()}
+        print(f"[INFO] 行业缓存: 从磁盘加载 {len(_industry_cache)} 条")
+    except Exception:
+        _industry_cache = {}
+    try:
+        with open(SUB_INDUSTRY_CACHE_FILE, 'r', encoding='utf-8') as f:
+            _sub_industry_cache = json.load(f)
+        print(f"[INFO] 二级行业缓存: 从磁盘加载 {len(_sub_industry_cache)} 条")
+    except Exception:
+        _sub_industry_cache = {}
 
 def _save_industry_cache():
     """保存行业缓存到磁盘"""
@@ -3022,13 +3019,15 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 # 步骤21-22：验证 + 推荐历史
 # ============================================================
 def step21_final_verify(mp, fc):
-    if os.path.exists(mp):
+    try:
         with open(mp, 'r', encoding='utf-8') as f: content = f.read()
         # v6.9.50: 仅统计推荐标的表（TOP10精选表之前的部分），排除TOP10表干扰
         main_section = content.split('## TOP10')[0] if '## TOP10' in content else content
         tr = sum(1 for l in main_section.split('\n') if l.strip().startswith('| ') and l.split('|')[1].strip().isdigit())
         if tr != fc: log_alert("ERROR", "数量校验", f"概况{fc}≠MD表格{tr}")
         else: log_alert("INFO", "最终验证", f"通过（{fc}只）")
+    except FileNotFoundError:
+        log_alert("ERROR", "数量校验", "MD文件不存在")
 
 def step22_write_history(candidates):
     hf = f"/workspace/推荐历史_{data_date.replace('-', '')}.json"
