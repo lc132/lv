@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.52
+A股每日盘前短线标的智能筛选 v6.9.53
 35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, ssl
@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.52"
+BUILTIN_VERSION = "v6.9.53"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -139,6 +139,12 @@ def safe_write_json(path, data):
 
 def safe_append_json(path, record):
     data = safe_read_json(path); data.append(record); safe_write_json(path, data)
+
+def _version_cmp(v):
+    """将版本号字符串转为可比较的整数元组，v6.9.53 → (6,9,53)"""
+    import re
+    nums = re.findall(r'\d+', v)
+    return tuple(int(n) for n in nums)
 
 # ============================================================
 # 腾讯行情API (v6.6.27: 替代新浪)
@@ -519,6 +525,12 @@ def step6_file_init():
     if adj and len(adj) > 0:
         file_version = adj[-1].get('version', BUILTIN_VERSION); params = adj[-1].get('params', {})
     else: file_version = BUILTIN_VERSION; params = {}
+    # v6.9.53: 若内置版本比策略记录版本新，以内置版本为准并更新记录
+    if _version_cmp(file_version) < _version_cmp(BUILTIN_VERSION):
+        file_version = BUILTIN_VERSION
+        if adj and len(adj) > 0:
+            adj[-1]['version'] = BUILTIN_VERSION
+            safe_write_json('/workspace/策略调整记录.json', adj)
     for k, v in DEFAULT_PARAMS.items():
         if k not in params: params[k] = v
     log_alert("INFO", "文件初始化", f"版本={file_version} 参数={len(params)}")
