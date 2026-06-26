@@ -2596,6 +2596,20 @@ def calc_entry_price(c):
     
     return round(close, 2)
 
+def _compute_pl_ratios(candidates):
+    """预计算盈亏比TOP10，标注c['_entry']/c['_stop']/c['_target']/c['_pl_ratio']，返回_top10_codes集合"""
+    _pl_data = []
+    for c in candidates:
+        s = c.get('strategy', '?')
+        entry = calc_entry_price(c)
+        sl = round(entry * _STRATEGY_STOP_LOSS.get(s, 0.96), 2)
+        tp = round(entry * _STRATEGY_TAKE_PROFIT.get(s, 1.05), 2)
+        pl_ratio = round((tp - entry) / max(entry - sl, 0.01), 2)
+        _pl_data.append((c.get('code', ''), pl_ratio))
+        c['_entry'] = entry; c['_stop'] = sl; c['_target'] = tp; c['_pl_ratio'] = pl_ratio
+    _pl_sorted = sorted(_pl_data, key=lambda x: x[1], reverse=True)
+    return set(c for c, _ in _pl_sorted[:10])
+
 # ============================================================
 # 步骤20：Markdown输出
 # ============================================================
@@ -2619,28 +2633,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
         f"| ★最终推荐 | {len(candidates)} | {aind - anew - len(candidates)} | 评分门控+降级 |", "",
     ]
     if candidates:
-        # v6.9.46: 计算盈亏比，筛选TOP10
-        sl_map = _STRATEGY_STOP_LOSS
-        tp_map = _STRATEGY_TAKE_PROFIT
-        # 预计算所有标的盈亏比，用于TOP10排序
-        _pl_data = []
-        for c in candidates:
-            s = c.get('strategy', '?')
-            entry = calc_entry_price(c)
-            sl = round(entry * sl_map.get(s, 0.96), 2)
-            tp = round(entry * tp_map.get(s, 1.05), 2)
-            pl_ratio = round((tp - entry) / max(entry - sl, 0.01), 2)
-            _pl_data.append((c.get('code', ''), pl_ratio))
-        # 按盈亏比降序取TOP10
-        _pl_sorted = sorted(_pl_data, key=lambda x: x[1], reverse=True)
-        _top10_codes = set(c for c, _ in _pl_sorted[:10])
-        # 存储盈亏比到候选对象
-        for c in candidates:
-            code = c.get('code', '')
-            for cd, pl in _pl_data:
-                if cd == code:
-                    c['_pl_ratio'] = pl
-                    break
+        _top10_codes = _compute_pl_ratios(candidates)
 
         lines.append("## 推荐标的\n")
         lines.append("| # | TOP10 | 策略 | 标的 | 代码 | 行业 | 二级行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 | 盈亏比 |")
@@ -2727,30 +2720,14 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             index_cards += f'<div class="index-card"><div class="idx-name">{name}</div><div class="idx-price">-</div><div class="idx-chg">数据不可得</div></div>'
     
     rows_html = ""
-    # v6.9.46: 盈亏比TOP10计算
-    sl_map = _STRATEGY_STOP_LOSS
-    tp_map = _STRATEGY_TAKE_PROFIT
-    # 预计算盈亏比TOP10
-    _pl_data = []
-    for c in candidates:
-        s = c.get('strategy', '?')
-        entry = calc_entry_price(c)
-        sl_v = round(entry * sl_map.get(s, 0.96), 2)
-        tp_v = round(entry * tp_map.get(s, 1.05), 2)
-        pl_ratio = round((tp_v - entry) / max(entry - sl_v, 0.01), 2)
-        _pl_data.append((c.get('code', ''), pl_ratio))
-    _pl_sorted = sorted(_pl_data, key=lambda x: x[1], reverse=True)
-    _top10_codes = set(c for c, _ in _pl_sorted[:10])
+    _top10_codes = _compute_pl_ratios(candidates)
     for idx, c in enumerate(candidates, 1):
         code = c.get('code', ''); name = c.get('name', ''); s = c.get('strategy', '?')
         ind = _industry_str(c); biz = c.get('business', ''); chg = c.get('change_pct', 0)
         op = c.get('open', 0) or 0; close = c.get('close', 0) or 0
         amp = c.get('amplitude', 0) or 0; score = c.get('score', 0); conf = c.get('confidence', '★')
-        entry = calc_entry_price(c)
-        sl = round(entry * sl_map.get(s, 0.96), 2)
-        tp = round(entry * tp_map.get(s, 1.05), 2)
-        pl_ratio = round((tp - entry) / max(entry - sl, 0.01), 2)
-        c['_entry'] = entry; c['_stop'] = sl; c['_target'] = tp; c['_pl_ratio'] = pl_ratio
+        entry = c.get('_entry', 0); sl = c.get('_stop', 0); tp = c.get('_target', 0)
+        pl_ratio = c.get('_pl_ratio', 0)
         top10_mark = "⭐" if code in _top10_codes else ""
         r7d_html = str(c.get('_recent_7d')) if c.get('_recent_7d') is not None else ""
         # v6.6.44: 7日列附带历史策略标注

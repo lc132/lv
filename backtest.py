@@ -180,7 +180,7 @@ def backtest(recommendations):
 # ============================================================
 def generate_report(results, stats):
     beijing_now = datetime.now(timezone.utc) + timedelta(hours=8)
-    strategy_names = {"A": "动量延续", "B": "超跌反弹", "C": "事件驱动", "D": "回调企稳", "E": "资金埋伏", "F": "北向资金"}
+    strategy_names = {"A": "动量延续", "B": "超跌反弹", "C": "事件驱动", "D": "回调企稳", "E": "资金埋伏", "F": "北向资金", "G": "横盘突破", "H": "地量见底", "I": "均线突破", "J": "龙回头", "K": "缺口回补", "L": "黄金坑", "M": "涨停回调", "N": "新高突破", "O": "回踩均线", "P": "地量反弹", "Q": "W底突破"}
     
     lines = []
     lines.append("# A股短线标的回测报告")
