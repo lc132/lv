@@ -180,6 +180,8 @@ def determine_direction(trend_desc, pnl_pct, amp_pct):
 
 def calc_entry_exit(current_price, cost_price, amp_pct, direction):
     """计算做T参考价位"""
+    if amp_pct is None or amp_pct <= 0:
+        amp_pct = 3  # 默认3%振幅
     half_range = (amp_pct or 3) / 2 / 100 * current_price
 
     if "正T" in direction:
