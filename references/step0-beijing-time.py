@@ -10,8 +10,8 @@ TIME_APIS = [
 for api_url in TIME_APIS:
     try:
         req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0'})
-        resp = urllib.request.urlopen(req, timeout=5)
-        data = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
         # fromisoformat 在 Python 3.10 不支持7位小数秒，截断到6位微秒
         dt_str = data['dateTime']
         if '.' in dt_str:

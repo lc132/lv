@@ -67,7 +67,7 @@ def safe_read_json(path, default=None):
             data = json.load(f)
             if not isinstance(data, list): return default if default is not None else []
             return data
-    except: return default if default is not None else []
+    except Exception:return default if default is not None else []
 
 def safe_write_json(path, data):
     try:
@@ -113,8 +113,8 @@ def step9_sector_rotation():
             'Referer': 'https://quote.eastmoney.com/'
         }
         req = urllib.request.Request(f'{url}?{urllib.parse.urlencode(params)}', headers=headers)
-        resp = urllib.request.urlopen(req, timeout=10)
-        data = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
         
         if data and data.get('data') and data['data'].get('diff'):
             sectors = []
@@ -169,8 +169,8 @@ def step10a_fetch_all_stocks():
                 'User-Agent': 'Mozilla/5.0',
                 'Referer': 'https://finance.sina.com.cn'
             })
-            resp = urllib.request.urlopen(req, timeout=8)
-            text = resp.read().decode('gbk', errors='replace')
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                text = resp.read().decode('gbk', errors='replace')
             
             for line in text.strip().split('\n'):
                 if not line or '=""' in line:
@@ -958,7 +958,7 @@ def step20b_html_report(recos):
     # 告警日志
     alert_html = ""
     try:
-        with open('/workspace/系统告警.log', 'r') as f:
+        with open('/workspace/系统告警.log', 'r', encoding='utf-8') as f:
             alerts = [l.strip() for l in f.readlines() if data_date in l or prediction_date in l]
             for a in alerts[-20:]:
                 level = 'WARN'
@@ -966,7 +966,7 @@ def step20b_html_report(recos):
                 elif '[WARNING]' in a: level = 'WARN'
                 elif '[INFO]' in a: level = 'INFO'
                 alert_html += f'<div class="alert-item alert-{level.lower()}"><span class="alert-tag">{level}</span><span>{a}</span></div>\n'
-    except:
+    except Exception:
         alert_html = '<div class="alert-item alert-info"><span class="alert-tag">INFO</span><span>今日无告警</span></div>'
     
     html_content = f'''<!DOCTYPE html>
@@ -1288,7 +1288,7 @@ def step24_alert_summary():
     print("=" * 60)
     
     try:
-        with open('/workspace/系统告警.log', 'r') as f:
+        with open('/workspace/系统告警.log', 'r', encoding='utf-8') as f:
             lines = f.readlines()
         
         today_lines = [l for l in lines if data_date in l or prediction_date in l]
@@ -1298,7 +1298,7 @@ def step24_alert_summary():
                 print(f"   {l.strip()}")
         else:
             print(f"   今日无异常")
-    except:
+    except Exception:
         print(f"   无告警日志")
 
 # ============================================================
@@ -1344,7 +1344,7 @@ def step26_github_sync(xlsx_path):
     token_path = "/workspace/.github_token"
     if os.path.exists(token_path):
         try:
-            with open(token_path, 'r') as f:
+            with open(token_path, 'r', encoding='utf-8') as f:
                 token = f.read().strip()
         except Exception:
             pass
@@ -1446,8 +1446,8 @@ def step27_feishu_push(summary_text):
             headers={'Content-Type': 'application/json'},
             method='POST'
         )
-        resp = urllib.request.urlopen(req, timeout=10)
-        result = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
         if result.get('code') == 0:
             log_alert("INFO", "飞书推送", "✅ 筛选概况已推送到飞书群")
             print(f"✅ 飞书推送成功")

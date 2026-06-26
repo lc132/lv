@@ -2,7 +2,7 @@ import urllib.request, json, os
 from collections import Counter
 
 FEISHU_WEBHOOK = None
-with open("/workspace/.feishu_webhook") as f:
+with open("/workspace/.feishu_webhook", encoding='utf-8') as f:
     FEISHU_WEBHOOK = f.read().strip()
 if not FEISHU_WEBHOOK:
     log_alert("WARNING", "飞书推送", "未配置Webhook URL，跳过")
@@ -34,8 +34,8 @@ card = {
 req = urllib.request.Request(FEISHU_WEBHOOK,
     data=json.dumps(card, ensure_ascii=False).encode('utf-8'),
     headers={'Content-Type': 'application/json'}, method='POST')
-resp = urllib.request.urlopen(req, timeout=10)
-result = json.loads(resp.read())
+with urllib.request.urlopen(req, timeout=10) as resp:
+    result = json.loads(resp.read())
 if result.get('code') == 0:
     log_alert("INFO", "飞书推送", f"✅ {prediction_date} 已推送（Pages: {pages_report}）")
 else:

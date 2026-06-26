@@ -19,7 +19,7 @@ GITHUB_TOKEN = None
 _token_path = os.path.join(DATA_DIR, '.github_token')
 if os.path.exists(_token_path):
     try:
-        with open(_token_path, 'r') as _tf:
+        with open(_token_path, 'r', encoding='utf-8') as _tf:
             GITHUB_TOKEN = _tf.read().strip()
     except Exception:
         pass
@@ -30,7 +30,7 @@ FEISHU_WEBHOOK = None
 _feishu_path = os.path.join(DATA_DIR, '.feishu_webhook')
 if os.path.exists(_feishu_path):
     try:
-        with open(_feishu_path, 'r') as _ff:
+        with open(_feishu_path, 'r', encoding='utf-8') as _ff:
             FEISHU_WEBHOOK = _ff.read().strip()
     except Exception:
         pass
@@ -69,7 +69,7 @@ def log_alert(level, module, message, timestamp=None):
 def safe_read_json(path, default=None):
     try:
         if not os.path.exists(path): return default if default is not None else []
-        with open(path, 'r') as f:
+        with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
             if not isinstance(data, list):
                 log_alert("WARNING", "safe_read_json", f"{path} 格式异常")
@@ -81,7 +81,7 @@ def safe_read_json(path, default=None):
 
 def safe_write_json(path, data):
     try:
-        with open(path, 'w') as f: json.dump(data, f, ensure_ascii=False, indent=2)
+        with open(path, 'w', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e: log_alert("ERROR", "safe_write_json", f"{path}: {str(e)}")
 
 def safe_append_json(path, record):

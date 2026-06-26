@@ -13,6 +13,12 @@ BUILTIN_VERSION = "v6.9.53"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
+# 2026年中国A股节假日（非交易日）— 需年初更新
+_CN_HOLIDAYS_2026 = [
+    "2026-01-01","2026-01-02","2026-02-16","2026-02-17","2026-02-18","2026-02-19","2026-02-20",
+    "2026-04-06","2026-05-01","2026-06-19","2026-06-20","2026-06-21",
+    "2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07"
+]
 file_version = BUILTIN_VERSION; params = {}
 market_condition = "震荡"; position_pct = 55
 index_data = {}  # 三大指数行情(供HTML使用)
@@ -22,7 +28,7 @@ def _load_credential(env_key, file_path, fallback=""):
     if env_key in os.environ: return os.environ[env_key]
     if os.path.exists(file_path):
         try:
-            with open(file_path, 'r') as f: return f.read().strip()
+            with open(file_path, 'r', encoding='utf-8') as f: return f.read().strip()
         except Exception: pass
     return fallback
 
@@ -279,8 +285,7 @@ def step0_get_beijing_time():
         else: prediction_date = (beijing_now + timedelta(days=1)).strftime('%Y-%m-%d')
     else: prediction_date = beijing_date
     # 节假日调整：data_date和prediction_date若为节假日则回退/推进到最近交易日
-    h = ["2026-01-01","2026-01-02","2026-02-16","2026-02-17","2026-02-18","2026-02-19","2026-02-20",
-         "2026-04-06","2026-05-01","2026-06-19","2026-06-20","2026-06-21","2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07"]
+    h = _CN_HOLIDAYS_2026
     # data_date若为节假日，回退到上一个交易日
     if data_date in h:
         dd_dt = datetime.strptime(data_date, '%Y-%m-%d')
@@ -348,8 +353,7 @@ def step0A_pull_holdings():
 # ============================================================
 def step1_holiday_check():
     global prediction_date, pred_yyyymmdd, position_pct, market_condition, params
-    h = ["2026-01-01","2026-01-02","2026-02-16","2026-02-17","2026-02-18","2026-02-19","2026-02-20",
-         "2026-04-06","2026-05-01","2026-06-19","2026-06-20","2026-06-21","2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07"]
+    h = _CN_HOLIDAYS_2026
     # 长休检测：data_date到prediction_date之间自然日≥3天→弱市+仓位≤30%+搜索预算+5
     dd_dt = datetime.strptime(data_date, '%Y-%m-%d')
     pd_dt = datetime.strptime(prediction_date, '%Y-%m-%d')
@@ -890,7 +894,7 @@ def _load_industry_cache():
     global _industry_cache, _sub_industry_cache
     if os.path.exists(INDUSTRY_CACHE_FILE):
         try:
-            with open(INDUSTRY_CACHE_FILE, 'r') as f:
+            with open(INDUSTRY_CACHE_FILE, 'r', encoding='utf-8') as f:
                 _industry_cache = json.load(f)
             # v6.9.36: 兼容旧格式dict值自动转字符串
             _industry_cache = {k: (v.get('sshy', '') or '未知') if isinstance(v, dict) else v for k, v in _industry_cache.items()}
@@ -899,7 +903,7 @@ def _load_industry_cache():
             _industry_cache = {}
     if os.path.exists(SUB_INDUSTRY_CACHE_FILE):
         try:
-            with open(SUB_INDUSTRY_CACHE_FILE, 'r') as f:
+            with open(SUB_INDUSTRY_CACHE_FILE, 'r', encoding='utf-8') as f:
                 _sub_industry_cache = json.load(f)
             print(f"[INFO] 二级行业缓存: 从磁盘加载 {len(_sub_industry_cache)} 条")
         except Exception:
@@ -909,14 +913,14 @@ def _save_industry_cache():
     """保存行业缓存到磁盘"""
     if _industry_cache:
         try:
-            with open(INDUSTRY_CACHE_FILE, 'w') as f:
+            with open(INDUSTRY_CACHE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(_industry_cache, f, ensure_ascii=False, indent=2)
             print(f"[INFO] 行业缓存: 已保存 {len(_industry_cache)} 条")
         except Exception as e:
             print(f"[WARNING] 行业缓存保存失败: {e}")
     if _sub_industry_cache:
         try:
-            with open(SUB_INDUSTRY_CACHE_FILE, 'w') as f:
+            with open(SUB_INDUSTRY_CACHE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(_sub_industry_cache, f, ensure_ascii=False, indent=2)
             print(f"[INFO] 二级行业缓存: 已保存 {len(_sub_industry_cache)} 条")
         except Exception as e:

@@ -229,7 +229,7 @@ def step20B_html_report(ctx):
     alert_html = ""
     alert_path = f"{DATA_DIR}/系统告警.log"
     if os.path.exists(alert_path):
-        with open(alert_path, 'r') as f:
+        with open(alert_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
         today_lines = [l for l in lines if data_date in l]
         if today_lines:

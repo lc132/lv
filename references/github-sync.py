@@ -10,7 +10,7 @@ token = None
 token_path = "/workspace/.github_token"
 if os.path.exists(token_path):
     try:
-        with open(token_path, 'r') as f:
+        with open(token_path, 'r', encoding='utf-8') as f:
             token = f.read().strip()
     except Exception:
         pass

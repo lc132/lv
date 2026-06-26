@@ -15,8 +15,8 @@ def fetch_stock_quote(code, data_date):
             'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://finance.sina.com.cn'
         })
-        resp = urllib.request.urlopen(req, timeout=5)
-        text = resp.read().decode('gbk')
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            text = resp.read().decode('gbk')
         if text and '=""' not in text:
             parts = text.split('"')[1].split(',')
             if len(parts) > 5:
@@ -46,8 +46,8 @@ def fetch_stock_quote(code, data_date):
     try:
         em_url = f'https://push2.eastmoney.com/api/qt/stock/get?secid={secid_market}.{code}&fields=f43,f44,f45,f46,f50,f168,f170'
         req = urllib.request.Request(em_url, headers={'User-Agent': 'Mozilla/5.0'})
-        resp = urllib.request.urlopen(req, timeout=5)
-        data = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
         if data.get('data'):
             d = data['data']
             open_price = d.get('f46', 0) / 100 if d.get('f46') else None

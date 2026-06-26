@@ -29,7 +29,7 @@ def read_all_recommendations():
                         if key not in seen:
                             seen.add(key)
                             all_recs.append(r)
-            except: pass
+            except Exception:pass
     return all_recs
 
 # ============================================================
@@ -45,8 +45,8 @@ def fetch_t1_close(code, target_date):
     try:
         url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={prefix}{code},day,{target_date.replace('-','')},,1,qfq"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        resp = urllib.request.urlopen(req, timeout=6)
-        data = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read())
         klines = data.get("data", {}).get(f"{prefix}{code}", {}).get("qfqday", [])
         if klines:
             k = klines[-1]
@@ -66,8 +66,8 @@ def fetch_t1_close(code, target_date):
             "fields1": "f1,f2,f3,f4,f5,f6",
             "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
             "klt": "101", "fqt": "1",
-            "beg": target_date  # 腾讯K线需要带连字符格式 YYYY-MM-DD,
-            "end": target_date  # 腾讯K线需要带连字符格式 YYYY-MM-DD,
+            "beg": target_date,  # 腾讯K线需要带连字符格式 YYYY-MM-DD
+            "end": target_date,  # 腾讯K线需要带连字符格式 YYYY-MM-DD
             "_": str(int(time.time() * 1000))
         }
         query = urllib.parse.urlencode(params)
@@ -75,13 +75,13 @@ def fetch_t1_close(code, target_date):
             'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://quote.eastmoney.com/'
         })
-        resp = urllib.request.urlopen(req, timeout=8)
-        data = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read())
         if data and data.get("data") and data["data"].get("klines"):
             kline = data["data"]["klines"][-1]
             parts = kline.split(",")
             return {"close": float(parts[2]), "open": float(parts[1]), "high": float(parts[3]), "low": float(parts[4])}
-    except: pass
+    except Exception:pass
     
     return None
 

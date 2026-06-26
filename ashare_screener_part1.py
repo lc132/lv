@@ -86,8 +86,8 @@ def step0_get_beijing_time():
     for api_url, key in TIME_APIS:
         try:
             req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0'})
-            resp = urllib.request.urlopen(req, timeout=10)
-            data = json.loads(resp.read())
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
             ts = data[key]
             if '.' in ts:
                 parts = ts.split('.')
@@ -157,8 +157,8 @@ def step2_extreme_market():
         # 获取上证指数行情
         url = "https://push2.eastmoney.com/api/qt/stock/get?secid=1.000001&fields=f43,f44,f45,f46,f47,f48,f50,f51,f52,f170"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        resp = urllib.request.urlopen(req, timeout=10)
-        data = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
         if data.get('data'):
             d = data['data']
             sh_close = d.get('f43', 0) / 100 if d.get('f43') else 0
@@ -197,13 +197,13 @@ def step3_external_markets():
             try:
                 url = f"https://push2.eastmoney.com/api/qt/stock/get?secid=100{code}&fields=f43,f170"
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                resp = urllib.request.urlopen(req, timeout=5)
-                data = json.loads(resp.read())
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read())
                 if data.get('data'):
                     chg = data['data'].get('f170', 0) / 100 if data['data'].get('f170') else 0
                     print(f"   美股 {name}: {chg:.2f}%")
                     if chg < -2: us_down_count += 1
-            except: pass
+            except Exception:pass
         
         if us_down_count >= 3:
             print(f"⚠️ 美股三大指数均跌超2%，弱市仓位≤30%")
@@ -213,15 +213,15 @@ def step3_external_markets():
         try:
             url = "https://push2.eastmoney.com/api/qt/stock/get?secid=100.HSI&fields=f43,f170"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            resp = urllib.request.urlopen(req, timeout=5)
-            data = json.loads(resp.read())
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
             if data.get('data'):
                 hsi_chg = data['data'].get('f170', 0) / 100 if data['data'].get('f170') else 0
                 print(f"   恒生指数: {hsi_chg:.2f}%")
                 if hsi_chg < -3:
                     print(f"⚠️ 恒生跌超3%，弱市仅超跌反弹")
                     market_env = "弱市"
-        except: pass
+        except Exception:pass
         
         print(f"✅ 步骤3: 外围市场检查完成，市场环境={market_env}")
     except Exception as e:
@@ -238,8 +238,8 @@ def step3a_premarket_futures():
         # 检查标普期货
         url = "https://push2.eastmoney.com/api/qt/stock/get?secid=100.ES00Y&fields=f43,f170"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        resp = urllib.request.urlopen(req, timeout=5)
-        data = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
         if data.get('data'):
             es_chg = data['data'].get('f170', 0) / 100 if data['data'].get('f170') else 0
             print(f"   标普期货: {es_chg:.2f}%")
@@ -280,8 +280,8 @@ def step4_holding_sync():
                 'User-Agent': 'Mozilla/5.0',
                 'Referer': 'https://finance.sina.com.cn'
             })
-            resp = urllib.request.urlopen(req, timeout=5)
-            text = resp.read().decode('gbk')
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                text = resp.read().decode('gbk')
             if text and '=""' not in text:
                 parts = text.split('"')[1].split(',')
                 if len(parts) > 5:
@@ -586,8 +586,8 @@ def step8_market_environment():
         # 简化：使用当前涨跌比和成交量判断
         url = "https://push2.eastmoney.com/api/qt/stock/get?secid=1.000001&fields=f43,f44,f45,f46,f47,f48,f50,f170"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        resp = urllib.request.urlopen(req, timeout=10)
-        data = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
         if data.get('data'):
             d = data['data']
             sh_close = d.get('f43', 0) / 100 if d.get('f43') else 0

@@ -23,8 +23,8 @@ def fetch_all_a_stocks():
             'Referer': 'https://quote.eastmoney.com/'
         }
         req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers=headers)
-        resp = urllib.request.urlopen(req, timeout=10)
-        data = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
         if data and data.get('data') and data['data'].get('diff'):
             stocks = []
             for item in data['data']['diff']:
@@ -85,8 +85,8 @@ def fetch_all_a_stocks():
                     'User-Agent': 'Mozilla/5.0',
                     'Referer': 'https://finance.sina.com.cn'
                 })
-                resp = urllib.request.urlopen(req, timeout=5)
-                text = resp.read().decode('gbk')
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    text = resp.read().decode('gbk')
                 for line in text.strip().split('\n'):
                     if not line or '=""' in line:
                         continue
