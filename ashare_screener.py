@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.50
+A股每日盘前短线标的智能筛选 v6.9.51
 35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, ssl
@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.50"
+BUILTIN_VERSION = "v6.9.51"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1619,9 +1619,9 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
             # 先复制历史数据
             c['_recent_7d'] = recent_7d_count.get(code, 0)
             c['_recent_7d_strategies'] = dict(recent_7d_strategies.get(code, {}))
-            # v6.9.50: 补入当日推荐（步骤22才写入历史，步骤11时尚未存在），确保7日列≥1
+            # v6.9.51: 补入当日推荐计数（策略在步骤13匹配后由main()回填）
             c['_recent_7d'] += 1
-            c['_recent_7d_strategies'][data_date] = c.get('strategy', '?')
+            c['_recent_7d_strategies'][data_date] = ''  # 步骤13后回填
         if code in all_holdings_codes:
             reason = "当前持仓"
         elif code.startswith('688'): reason = "科创板"
@@ -2728,10 +2728,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         chg_cls = "up" if chg >= 0 else "down"
         conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
         scl = f"strat_{s.lower()}"
-        r7_cls = "recent-7d" if c.get('_recent_7d') else ""
-        top10_cls = "top10-row" if code in _top10_codes else ""
         url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
-        rows_html += f"""<tr class="{scl} {r7_cls} {top10_cls}"><td>{idx}</td><td>{top10_mark}</td><td><span class="badge {scl}">{s}</span></td>
+        rows_html += f"""<tr class="{scl}"><td>{idx}</td><td>{top10_mark}</td><td><span class="badge {scl}">{s}</span></td>
         <td><a href="{url}" target="_blank">{html.escape(name)}</a></td><td>{code}</td><td>{ind}</td><td>{html.escape(biz)}</td>
         <td class="{chg_cls}">{chg:+.2f}%</td><td>{op:.2f}</td><td>{close:.2f}</td>
         <td>{amp:.2f}%</td><td>{r7d_html}</td><td>{score}</td><td class="conf {conf_cls}">{conf}</td>
@@ -2881,8 +2879,7 @@ tr:hover{{background:#2d3b4f}}
 .strat_d{{background:#5c3d0e;color:#f59e0b}}.strat_e{{background:#5c1648;color:#ec4899}}.strat_f{{background:#0f4c5c;color:#06b6d4}}.strat_g{{background:#0e4c3d;color:#10b981}}.strat_h{{background:#4c1d0e;color:#f97316}}.strat_i{{background:#0e3d3d;color:#14b8a6}}.strat_j{{background:#5c1515;color:#ef4444}}.strat_k{{background:#3b1f3b;color:#a855f7}}.strat_l{{background:#4c3d0e;color:#eab308}}.strat_m{{background:#4c1d3b;color:#f472b6}}.strat_n{{background:#1e3d0e;color:#84cc16}}.strat_o{{background:#0e2e4c;color:#38bdf8}}.strat_p{{background:#4c2e0e;color:#fb923c}}.strat_q{{background:#0e3e4c;color:#22d3ee}}
 tr.strat_a{{background:rgba(34,197,94,0.05)}}tr.strat_b{{background:rgba(59,130,246,0.05)}}tr.strat_c{{background:rgba(139,92,246,0.05)}}
 tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72,153,0.05)}}tr.strat_f{{background:rgba(6,182,212,0.05)}}tr.strat_g{{background:rgba(16,185,129,0.05)}}tr.strat_h{{background:rgba(249,115,22,0.05)}}tr.strat_i{{background:rgba(20,184,166,0.05)}}tr.strat_j{{background:rgba(239,68,68,0.05)}}tr.strat_k{{background:rgba(168,85,247,0.05)}}tr.strat_l{{background:rgba(234,179,8,0.05)}}tr.strat_m{{background:rgba(244,114,182,0.05)}}tr.strat_n{{background:rgba(132,204,22,0.05)}}tr.strat_o{{background:rgba(56,189,248,0.05)}}tr.strat_p{{background:rgba(251,146,60,0.05)}}tr.strat_q{{background:rgba(34,211,238,0.05)}}
-tr.recent-7d{{background:rgba(251,146,60,0.12)}} tr.recent-7d:hover{{background:rgba(251,146,60,0.2)}}
-tr.top10-row{{background:rgba(56,189,248,0.1);border-left:3px solid #38bdf8}} tr.top10-row:hover{{background:rgba(56,189,248,0.2)}}
+/* v6.9.51: TOP10蓝色背景+边框 / 7日橙色背景已移除 */
 .conf{{font-weight:bold}}.conf.high{{color:#22c55e}}.conf.mid{{color:#f59e0b}}.conf.low{{color:#ef4444}}
 .entry{{color:#38bdf8;font-weight:bold}}
 .alert-item{{display:flex;gap:.8rem;padding:.4rem 0;border-bottom:1px solid #334155;font-size:.8rem}}
@@ -2904,7 +2901,7 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 .top10-card-metrics .metric{{text-align:center}}
 .top10-card-metrics .metric .val{{font-size:1rem;font-weight:700;color:#f8fafc}}
 .top10-card-metrics .metric .lbl{{font-size:.68rem;color:#94a3b8}}
-.top10-card-metrics .ratio-hl{{color:#38bdf8!important;font-size:1.2rem!important}}
+.top10-card-metrics .ratio-hl{{font-size:1.2rem!important}}
 .top10-card-reason{{font-size:.82rem;color:#94a3b8;line-height:1.6}}
 .top10-card-reason strong{{color:#e2e8f0}}
 .top10-conclusion{{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:16px 20px;margin-top:20px}}
@@ -2954,7 +2951,7 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 </tbody></table></section>
 <section><h2>TOP10 盈亏比精选推荐理由</h2>
 <div class="top10-cards">{top10_cards_html if top10_cards_html else '<div style="color:#94a3b8;padding:1rem">暂无TOP10数据</div>'}</div></section></div>
-<div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p style="color:#fb923c;margin-top:.3rem">★ 7日 = 近7日内已推荐标的（橙色高亮行），可持续关注但不建议重复建仓</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
+<div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
     
     with open(hp, 'w', encoding='utf-8') as f: f.write(html_content)
     log_alert("INFO", "HTML报告", f"已生成至 {hp}")
@@ -3151,6 +3148,10 @@ def main():
     print("\n[步骤10H] 二级行业..."); sub_industry_data = step10H_fetch_sub_industry(ael)
     print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data, fundamental_data, (unlock_events, cb_events, earnings_window), (inst_holding, margin_overheat)); asig = len(asl)
     print("\n[步骤13] 策略匹配..."); sm = step13_strategy_match(asl, kline_data); astr = len(sm)
+    # v6.9.51: 回填7日列当日策略（step11只设了空占位，此时策略已匹配）
+    for c in sm:
+        if c.get('_recent_7d_strategies', {}).get(data_date) == '':
+            c['_recent_7d_strategies'][data_date] = c.get('strategy', '?')
     print("\n[步骤14] 评分..."); scored = step14_scoring(sm)
     print("\n[步骤16] 综合评分+平局打破..."); ranked = step16_comprehensive_score(scored)
     print("\n[步骤17] 行业限制..."); ail = step17_industry_limit(ranked); aind = len(ail)

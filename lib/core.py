@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的筛选 v6.9.50 — 核心工具模块
+A股每日盘前短线标的筛选 v6.9.51 — 核心工具模块
 全局配置、工具函数
 """
 import os, sys, json, time, urllib.request, urllib.error, subprocess, shutil, re
@@ -11,7 +11,7 @@ from collections import Counter
 # ============================================================
 # 全局配置
 # ============================================================
-BUILTIN_VERSION = "v6.9.50"
+BUILTIN_VERSION = "v6.9.51"
 DATA_DIR = "/workspace"
 TEMP_DIR = "/data/user/work"
 # GitHub Token 从外部文件读取（不入git，防止泄露）
