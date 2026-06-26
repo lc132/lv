@@ -77,13 +77,27 @@ else:
     log_alert("WARNING", "筛选条件", "筛选条件.xlsx 不存在，跳过校验")
 # === 校验结束，开始推送 ===
 
-repo_url = f"https://{token}@github.com/lc132/lv.git"
+repo_url = "https://github.com/lc132/lv.git"
 repo_dir = "/tmp/lv_sync"
 try:
-    subprocess.run(
-        ["git", "clone", "--depth", "1", "--branch", "main", repo_url, repo_dir],
-        capture_output=True, text=True, timeout=30, check=True
-    )
+    # 使用 GIT_ASKPASS 安全传递 Token（避免 Token 出现在进程列表中）
+    import tempfile
+    askpass_script = None
+    try:
+        fd, askpass_script = tempfile.mkstemp(prefix='git_askpass_', suffix='.sh')
+        with os.fdopen(fd, 'w') as f:
+            f.write('#!/bin/bash\necho "$GIT_TOKEN"\n')
+        os.chmod(askpass_script, 0o700)
+        git_env = os.environ.copy()
+        git_env['GIT_ASKPASS'] = askpass_script
+        git_env['GIT_TOKEN'] = token
+        subprocess.run(
+            ["git", "clone", "--depth", "1", "--branch", "main", repo_url, repo_dir],
+            capture_output=True, text=True, timeout=30, check=True, env=git_env
+        )
+    finally:
+        if askpass_script and os.path.exists(askpass_script):
+            os.remove(askpass_script)
     # 推送筛选结果
     shutil.copy(md_path, os.path.join(repo_dir, f"短线标的_{prediction_date}.md"))
     # 若筛选条件表格已同步，一并推送

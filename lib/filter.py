@@ -94,8 +94,8 @@ def step11_hard_exclude(ctx):
         elif close > 100:
             reason = "股价>100元(规则4)"
             skip = True
-        # 规则5: ST/*ST
-        elif 'ST' in name.upper() or '*ST' in name.upper():
+        # 规则5: ST/*ST（使用 startswith 精确匹配，避免 'ST' 子串误匹配如 'EAST'）
+        elif name.upper().startswith('ST') or name.upper().startswith('*ST'):
             reason = "ST/*ST(规则5)"
             skip = True
         # 规则10: 前日涨停但当日开板（前日涨幅>9.5%且当日开盘<前日收盘*0.98）

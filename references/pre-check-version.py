@@ -1,5 +1,9 @@
+#!/usr/bin/env python3
 # 读取策略调整记录（获取 file_version 和 params）
-BUILTIN_VERSION = "v6.6.3"
+# 依赖外部函数：safe_read_json, read_all_history, log_alert, os, beijing_date
+import os
+
+BUILTIN_VERSION = "v6.9.53"  # 与 ashare_screener.py 保持一致
 adj_records = safe_read_json('/workspace/策略调整记录.json')
 if adj_records and len(adj_records) > 0:
     latest = adj_records[-1]
@@ -71,6 +75,7 @@ if last_check is None or current_version != file_version:
                 _wc(ws11, 1, 1, f'关键纪律 — {file_version}', _bold_font)
 
             wb.save(xlsx_path)
+            wb.close()
             log_alert("INFO", "筛选条件", f"筛选条件.xlsx 已同步至 {file_version}")
         else:
             log_alert("WARNING", "筛选条件", "筛选条件.xlsx 不存在，跳过自动更新")

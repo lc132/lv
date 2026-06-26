@@ -158,13 +158,15 @@ def step20B_html_report(ctx):
         conf_color = {'★★★': '#006100', '★★': '#BF8F00', '★': '#9C0006'}.get(conf, '#333')
         url = rec.get('url', '#')
         
+        import html as _html_lib
+
         rows_html += f"""
         <tr style="background:{bg}">
             <td>{i}</td>
-            <td><span class="badge" style="background:{strategy_colors.get(s,'#333')};color:#fff;padding:2px 8px;border-radius:3px;font-size:11px">{s}</span></td>
-            <td><a href="{url}" target="_blank" style="color:#0563C1;text-decoration:underline">{rec.get('name','')}</a></td>
-            <td>{rec.get('code','')}</td>
-            <td>{rec.get('industry','未知')}</td>
+            <td><span class="badge" style="background:{strategy_colors.get(s,'#333')};color:#fff;padding:2px 8px;border-radius:3px;font-size:11px">{_html_lib.escape(s)}</span></td>
+            <td><a href="{_html_lib.escape(str(url))}" target="_blank" style="color:#0563C1;text-decoration:underline">{_html_lib.escape(str(rec.get('name','')))}</a></td>
+            <td>{_html_lib.escape(str(rec.get('code','')))}</td>
+            <td>{_html_lib.escape(str(rec.get('industry','未知')))}</td>
             <td style="color:{chg_color};font-weight:bold">{chg_sign}{chg:.2f}%</td>
             <td>{rec.get('open','')}</td>
             <td>{rec.get('close','')}</td>

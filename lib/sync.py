@@ -121,17 +121,26 @@ def step26_github_sync(ctx):
         print("  md文件不存在，跳过")
         return
     
-    repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
+    repo_url = f"https://github.com/{GITHUB_REPO}.git"
     repo_dir = f"{TEMP_DIR}/lv_sync"
     
     try:
         if os.path.exists(repo_dir):
             shutil.rmtree(repo_dir, ignore_errors=True)
         
-        subprocess.run(
-            ["git", "clone", "--depth", "1", "--branch", "main", repo_url, repo_dir],
-            capture_output=True, text=True, timeout=30, check=True
-        )
+        # 使用 _git_with_token 安全传递 Token（避免 Token 出现在进程列表中）
+        # 注意：此函数定义在 ashare_screener.py 中，lib 模块通过 ctx 调用
+        _git_with_token = ctx.get('_git_with_token')
+        if _git_with_token:
+            _git_with_token(
+                ["git", "clone", "--depth", "1", "--branch", "main", repo_url, repo_dir],
+                timeout=30
+            )
+        else:
+            subprocess.run(
+                ["git", "clone", "--depth", "1", "--branch", "main", repo_url, repo_dir],
+                capture_output=True, text=True, timeout=30, check=True
+            )
         
         # 校验筛选条件xlsx版本（SKILL §十三.A: 推送前检查版本一致性）
         local_xlsx = f"{DATA_DIR}/A股短线选股筛选条件.xlsx"
@@ -242,11 +251,18 @@ def step26_github_sync(ctx):
             capture_output=True, text=True
         )
         
-        # 如果有变更则推送
-        push_result = subprocess.run(
-            ["git", "-C", repo_dir, "push", "origin", "main"],
-            capture_output=True, text=True, timeout=30
-        )
+        # 如果有变更则推送（使用 _git_with_token 安全传递 Token）
+        _git_with_token = ctx.get('_git_with_token')
+        if _git_with_token:
+            push_result = _git_with_token(
+                ["git", "-C", repo_dir, "push", "origin", "main"],
+                timeout=60, check=False
+            )
+        else:
+            push_result = subprocess.run(
+                ["git", "-C", repo_dir, "push", "origin", "main"],
+                capture_output=True, text=True, timeout=30
+            )
         
         if push_result.returncode == 0:
             print(f"  ✅ GitHub同步成功: {prediction_date}")

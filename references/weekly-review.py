@@ -13,15 +13,29 @@ if os.path.exists(token_path):
             token = f.read().strip()
     except Exception:
         pass
-github_repo = f"https://{token}@github.com/lc132/lv.git" if token else "https://github.com/lc132/lv.git"
+github_repo = "https://github.com/lc132/lv.git"
 temp_dir = "/tmp/lv_weekly_review"
 try:
     if os.path.exists(temp_dir):
         shutil.rmtree(temp_dir, ignore_errors=True)
-    subprocess.run(
-        ["git", "clone", "--depth", "1", "--branch", "main", github_repo, temp_dir],
-        check=True, timeout=60
-    )
+    # 使用 GIT_ASKPASS 安全传递 Token
+    import tempfile
+    askpass_script = None
+    try:
+        fd, askpass_script = tempfile.mkstemp(prefix='git_askpass_', suffix='.sh')
+        with os.fdopen(fd, 'w') as f:
+            f.write('#!/bin/bash\necho "$GIT_TOKEN"\n')
+        os.chmod(askpass_script, 0o700)
+        git_env = os.environ.copy()
+        git_env['GIT_ASKPASS'] = askpass_script
+        git_env['GIT_TOKEN'] = token
+        subprocess.run(
+            ["git", "clone", "--depth", "1", "--branch", "main", github_repo, temp_dir],
+            capture_output=True, text=True, timeout=30, check=True, env=git_env
+        )
+    finally:
+        if askpass_script and os.path.exists(askpass_script):
+            os.remove(askpass_script)
     # 列出所有短线标的文件
     md_files = []
     for f in os.listdir(temp_dir):

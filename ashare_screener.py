@@ -149,7 +149,7 @@ def _version_cmp(v):
 # ============================================================
 # 腾讯行情API (v6.6.27: 替代新浪)
 # ============================================================
-TENCENT_API = "http://qt.gtimg.cn/q="
+TENCENT_API = "https://qt.gtimg.cn/q="
 
 def _parse_tencent_field(raw, idx, default=None):
     """安全解析腾讯API字段，返回 float 或 default"""
@@ -256,8 +256,9 @@ def step0_get_beijing_time():
             break
         except Exception: continue
     if beijing_now is None:
-        beijing_now = datetime.now()
-        log_alert("WARNING", "北京时间", "所有API不可达，降级为系统时间(假设Asia/Shanghai)")
+        from datetime import timezone as _tz
+        beijing_now = datetime.now(_tz(timedelta(hours=8)))
+        log_alert("WARNING", "北京时间", "所有API不可达，降级为系统时间(Asia/Shanghai)")
     beijing_date = beijing_now.strftime('%Y-%m-%d')
     beijing_weekday = beijing_now.weekday()
     beijing_hour = beijing_now.hour
@@ -303,6 +304,24 @@ def step0_get_beijing_time():
     pred_yyyymmdd = prediction_date.replace('-', '')
     log_alert("INFO", "北京时间", f"beijing={beijing_date} data={data_date} pred={prediction_date}")
 
+def _git_with_token(cmd_args, timeout=30, check=True, log_prefix=""):
+    """使用 GIT_ASKPASS 安全传递 Token，避免 Token 出现在进程列表中"""
+    import tempfile
+    askpass_script = None
+    try:
+        fd, askpass_script = tempfile.mkstemp(prefix='git_askpass_', suffix='.sh')
+        with os.fdopen(fd, 'w') as f:
+            f.write('#!/bin/bash\necho "$GIT_TOKEN"\n')
+        os.chmod(askpass_script, 0o700)
+        env = os.environ.copy()
+        env['GIT_ASKPASS'] = askpass_script
+        env['GIT_TOKEN'] = GITHUB_TOKEN
+        result = subprocess.run(cmd_args, capture_output=True, text=True, timeout=timeout, env=env, check=check)
+        return result
+    finally:
+        if askpass_script and os.path.exists(askpass_script):
+            os.remove(askpass_script)
+
 # ============================================================
 # 步骤0A：拉取持仓跟踪
 # ============================================================
@@ -310,9 +329,8 @@ def step0A_pull_holdings():
     try:
         repo_dir = "/tmp/lv_holdings_pull"
         if os.path.exists(repo_dir): shutil.rmtree(repo_dir, ignore_errors=True)
-        repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
-        subprocess.run(["git", "clone", "--depth", "1", "--branch", "main", repo_url, repo_dir],
-                       capture_output=True, text=True, timeout=30, check=True)
+        repo_url = f"https://github.com/{GITHUB_REPO}.git"
+        _git_with_token(["git", "clone", "--depth", "1", "--branch", "main", repo_url, repo_dir], timeout=30)
         xlsx_src = os.path.join(repo_dir, "持仓跟踪.xlsx")
         if os.path.exists(xlsx_src):
             shutil.copy(xlsx_src, "/workspace/持仓跟踪.xlsx")
@@ -915,10 +933,7 @@ def _fetch_zjh_industry(code):
             'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://emweb.securities.eastmoney.com/'
         })
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
             jbzl = data.get('jbzl', {})
             zjh = jbzl.get('sszjhhy', '')
@@ -1353,7 +1368,7 @@ def step10C_fetch_klines(candidates):
                 }
             except Exception: kline_data[code] = {}
         try: api.disconnect()
-        except: pass
+        except Exception: pass
         log_alert("INFO", "K线拉取", f"获取{len(kline_data)}只历史K线(KDJ迭代+BOLL)")
     except Exception as e:
         log_alert("WARNING", "K线拉取", f"pytdx不可用: {str(e)[:60]}")
@@ -1441,14 +1456,12 @@ def step10F_fetch_risk_events():
     
     # 1. 限售解禁数据 — qqjjsj.com 结构化解析
     try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
         url = 'https://www.qqjjsj.com/show13a446260'
         req = urllib.request.Request(url, headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'text/html'
         })
-        raw = urllib.request.urlopen(req, timeout=12, context=ctx).read().decode('utf-8', errors='ignore')
+        raw = urllib.request.urlopen(req, timeout=12).read().decode('utf-8', errors='ignore')
         # 解析表格: <td>代码</td><td>名称</td><td>日期</td>...<td>占总股本比例</td>
         rows = re.findall(
             r'<td[^>]*>(\d{6})</td>\s*<td[^>]*>([^<]+)</td>\s*<td[^>]*>(\d{4}-\d{2}-\d{2})</td>'
@@ -1628,12 +1641,9 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
         reason = None
         # v6.6.37: 7日内推荐天数（按日期去重），不排除，仅标注
         if code not in all_holdings_codes:
-            # 先复制历史数据
+            # 先复制历史数据（计数在步骤13策略匹配成功后+1）
             c['_recent_7d'] = recent_7d_count.get(code, 0)
             c['_recent_7d_strategies'] = dict(recent_7d_strategies.get(code, {}))
-            # v6.9.51: 补入当日推荐计数（策略在步骤13匹配后由main()回填）
-            c['_recent_7d'] += 1
-            c['_recent_7d_strategies'][data_date] = ''  # 步骤13后回填
         if code in all_holdings_codes:
             reason = "当前持仓"
         elif code.startswith('688'): reason = "科创板"
@@ -1844,7 +1854,6 @@ def step13_strategy_match(candidates, kline_data=None):
     matched = []
     for c in candidates:
         chg = c.get('change_pct', 0); amp = c.get('amplitude', 0)
-        amt = c.get('amount', 0) if False else 0  # v6.9.38: 预留，策略匹配中未使用
         vr = c.get('volume_ratio'); to = c.get('turnover', 0)
         close = c.get('close', 0); op = c.get('open', 0)
         high = c.get('high', 0); low = c.get('low', 0)
@@ -3054,11 +3063,10 @@ def step26_github_sync(mp, hd, candidates):
     if not GITHUB_TOKEN: log_alert("WARNING", "GitHub同步", "无令牌"); return
     rd = None
     try:
-        repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
+        repo_url = f"https://github.com/{GITHUB_REPO}.git"
         rd = "/tmp/lv_sync"
         if os.path.exists(rd): shutil.rmtree(rd, ignore_errors=True)
-        subprocess.run(["git", "clone", "--depth", "1", "--branch", "main", repo_url, rd],
-                       capture_output=True, text=True, timeout=30, check=True)
+        _git_with_token(["git", "clone", "--depth", "1", "--branch", "main", repo_url, rd], timeout=30)
         c15 = (datetime.strptime(prediction_date, '%Y-%m-%d') - timedelta(days=15)).strftime('%Y-%m-%d').replace('-', '')
         for f in list(os.listdir(rd)):
             for prefix in ['短线标的_', '推荐历史_']:
@@ -3087,9 +3095,9 @@ def step26_github_sync(mp, hd, candidates):
         subprocess.run(["git", "-C", rd, "config", "user.name", "ashare-screener"], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", rd, "add", "."], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", rd, "commit", "-m", f"筛选结果 {prediction_date} (v{file_version})", "--allow-empty"], capture_output=True, timeout=15)
-        result = subprocess.run(["git", "-C", rd, "push", "origin", "main"], capture_output=True, text=True, timeout=30)
+        result = _git_with_token(["git", "-C", rd, "push", "origin", "main"], timeout=60, check=False)
         if result.returncode == 0: log_alert("INFO", "GitHub同步", f"✅ {prediction_date} 已推送")
-        else: log_alert("WARNING", "GitHub同步", f"推送失败: {result.stderr[:100].replace(GITHUB_TOKEN, '***')}")
+        else: log_alert("WARNING", "GitHub同步", f"推送失败: {result.stderr[:100]}")
     except Exception as e: log_alert("WARNING", "GitHub同步", f"失败: {str(e)[:100]}")
     finally:
         if rd and os.path.exists(rd): shutil.rmtree(rd, ignore_errors=True)
@@ -3215,10 +3223,10 @@ def main():
     print("\n[步骤10H] 二级行业..."); sub_industry_data = step10H_fetch_sub_industry(ael)
     print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data, fundamental_data, (unlock_events, cb_events, earnings_window), (inst_holding, margin_overheat)); asig = len(asl)
     print("\n[步骤13] 策略匹配..."); sm = step13_strategy_match(asl, kline_data); astr = len(sm)
-    # v6.9.51: 回填7日列当日策略（step11只设了空占位，此时策略已匹配）
+    # v6.9.53: 策略匹配成功后统一+1计数+回填当日策略（修复步骤11预加导致计数不准）
     for c in sm:
-        if c.get('_recent_7d_strategies', {}).get(data_date) == '':
-            c['_recent_7d_strategies'][data_date] = c.get('strategy', '?')
+        c['_recent_7d'] = c.get('_recent_7d', 0) + 1
+        c['_recent_7d_strategies'][data_date] = c.get('strategy', '?')
     print("\n[步骤14] 评分..."); scored = step14_scoring(sm)
     print("\n[步骤16] 综合评分+平局打破..."); ranked = step16_comprehensive_score(scored)
     print("\n[步骤17] 行业限制..."); ail = step17_industry_limit(ranked); aind = len(ail)

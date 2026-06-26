@@ -39,6 +39,10 @@ beijing_date = beijing_now.strftime('%Y-%m-%d')
 beijing_hour = beijing_now.hour
 beijing_weekday = beijing_now.weekday()  # 0=周一,6=周日
 
+# 盘前/盘后标志（必须在 data_date 和 prediction_date 计算前定义）
+is_pre_market = (beijing_hour < 9) or (beijing_hour == 9 and beijing_now.minute < 30)
+is_post_market = (beijing_hour >= 15)
+
 # data_date（数据日期）：数据来源日
 # 盘前/交易时段→昨日（数据来自昨日收盘），收盘后→当日（数据来自当日收盘）
 # 周末回退到周五
@@ -53,9 +57,6 @@ else:                           # 收盘后 → 数据来自当日收盘
 
 # prediction_date（预测日期）：盘前→当日 | 收盘后→下一交易日 | 交易时段→当日
 # 核心原则：盘前(9:30前)用昨日数据预测当日，收盘后(15:00后)用当日数据预测次日
-is_pre_market = (beijing_hour < 9) or (beijing_hour == 9 and beijing_now.minute < 30)
-is_post_market = (beijing_hour >= 15)
-
 if beijing_weekday == 5:       # 周六 → 下周一
     prediction_date = (beijing_now + timedelta(days=2)).strftime('%Y-%m-%d')
 elif beijing_weekday == 6:     # 周日 → 下周一
