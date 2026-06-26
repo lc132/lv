@@ -4,7 +4,7 @@ A股短线标的回测机制 v6.9.53
 基于推荐历史中的进场价/止损/止盈，拉取T+1实际收盘价，计算各策略胜率与收益
 """
 import urllib.request, json, os, time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import Counter, defaultdict
 
 WORKSPACE = "/workspace"
@@ -112,7 +112,7 @@ def backtest(recommendations):
         "hit_entry": 0  # 盘中触及进场价
     })
     
-    today = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
+    today = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d")
     
     for rec in recommendations:
         code = rec.get("code", "")
@@ -179,7 +179,7 @@ def backtest(recommendations):
 # 5. 生成回测报告
 # ============================================================
 def generate_report(results, stats):
-    beijing_now = datetime.utcnow() + timedelta(hours=8)
+    beijing_now = datetime.now(timezone.utc) + timedelta(hours=8)
     strategy_names = {"A": "动量延续", "B": "超跌反弹", "C": "事件驱动", "D": "回调企稳", "E": "资金埋伏", "F": "北向资金"}
     
     lines = []

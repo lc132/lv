@@ -126,6 +126,14 @@ _STRATEGY_COLORS = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0
 _STRATEGY_STOP_LOSS = {'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965, 'F': 0.965, 'G': 0.95, 'H': 0.94, 'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95}
 _STRATEGY_TAKE_PROFIT = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06, 'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05}
 
+def _tie_key(c):
+    """模块级平局打破键：策略优先级→评分→平局分→量比→换手偏离"""
+    vr = c.get('volume_ratio') or 0
+    to = c.get('turnover') or 0
+    to_penalty = abs(to - 10) if to > 0 else 99
+    return (-c.get('score', 0), _STRATEGY_ORDER.get(c.get('strategy', 'Z'), 99),
+            -(c.get('_tie_score', 0)), -vr, to_penalty)
+
 # ============================================================
 # 工具函数
 # ============================================================
@@ -2130,13 +2138,6 @@ def step14_scoring(candidates):
 
 def step17_industry_limit(candidates):
     # v6.6.46: 保留 step16 综合评分排序(_tie_score)，五级二次评估打破平局
-    so = _STRATEGY_ORDER
-    def _tie_key(c):
-        vr = c.get('volume_ratio') or 0
-        to = c.get('turnover') or 0
-        to_penalty = abs(to - 10) if to > 0 else 99
-        return (-c.get('score', 0), so.get(c.get('strategy', 'Z'), 99), -(c.get('_tie_score', 0)),
-                -vr, to_penalty)
     ig = defaultdict(list)
     for c in candidates: ig[_industry_str(c)].append(c)
     limited = []
@@ -2161,7 +2162,7 @@ def step17_industry_limit(candidates):
     for g in sg.values():
         g.sort(key=_tie_key)
         final.extend(g[:max_s])
-    final.sort(key=lambda c: (so.get(c.get('strategy', 'Z'), 99), -c.get('score', 0)))
+    final.sort(key=lambda c: (_STRATEGY_ORDER.get(c.get('strategy', 'Z'), 99), -c.get('score', 0)))
     log_alert("INFO", "行业限制", f"通过{len(final)}只 (原始{len(candidates)}只, 弹性+{elastic_added})")
     return final
 
@@ -2399,13 +2400,6 @@ def step18B_top10_enrichment(candidates):
 
 def step16_comprehensive_score(candidates):
     # v6.9.38: 步骤15(冲突检测)已合并入步骤14评分，步骤16仅负责排序
-    so = _STRATEGY_ORDER
-    def _tie_key(c):
-        vr = c.get('volume_ratio') or 0
-        to = c.get('turnover') or 0
-        to_penalty = abs(to - 10) if to > 0 else 99
-        return (-c.get('score', 0), so.get(c.get('strategy', 'Z'), 99), -(c.get('_tie_score', 0)),
-                -vr, to_penalty)
     candidates.sort(key=_tie_key)
     return candidates
 
