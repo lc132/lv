@@ -15,7 +15,7 @@ beijing_hour = None
 beijing_weekday = None
 prediction_date = None
 data_date = None
-file_version = "v6.9.46"
+file_version = "v6.9.53"
 
 # 各阶段计数
 total_raw = 0

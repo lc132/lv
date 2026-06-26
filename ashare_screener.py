@@ -1955,7 +1955,7 @@ def step13_strategy_match(candidates, kline_data=None):
                         s = "I"; reason = f"均线粘合突破(代理):价{close:.2f}>均线+换手{to:.1f}%"; score = 8
             # J 龙回头
             if not s:
-                kd2 = kline_data.get(c.get('code', ''), {}) if not s else kd
+                kd2 = kline_data.get(c.get('code', ''), {})
                 closes_h = kd2.get('closes', []); highs_h = kd2.get('highs', [])
                 if len(closes_h) >= 20 and close > 0:
                     max20 = max(highs_h[-20:])
@@ -1966,7 +1966,7 @@ def step13_strategy_match(candidates, kline_data=None):
                             s = "J"; reason = f"龙回头:涨{rally_20d:.1%}→回调{pullback:.1%}+缩量+收阳"; score = 8
             # K 缺口回补
             if not s:
-                kd2 = kline_data.get(c.get('code', ''), {}) if not s else kd
+                kd2 = kline_data.get(c.get('code', ''), {})
                 closes_h = kd2.get('closes', []); highs_h = kd2.get('highs', [])
                 if len(closes_h) >= 3 and close > 0 and op > 0:
                     yest_close = closes_h[-2] if len(closes_h) >= 2 else 0
@@ -1979,7 +1979,7 @@ def step13_strategy_match(candidates, kline_data=None):
                                 s = "K"; reason = f"缺口回补:跳空{gap_size:.1%}→回踩确认+收阳"; score = 8
             # L 黄金坑
             if not s:
-                kd2 = kline_data.get(c.get('code', ''), {}) if not s else kd
+                kd2 = kline_data.get(c.get('code', ''), {})
                 closes_h = kd2.get('closes', [])
                 if len(closes_h) >= 6 and close > 0:
                     pre5 = closes_h[-6] if len(closes_h) >= 6 else closes_h[-1]
@@ -1992,7 +1992,7 @@ def step13_strategy_match(candidates, kline_data=None):
                                 s = "L"; reason = f"黄金坑:跌{abs(drop):.1%}→反弹{rebound:.1%}+放量+收阳"; score = 9
             # M 涨停回调
             if not s:
-                kd2 = kline_data.get(c.get('code', ''), {}) if not s else kd
+                kd2 = kline_data.get(c.get('code', ''), {})
                 if kd2.get('limit_up_days', 0) >= 1 and close > 0:
                     closes_h = kd2.get('closes', []); highs_h = kd2.get('highs', [])
                     for i in range(len(closes_h) - 2, max(0, len(closes_h) - 7), -1):
@@ -2007,7 +2007,7 @@ def step13_strategy_match(candidates, kline_data=None):
                                         break
             # N 新高突破
             if not s:
-                kd2 = kline_data.get(c.get('code', ''), {}) if not s else kd
+                kd2 = kline_data.get(c.get('code', ''), {})
                 high20 = kd2.get('high20', 0)
                 if high20 > 0 and close >= high20 * 0.99 and close > op:
                     if vr is not None and vr >= 1.0:
@@ -2016,7 +2016,7 @@ def step13_strategy_match(candidates, kline_data=None):
                         s = "N"; reason = f"新高突破(代理):价{close:.2f}=20日高+换手{to:.1f}%"; score = 8
             # O 回踩均线
             if not s:
-                kd2 = kline_data.get(c.get('code', ''), {}) if not s else kd
+                kd2 = kline_data.get(c.get('code', ''), {})
                 closes_h = kd2.get('closes', []); ma20_o = kd2.get('ma20', 0)
                 if len(closes_h) >= 60 and ma20_o > 0 and close > 0:
                     rally_60d = (close - closes_h[-60]) / closes_h[-60] if closes_h[-60] > 0 else 0
@@ -2026,14 +2026,14 @@ def step13_strategy_match(candidates, kline_data=None):
                             s = "O"; reason = f"回踩均线:涨{rally_60d:.1%}→回踩MA20({dist_to_ma20:+.1%})+缩量+收阳"; score = 8
             # P 地量反弹
             if not s:
-                kd2 = kline_data.get(c.get('code', ''), {}) if not s else kd
+                kd2 = kline_data.get(c.get('code', ''), {})
                 vols = kd2.get('volumes', [])
                 if len(vols) >= 4 and vr is not None:
                     if vols[-4] > vols[-3] > vols[-2] and vr >= 1.2 and 1.0 <= chg <= 5 and close > op:
                         s = "P"; reason = f"地量反弹:3日缩量+放量{vr:.1f}x+涨{chg:.1f}%"; score = 7
             # Q W底形态
             if not s:
-                kd2 = kline_data.get(c.get('code', ''), {}) if not s else kd
+                kd2 = kline_data.get(c.get('code', ''), {})
                 closes_h = kd2.get('closes', []); lows_h = kd2.get('lows', [])
                 if len(closes_h) >= 20 and close > 0:
                     l1 = min(lows_h[-20:-10]) if len(lows_h) >= 20 else 0
