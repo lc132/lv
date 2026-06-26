@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.51
+A股每日盘前短线标的智能筛选 v6.9.52
 35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, ssl
@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.51"
+BUILTIN_VERSION = "v6.9.52"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -2319,7 +2319,7 @@ def step18B_top10_enrichment(candidates):
                     tot_news += 1
         except Exception: pass
         
-        # ── 公司公告（v6.9.50）──
+        # ── 公司公告（v6.9.52）──
         try:
             ann_url = f'https://np-anotice-stock.eastmoney.com/api/security/ann?page_size=5&page_index=1&stock_list={code}&ann_type=A'
             req = urllib.request.Request(ann_url, headers={
@@ -2332,17 +2332,22 @@ def step18B_top10_enrichment(candidates):
                     title = ann.get('title_ch', '') or ann.get('title', '')
                     columns = ann.get('columns', [])
                     col_names = [col.get('column_name', '') for col in columns]
+                    notice_date = (ann.get('notice_date', '') or '')[:10]
                     # 过滤利空
                     has_negative = any(kw in title for kw in ANN_NEGATIVE_KW[:5])
                     if has_negative: continue
                     # 检查利好关键词
                     has_positive = any(kw in title for kw in ANN_POSITIVE_KW)
                     if has_positive:
-                        # 取公告类型
                         col_str = col_names[0] if col_names else ''
-                        short = title[:16] + ('...' if len(title) > 16 else '')
-                        pos_anns.append(f'{col_str}:{short}')
-                    if len(pos_anns) >= 2: break
+                        # 去除股票名前缀，提取正文
+                        short_title = title
+                        if ':' in title:
+                            short_title = title.split(':', 1)[1].strip()
+                        short = short_title[:48] + ('...' if len(short_title) > 48 else '')
+                        date_str = notice_date[5:] if notice_date else ''  # MM-DD
+                        pos_anns.append(f'[{date_str}]{col_str}:{short}')
+                    if len(pos_anns) >= 3: break
                 if pos_anns:
                     c['_announcement'] = '; '.join(pos_anns)
                     tot_ann += 1
@@ -2776,7 +2781,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
     else:
         alerts_html = '<div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">今日无异常告警</span></div>'
     
-    # ── v6.9.50: TOP10盈亏比精选推荐理由（含龙虎榜+正面新闻+公司公告）──
+    # ── v6.9.52: TOP10盈亏比精选推荐理由（含交易维度+基本面+信号+公告+7日历史）──
     top10_cards_html = ""
     top10_sorted = sorted(candidates, key=lambda c: -c.get('_pl_ratio', 0))[:10]
     if top10_sorted:
@@ -2801,6 +2806,16 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             ann = c.get('_announcement', '')
             industry = _industry_str(c)
             business = c.get('business', '')
+            amount = c.get('amount', 0) or 0
+            turnover = c.get('turnover', 0) or 0
+            vr = c.get('volume_ratio') or 0
+            main_in = c.get('main_inflow') or 0
+            r7d = c.get('_recent_7d') or 0
+            r7s = c.get('_recent_7d_strategies', {})
+            sigs = c.get('_signal_reasons', [])
+            # 基本面（从F10数据合并）
+            roe = c.get('_fd_roe') or 0
+            np_yoy = c.get('_fd_net_profit_yoy') or 0
             
             # 策略名称
             sname = {'A':'动量延续','B':'超跌反弹','C':'事件驱动','D':'回调企稳','E':'资金埋伏',
@@ -2810,21 +2825,59 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             
             # 构建推荐理由
             reason_parts = []
-            reason_parts.append(f'<strong>当日表现：</strong>涨幅{change_pct:+.2f}%，振幅{ampl:.1f}%，{industry}行业')
+            # 1. 当日表现 + 交易维度
+            perf_parts = [f'涨幅{change_pct:+.2f}%', f'振幅{ampl:.1f}%']
+            if amount > 0: perf_parts.append(f'成交额{amount/1e8:.2f}亿')
+            if turnover > 0: perf_parts.append(f'换手率{turnover:.2f}%')
+            if vr > 0: perf_parts.append(f'量比{vr:.2f}')
+            reason_parts.append(f'<strong>当日表现：</strong>{"，".join(perf_parts)}，{industry}行业')
             if business: reason_parts.append(f'<strong>二级行业：</strong>{business}')
+            
+            # 2. 基本面
+            fin_parts = []
+            try: roe_f = float(roe); fin_parts.append(f'ROE {roe_f:.1f}%') if roe_f != 0 else None
+            except: pass
+            try: np_f = float(np_yoy); fin_parts.append(f'净利润同比 {np_f:+.1f}%') if np_f != 0 else None
+            except: pass
+            if main_in and main_in != 0:
+                fin_parts.append(f'主力净流入 {main_in/1e4:+.0f}万')
+            if fin_parts:
+                reason_parts.append(f'<strong>基本面：</strong>{"，".join(fin_parts)}')
+            
+            # 3. 进场区间
             reason_parts.append(f'<strong>进场区间：</strong>{entry:.2f}元进场，止损{stop:.2f}元（{(1-stop/entry)*100:.1f}%），止盈{target:.2f}元（+{(target/entry-1)*100:.1f}%）')
             
-            # 龙虎榜
+            # 4. 7日推荐历史
+            if r7d > 0 and r7s:
+                r7_dates = sorted(r7s.keys())
+                r7_strats = [r7s[d] for d in r7_dates]
+                seen = set(); uniq_s = []
+                for s_ in r7_strats:
+                    if s_ not in seen: seen.add(s_); uniq_s.append(s_)
+                reason_parts.append(f'<strong>7日推荐：</strong>已推荐{r7d}天（策略{",".join(uniq_s)}），可持续关注')
+            
+            # 5. 信号匹配
+            if sigs:
+                sig_str = '，'.join(sigs[:5])
+                if len(sigs) > 5: sig_str += f' 等{len(sigs)}项'
+                reason_parts.append(f'<strong>匹配信号：</strong>{sig_str}')
+            
+            # 6. 龙虎榜
             if lh:
                 reason_parts.append(f'<strong>🐉 龙虎榜：</strong>{lh}')
-            # 正面新闻
+            # 7. 正面新闻
             if news:
                 reason_parts.append(f'<strong>📰 正面新闻：</strong>{news}')
-            # 公司公告
+            # 8. 公司公告
             if ann:
-                reason_parts.append(f'<strong>📋 公司公告：</strong>{ann}')
+                ann_display = ann.replace('; ', '<br>  ')
+                reason_parts.append(f'<strong>📋 公司公告：</strong><br>  {ann_display}')
             
             reason = '<br>'.join(reason_parts)
+            
+            # 成交额格式化
+            amt_str = f'{amount/1e8:.1f}亿' if amount > 0 else '-'
+            to_str = f'{turnover:.1f}%' if turnover > 0 else '-'
             
             cards.append(f'''<div class="top10-card">
 <div class="top10-card-header"><span class="rank">#{idx}</span><span class="name">{name}</span><span class="code">{code}</span><span class="badge {strat_badge}">{strat} {sname}</span></div>
@@ -2835,6 +2888,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
 <div class="metric"><div class="val">{target:.2f}</div><div class="lbl">止盈</div></div>
 <div class="metric"><div class="val">{score}</div><div class="lbl">评分</div></div>
 <div class="metric"><div class="val">{conf_stars}</div><div class="lbl">置信</div></div>
+<div class="metric"><div class="val">{amt_str}</div><div class="lbl">成交额</div></div>
+<div class="metric"><div class="val">{to_str}</div><div class="lbl">换手率</div></div>
 </div>
 <div class="top10-card-reason">{reason}</div></div>''')
         top10_cards_html = '\n'.join(cards)
@@ -3162,6 +3217,11 @@ def main():
     
     # 注入二级行业到候选
     for c in final: c['business'] = sub_industry_data.get(c.get('code', ''), '')
+    # v6.9.52: 注入F10基本面到候选（供TOP10卡片使用）
+    for c in final:
+        fd = fundamental_data.get(c.get('code', ''), {})
+        for k, v in fd.items():
+            if v is not None: c[f'_fd_{k}'] = v
     
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, aind, anew, er)
     print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts); hd = os.path.dirname(hp)
