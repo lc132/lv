@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.54
+A股每日盘前短线标的智能筛选 v6.9.55
 35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.54"
+BUILTIN_VERSION = "v6.9.55"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -2177,7 +2178,7 @@ def step17_industry_limit(candidates):
     return final
 
 def step18_news_screening(candidates):
-    """步骤18：新闻筛查 — 对最终标的检测近5日利空新闻（v6.8.3: 假阳性过滤+东方财富优先）"""
+    """步骤18：新闻筛查 — 对最终标的检测近5日利空新闻（v6.9.55: 双源并行查询，东方财富+Bing同时发起）"""
     if not candidates:
         return candidates, 0
     
@@ -2188,35 +2189,18 @@ def step18_news_screening(candidates):
         '业绩变脸', '财务造假', '信披违规', '内幕交易', '操纵市场',
         '强制退市', '破产重整', '资不抵债', '审计非标',
         '违规担保', '资金占用', '重组失败', '定增终止', 'ST warning',
-        '净利润下滑', '营收下滑', '毛利率下滑', '评级下调', '目标价下调',  # v6.9.1
-        '应收账款', '坏账计提', '存货跌价', '资产减值', '内控缺陷', '证监会立案', '通报批评'  # v6.9.4
+        '净利润下滑', '营收下滑', '毛利率下滑', '评级下调', '目标价下调',
+        '应收账款', '坏账计提', '存货跌价', '资产减值', '内控缺陷', '证监会立案', '通报批评'
     ]
-    # 假阳性否定词：匹配到关键词但上下文中包含这些词时忽略
     FALSE_POSITIVE_NEGATORS = [
         '终止减持', '不减持', '解除质押', '整改完成', '撤销',
         '大幅增长', '扭亏', '摘帽', '恢复正常', '已消除',
         '不立案', '不处罚', '不予', '驳回', '和解', '撤回',
         '增持', '回购', '承诺不',
-        '减持完毕', '解除异常', '无违规'  # v6.9.39: 移除回复/上调/募集资金等过于宽泛的短词
+        '减持完毕', '解除异常', '无违规'
     ]
     
-    excluded = []
-    passed = []
-    # v6.8.8: 仅对评分前20只做个体搜索，保持原始策略优先级排序
-    search_limit = min(30, len(candidates))  # v6.9.39: 从20扩大到30，减少漏检
-    top20_codes = {c['code'] for c in sorted(candidates, key=lambda c: -c.get('score', 0))[:search_limit]}
-    
-    for c in candidates:
-        if c.get('code', '') not in top20_codes:
-            passed.append(c)
-            continue
-        
-        code = c.get('code', '')
-        name = c.get('name', '')
-        has_neg = False
-        neg_reason = ''
-        
-        # 方式1: 东方财富新闻API（优先，标题匹配更精准）
+    def _check_eastmoney(code, name):
         try:
             market = '1' if code.startswith('6') else '0'
             url = f'https://push2.eastmoney.com/api/qt/stock/news/get?secid={market}.{code}&pageNum=1&pageSize=5&_={int(time.time()*1000)}'
@@ -2232,45 +2216,66 @@ def step18_news_screening(candidates):
                     for kw in NEGATIVE_KW:
                         if kw not in title:
                             continue
-                        # 假阳性过滤：检查否定词
-                        is_false_positive = any(neg in title for neg in FALSE_POSITIVE_NEGATORS)
-                        if not is_false_positive:
-                            has_neg = True
-                            neg_reason = kw
-                            break
-                    if has_neg:
-                        break
+                        if not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
+                            return ('eastmoney', kw)
         except Exception:
             pass
+        return None
+    
+    def _check_bing(code, name):
+        try:
+            query = f'{name} {code} 利空 公告'
+            url = f'https://www.bing.com/search?q={urllib.parse.quote(query)}'
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept-Language': 'zh-CN,zh;q=0.9'
+            })
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                html_text = resp.read().decode('utf-8', errors='ignore')
+                for kw in NEGATIVE_KW:
+                    if kw not in html_text:
+                        continue
+                    kw_pos = html_text.find(kw)
+                    ctx_start = max(0, kw_pos - 300)
+                    ctx_end = min(len(html_text), kw_pos + 300)
+                    context = html_text[ctx_start:ctx_end]
+                    if name not in context and code not in context:
+                        continue
+                    if not any(neg in context for neg in FALSE_POSITIVE_NEGATORS):
+                        return ('bing', kw)
+        except Exception:
+            pass
+        return None
+    
+    excluded = []
+    passed = []
+    search_limit = min(30, len(candidates))
+    top_codes = {c['code'] for c in sorted(candidates, key=lambda c: -c.get('score', 0))[:search_limit]}
+    
+    to_check = [c for c in candidates if c.get('code', '') in top_codes]
+    skip = [c for c in candidates if c.get('code', '') not in top_codes]
+    passed.extend(skip)
+    
+    for c in to_check:
+        code = c.get('code', '')
+        name = c.get('name', '')
+        has_neg = False
+        neg_reason = ''
         
-        # 方式2: Bing搜索（v6.9.39: 增加上下文校验，关键词必须在名称/代码附近）
-        if not has_neg:
-            try:
-                query = f'{name} {code} 利空 公告'
-                url = f'https://www.bing.com/search?q={urllib.parse.quote(query)}'
-                req = urllib.request.Request(url, headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Accept-Language': 'zh-CN,zh;q=0.9'
-                })
-                with urllib.request.urlopen(req, timeout=4) as resp:
-                    html = resp.read().decode('utf-8', errors='ignore')
-                    for kw in NEGATIVE_KW:
-                        if kw not in html:
-                            continue
-                        # v6.9.39: 关键词必须在股票名称或代码300字符内，降低误报
-                        kw_pos = html.find(kw)
-                        ctx_start = max(0, kw_pos - 300)
-                        ctx_end = min(len(html), kw_pos + 300)
-                        context = html[ctx_start:ctx_end]
-                        if name not in context and code not in context:
-                            continue
-                        is_false_positive = any(neg in context for neg in FALSE_POSITIVE_NEGATORS)
-                        if not is_false_positive:
-                            has_neg = True
-                            neg_reason = f"Bing:{kw}"
-                            break
-            except Exception:
-                pass
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {
+                executor.submit(_check_eastmoney, code, name): 'eastmoney',
+                executor.submit(_check_bing, code, name): 'bing',
+            }
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    source, kw = result
+                    has_neg = True
+                    neg_reason = f"{source}:{kw}" if source == 'bing' else kw
+                    for f in futures:
+                        f.cancel()
+                    break
         
         if has_neg:
             c['_news_reason'] = neg_reason
@@ -2286,11 +2291,7 @@ def step18_news_screening(candidates):
         log_alert("WARNING", "新闻筛查", f"排除{nex}只: {details}")
     else:
         log_alert("INFO", "新闻筛查", "全部通过，未发现利空")
-    
     return passed, nex
-
-# ============================================================
-# 步骤18B：TOP10 龙虎榜+正面新闻+公司公告采集（v6.9.50）
 # ============================================================
 def step18B_top10_enrichment(candidates):
     """对TOP10盈亏比精选标的，采集龙虎榜、正面新闻、公司公告数据"""
