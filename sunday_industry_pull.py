@@ -4,15 +4,17 @@
 周日行业补全拉取 v6.9.53
 每周日执行：全量拉取东方财富HTTP行业分类（一级+二级），更新缓存文件并推送到GitHub。
 """
-import urllib.request, json, os, time, subprocess, sys, tempfile
+import urllib.request, json, os, time, subprocess, sys, tempfile, shutil
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 if not GITHUB_TOKEN:
     # 尝试从文件读取
     token_file = "/workspace/.github_token"
-    if os.path.exists(token_file):
+    try:
         with open(token_file, 'r', encoding='utf-8') as f:
             GITHUB_TOKEN = f.read().strip()
+    except (FileNotFoundError, PermissionError):
+        pass
 if not GITHUB_TOKEN:
     print("ERROR: 未找到GitHub Token，请设置GITHUB_TOKEN环境变量或创建/workspace/.github_token文件")
     sys.exit(1)
@@ -24,7 +26,7 @@ def _git_with_token(cmd_args, timeout=60, check=True):
     askpass_script = None
     try:
         fd, askpass_script = tempfile.mkstemp(prefix='git_askpass_', suffix='.sh')
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write('#!/bin/bash\necho "$GIT_TOKEN"\n')
         os.chmod(askpass_script, 0o700)
         env = os.environ.copy()
@@ -139,7 +141,7 @@ def main():
     # 1. Clone repo
     print("\n[1] 拉取仓库...")
     if os.path.exists(WORK_DIR):
-        subprocess.run(["rm", "-rf", WORK_DIR], capture_output=True)
+        shutil.rmtree(WORK_DIR, ignore_errors=True)
     repo_url = f"https://github.com/{GITHUB_REPO}.git"
     result = _git_with_token(
         ["git", "clone", "--depth", "1", "--branch", "main", repo_url, WORK_DIR],
@@ -222,16 +224,16 @@ def main():
     # 7. Push to GitHub
     print("\n[7] 推送到GitHub...")
     os.chdir(WORK_DIR)
-    subprocess.run(["git", "config", "user.email", "bot@trae.ai"], capture_output=True)
-    subprocess.run(["git", "config", "user.name", "Trae Bot"], capture_output=True)
-    subprocess.run(["git", "add", "行业缓存.json", "二级行业缓存.json"], capture_output=True)
+    subprocess.run(["git", "config", "user.email", "bot@trae.ai"], capture_output=True, timeout=10)
+    subprocess.run(["git", "config", "user.name", "Trae Bot"], capture_output=True, timeout=10)
+    subprocess.run(["git", "add", "行业缓存.json", "二级行业缓存.json"], capture_output=True, timeout=10)
     
-    result = subprocess.run(["git", "diff", "--cached", "--quiet"], capture_output=True)
+    result = subprocess.run(["git", "diff", "--cached", "--quiet"], capture_output=True, timeout=10)
     if result.returncode == 0:
         print("  无变更，跳过推送")
         return
     
-    subprocess.run(["git", "commit", "-m", f"周日行业补全 v6.9.53 (一级{new_primary}+二级{new_secondary})"], capture_output=True)
+    subprocess.run(["git", "commit", "-m", f"周日行业补全 v6.9.53 (一级{new_primary}+二级{new_secondary})"], capture_output=True, timeout=10)
     push_result = _git_with_token(["git", "push", "origin", "main"], timeout=60, check=False)
     if push_result.returncode == 0:
         print("  ✅ 推送成功")

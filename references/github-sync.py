@@ -87,7 +87,7 @@ try:
     askpass_script = None
     try:
         fd, askpass_script = tempfile.mkstemp(prefix='git_askpass_', suffix='.sh')
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write('#!/bin/bash\necho "$GIT_TOKEN"\n')
         os.chmod(askpass_script, 0o700)
         git_env = os.environ.copy()
@@ -105,15 +105,15 @@ try:
     # 若筛选条件表格已同步，一并推送
     if cond_synced and os.path.exists(cond_xlsx):
         shutil.copy(cond_xlsx, os.path.join(repo_dir, "A股短线选股筛选条件.xlsx"))
-    subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True)
-    subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True)
-    subprocess.run(["git", "-C", repo_dir, "add", f"短线标的_{prediction_date}.md"], check=True)
+    subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True, timeout=10)
+    subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True, timeout=10)
+    subprocess.run(["git", "-C", repo_dir, "add", f"短线标的_{prediction_date}.md"], check=True, timeout=10)
     if cond_synced and os.path.exists(cond_xlsx):
-        subprocess.run(["git", "-C", repo_dir, "add", "A股短线选股筛选条件.xlsx"], check=True)
+        subprocess.run(["git", "-C", repo_dir, "add", "A股短线选股筛选条件.xlsx"], check=True, timeout=10)
     commit_msg = f"筛选结果 {prediction_date}"
     if cond_synced and xlsx_version and str(xlsx_version) != str(file_version):
         commit_msg += f" + 筛选条件同步至 {file_version}"
-    subprocess.run(["git", "-C", repo_dir, "commit", "-m", commit_msg], check=True)
+    subprocess.run(["git", "-C", repo_dir, "commit", "-m", commit_msg], check=True, timeout=10)
     result = subprocess.run(
         ["git", "-C", repo_dir, "push", "origin", "main"],
         capture_output=True, text=True, timeout=30

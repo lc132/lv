@@ -1388,14 +1388,14 @@ def step26_github_sync(xlsx_path):
                 shutil.rmtree(html_dest, ignore_errors=True)
             shutil.copytree(html_dir, html_dest)
         
-        subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True)
-        subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True)
-        subprocess.run(["git", "-C", repo_dir, "add", f"短线标的_{prediction_date}.xlsx"], check=True)
+        subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True, timeout=10)
+        subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True, timeout=10)
+        subprocess.run(["git", "-C", repo_dir, "add", f"短线标的_{prediction_date}.xlsx"], check=True, timeout=10)
         if os.path.exists(html_dir):
-            subprocess.run(["git", "-C", repo_dir, "add", f"ashare-screening-{prediction_date}"], check=True)
+            subprocess.run(["git", "-C", repo_dir, "add", f"ashare-screening-{prediction_date}"], check=True, timeout=10)
         
         commit_msg = f"筛选结果 {prediction_date}"
-        subprocess.run(["git", "-C", repo_dir, "commit", "-m", commit_msg], check=True)
+        subprocess.run(["git", "-C", repo_dir, "commit", "-m", commit_msg], check=True, timeout=10)
         result = subprocess.run(
             ["git", "-C", repo_dir, "push", "origin", "main"],
             capture_output=True, text=True, timeout=30

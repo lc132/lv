@@ -22,7 +22,7 @@ try:
     askpass_script = None
     try:
         fd, askpass_script = tempfile.mkstemp(prefix='git_askpass_', suffix='.sh')
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write('#!/bin/bash\necho "$GIT_TOKEN"\n')
         os.chmod(askpass_script, 0o700)
         git_env = os.environ.copy()

@@ -240,14 +240,14 @@ def step26_github_sync(ctx):
                 log_alert("INFO", "GitHub同步", f"版本变更，同步策略调整记录")
         
         # Git操作
-        subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True)
-        subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True)
-        subprocess.run(["git", "-C", repo_dir, "add", "-A"], check=True)
+        subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True, timeout=10)
+        subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True, timeout=10)
+        subprocess.run(["git", "-C", repo_dir, "add", "-A"], check=True, timeout=10)
         
         commit_msg = f"筛选结果 {prediction_date}"
         result = subprocess.run(
             ["git", "-C", repo_dir, "commit", "-m", commit_msg],
-            capture_output=True, text=True
+            capture_output=True, text=True, timeout=10
         )
         if result.returncode != 0:
             if "nothing to commit" in (result.stderr + result.stdout):

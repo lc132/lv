@@ -349,7 +349,7 @@ def _git_with_token(cmd_args, timeout=30, check=True, log_prefix=""):
     askpass_script = None
     try:
         fd, askpass_script = tempfile.mkstemp(prefix='git_askpass_', suffix='.sh')
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write('#!/bin/bash\necho "$GIT_TOKEN"\n')
         os.chmod(askpass_script, 0o700)
         env = os.environ.copy()
