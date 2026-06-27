@@ -4,7 +4,7 @@
 import os
 
 md_path = ctx.get('md_path', '')
-if os.path.exists(md_path):
+try:
     with open(md_path, 'r', encoding='utf-8') as f:
         content = f.read()
     # 统计 Markdown 表格中的数据行（以 | 数字 | 开头的行）
@@ -19,5 +19,5 @@ if os.path.exists(md_path):
         log_alert("ERROR", "数量校验", f"概况{final_recommend_count}≠MD表格{table_rows}")
     else:
         print(f"✅ 验证通过（{final_recommend_count}只）")
-else:
+except FileNotFoundError:
     log_alert("ERROR", "数量校验", f"md文件不存在: {md_path}")

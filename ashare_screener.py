@@ -28,7 +28,7 @@ def _load_credential(env_key, file_path, fallback=""):
     if env_key in os.environ: return os.environ[env_key]
     try:
         with open(file_path, 'r', encoding='utf-8') as f: return f.read().strip()
-    except Exception: pass
+    except (FileNotFoundError, PermissionError): pass
     return fallback
 
 GITHUB_TOKEN = _load_credential("GITHUB_TOKEN", "/workspace/.github_token")

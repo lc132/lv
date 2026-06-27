@@ -7,12 +7,11 @@ from datetime import datetime, timedelta
 # 读取认证令牌（若仓库改为私有，缺少令牌则回退到公开URL）
 token = None
 token_path = "/workspace/.github_token"
-if os.path.exists(token_path):
-    try:
-        with open(token_path, 'r', encoding='utf-8') as f:
-            token = f.read().strip()
-    except Exception:
-        pass
+try:
+    with open(token_path, 'r', encoding='utf-8') as f:
+        token = f.read().strip()
+except (FileNotFoundError, PermissionError):
+    pass
 github_repo = "https://github.com/lc132/lv.git"
 temp_dir = "/tmp/lv_weekly_review"
 try:
