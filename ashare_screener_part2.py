@@ -56,8 +56,11 @@ def log_alert(level, module, message, timestamp=None):
         timestamp = datetime.now()
     ts = timestamp.strftime('%Y-%m-%d %H:%M:%S') if hasattr(timestamp, 'strftime') else str(timestamp)
     log_line = f"[{ts}] [{level}] {module}: {message}\n"
-    with open('/workspace/系统告警.log', 'a', encoding='utf-8') as f:
-        f.write(log_line)
+    try:
+        with open('/workspace/系统告警.log', 'a', encoding='utf-8') as f:
+            f.write(log_line)
+    except (PermissionError, OSError):
+        pass
     print(f"  LOG [{level}] {module}: {message}")
 
 def safe_read_json(path, default=None):
@@ -70,10 +73,13 @@ def safe_read_json(path, default=None):
     except Exception:return default if default is not None else []
 
 def safe_write_json(path, data):
+    """原子写入：先写临时文件再重命名，防止写入中断导致数据损坏"""
     try:
-        with open(path, 'w', encoding='utf-8') as f:
+        tmp_path = path + '.tmp'
+        with open(tmp_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
+        os.replace(tmp_path, path)  # 原子操作(POSIX)
+    except (PermissionError, OSError) as e:
         log_alert("ERROR", "safe_write_json", f"{path}: {str(e)}")
 
 def safe_append_json(path, record):

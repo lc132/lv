@@ -20,7 +20,7 @@ _token_path = os.path.join(DATA_DIR, '.github_token')
 try:
     with open(_token_path, 'r', encoding='utf-8') as _tf:
         GITHUB_TOKEN = _tf.read().strip()
-except Exception:
+except (FileNotFoundError, PermissionError):
     pass
 if not GITHUB_TOKEN:
     GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
@@ -30,7 +30,7 @@ _feishu_path = os.path.join(DATA_DIR, '.feishu_webhook')
 try:
     with open(_feishu_path, 'r', encoding='utf-8') as _ff:
         FEISHU_WEBHOOK = _ff.read().strip()
-except Exception:
+except (FileNotFoundError, PermissionError):
     pass
 if not FEISHU_WEBHOOK:
     FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK', '')
