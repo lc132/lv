@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.56
+A股每日盘前短线标的智能筛选 v6.9.57
 35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.56"
+BUILTIN_VERSION = "v6.9.57"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -324,7 +324,7 @@ def step0_get_beijing_time():
     # data_date若为节假日，回退到上一个交易日
     if data_date in h:
         dd_dt = datetime.strptime(data_date, '%Y-%m-%d')
-        for _ in range(10):
+        for _ in range(20):
             dd_dt -= timedelta(days=1)
             candidate = dd_dt.strftime('%Y-%m-%d')
             if candidate not in h and dd_dt.weekday() < 5:
@@ -334,7 +334,7 @@ def step0_get_beijing_time():
     # prediction_date若为节假日，推进到下一个交易日
     if prediction_date in h:
         pd_dt = datetime.strptime(prediction_date, '%Y-%m-%d')
-        for _ in range(10):
+        for _ in range(20):
             pd_dt += timedelta(days=1)
             candidate = pd_dt.strftime('%Y-%m-%d')
             if candidate not in h and pd_dt.weekday() < 5:
@@ -360,7 +360,8 @@ def _git_with_token(cmd_args, timeout=30, check=True, log_prefix=""):
         return result
     finally:
         if askpass_script and os.path.exists(askpass_script):
-            os.remove(askpass_script)
+            try: os.remove(askpass_script)
+            except OSError: pass
 
 # ============================================================
 # 步骤0A：拉取持仓跟踪
@@ -505,6 +506,7 @@ def step4A_doT_eval(holdings):
     return recs
 
 def step4B_sync_holdings_xlsx(holdings):
+    wb = None
     try:
         p = "/workspace/持仓跟踪.xlsx"
         wb = load_workbook(p); ws = wb["持仓明细"]
@@ -527,8 +529,11 @@ def step4B_sync_holdings_xlsx(holdings):
             ws.cell(row=row, column=11).value = round(float(h.get('pnl_pct', 0)), 4)
             ws.cell(row=row, column=12).value = data_date; up += 1
         if up: wb.save(p); log_alert("INFO", "持仓跟踪", f"已更新{up}只")
-        wb.close()
     except Exception as e: log_alert("WARNING", "持仓跟踪", f"{str(e)[:80]}")
+    finally:
+        if wb:
+            try: wb.close()
+            except Exception: pass
 
 def step4C_crisis_check(holdings):
     alerts = []
@@ -623,19 +628,21 @@ def step8_market_environment():
     try:
         from pytdx.hq import TdxHq_API
         api = TdxHq_API()
-        for host in ['119.147.212.81', '120.76.152.87']:
-            if api.connect(host, 7709):
-                bars = api.get_security_bars(9, 1, '000001', 0, 25)
-                if bars and len(bars) >= 20:
-                    closes = [b['close'] for b in bars]
-                    ma20 = sum(closes[-20:]) / 20
-                    cur_c = closes[-1]
-                    if cur_c > ma20: market_condition = "强市"; position_pct = 75
-                    elif cur_c < ma20 * 0.98: market_condition = "弱市"; position_pct = 35
-                    else: market_condition = "震荡"; position_pct = 55
-                    api.disconnect()
-                    break
-                api.disconnect()
+        try:
+            for host in ['119.147.212.81', '120.76.152.87']:
+                if api.connect(host, 7709):
+                    bars = api.get_security_bars(9, 1, '000001', 0, 25)
+                    if bars and len(bars) >= 20:
+                        closes = [b['close'] for b in bars]
+                        ma20 = sum(closes[-20:]) / 20
+                        cur_c = closes[-1]
+                        if cur_c > ma20: market_condition = "强市"; position_pct = 75
+                        elif cur_c < ma20 * 0.98: market_condition = "弱市"; position_pct = 35
+                        else: market_condition = "震荡"; position_pct = 55
+                        break
+        finally:
+            try: api.disconnect()
+            except Exception: pass
     except Exception: pass
     # 降级：根据涨跌判断（仅在pytdx未设置时生效）
     if not idx:
@@ -933,13 +940,13 @@ def _load_industry_cache():
         # v6.9.36: 兼容旧格式dict值自动转字符串
         _industry_cache = {k: (v.get('sshy', '') or '未知') if isinstance(v, dict) else v for k, v in _industry_cache.items()}
         print(f"[INFO] 行业缓存: 从磁盘加载 {len(_industry_cache)} 条")
-    except Exception:
+    except (FileNotFoundError, json.JSONDecodeError, PermissionError):
         _industry_cache = {}
     try:
         with open(SUB_INDUSTRY_CACHE_FILE, 'r', encoding='utf-8') as f:
             _sub_industry_cache = json.load(f)
         print(f"[INFO] 二级行业缓存: 从磁盘加载 {len(_sub_industry_cache)} 条")
-    except Exception:
+    except (FileNotFoundError, json.JSONDecodeError, PermissionError):
         _sub_industry_cache = {}
 
 def _save_industry_cache():
@@ -1289,123 +1296,125 @@ def step10C_fetch_klines(candidates):
         api = TdxHq_API()
         if not api.connect('119.147.212.81', 7709):
             api.connect('120.76.152.87', 7709)
-        for c in candidates:
-            code = c.get('code', '')
-            if not code: continue
-            mc = 1 if code.startswith('6') else 0
-            try:
-                bars = api.get_security_bars(9, mc, code, 0, 60)
-                if not bars or len(bars) < 20:
-                    kline_data[code] = {}
-                    continue
-                bars.sort(key=lambda b: b['datetime'] if 'datetime' in b else b.get('date', ''))
-                closes = [b['close'] for b in bars]
-                highs = [b['high'] for b in bars]
-                lows = [b['low'] for b in bars]
-                volumes = [b.get('volume', 0) for b in bars]
-                ma5 = sum(closes[-5:]) / 5 if len(closes) >= 5 else 0
-                ma10 = sum(closes[-10:]) / 10 if len(closes) >= 10 else 0
-                ma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else 0
-                # MACD (12,26,9)
-                ema12 = closes[0]; ema26 = closes[0]
-                difs = [0.0]
-                for pr in closes[1:]:
-                    ema12 = ema12 * 11/13 + pr * 2/13
-                    ema26 = ema26 * 25/27 + pr * 2/27
-                    difs.append(ema12 - ema26)
-                dea = difs[0]
-                macd_hists = [0.0]
-                for d in difs[1:]:
-                    dea = dea * 8/10 + d * 2/10
-                    macd_hists.append((d - dea) * 2)
-                dif = difs[-1]; dea_val = dea; macd_hist = macd_hists[-1]
-                # RSI(14)
-                rsi14 = 50.0
-                if len(closes) >= 15:
-                    gains = [max(0, closes[i] - closes[i-1]) for i in range(1, len(closes))]
-                    losses = [max(0, closes[i-1] - closes[i]) for i in range(1, len(closes))]
-                    avg_gain = sum(gains[-14:]) / 14
-                    avg_loss = sum(losses[-14:]) / 14
-                    rsi14 = 100 - 100 / (1 + avg_gain / avg_loss) if avg_loss > 0 else 100
-                # KDJ(9,3,3)
-                k_val = 50.0; d_val = 50.0; j_val = 50.0
-                if len(closes) >= 9:
-                    for i in range(8, len(closes)):
-                        h9 = max(highs[i-8:i+1]); l9 = min(lows[i-8:i+1])
-                        rsv = (closes[i] - l9) / (h9 - l9) * 100 if h9 > l9 else 50
-                        k_val = 2/3 * k_val + 1/3 * rsv
-                        d_val = 2/3 * d_val + 1/3 * k_val
-                    j_val = 3 * k_val - 2 * d_val
-                # 布林带(20,2)
-                boll_mid = ma20
-                boll_upper = boll_mid; boll_lower = boll_mid
-                if len(closes) >= 20 and boll_mid > 0:
-                    variance = sum((c - boll_mid) ** 2 for c in closes[-20:]) / 20
-                    std = variance ** 0.5
-                    boll_upper = boll_mid + 2 * std
-                    boll_lower = boll_mid - 2 * std
-                # 20日高低点
-                high20 = max(highs[-20:]) if len(highs) >= 20 else max(highs)
-                low20 = min(lows[-20:]) if len(lows) >= 20 else min(lows)
-                # 近10日涨停天数（涨幅≥9.5%且收盘≈最高价）
-                limit_up_days = 0
-                for i in range(max(0, len(closes) - 10), len(closes) - 1):
-                    if i > 0 and closes[i-1] > 0:
-                        day_chg = (closes[i] - closes[i-1]) / closes[i-1]
-                        if day_chg >= 0.095 and highs[i] > 0 and closes[i] >= highs[i] * 0.98:
-                            limit_up_days += 1
-                # WR(14) 威廉指标
-                wr14 = 50.0
-                if len(highs) >= 14:
-                    h14 = max(highs[-14:]); l14 = min(lows[-14:])
-                    wr14 = (h14 - closes[-1]) / (h14 - l14) * 100 if h14 > l14 else 50
-                # OBV
-                obv = 0
-                if len(closes) >= 2 and len(volumes) >= 2:
-                    for i in range(1, len(closes)):
-                        if volumes[i] > 0:
-                            obv += volumes[i] if closes[i] > closes[i-1] else (-volumes[i] if closes[i] < closes[i-1] else 0)
-                # DMI(14): ±DI, ADX
-                pdi = 0.0; mdi = 0.0; adx = 0.0
-                if len(closes) >= 15:
-                    tr_list = []; pd_list = []; md_list = []
-                    for i in range(1, len(closes)):
-                        tr = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
-                        tr_list.append(tr)
-                        up_move = highs[i] - highs[i-1]; down_move = lows[i-1] - lows[i]
-                        pd_list.append(up_move if up_move > down_move and up_move > 0 else 0)
-                        md_list.append(down_move if down_move > up_move and down_move > 0 else 0)
-                    tr14 = sum(tr_list[-14:]); pd14 = sum(pd_list[-14:]); md14 = sum(md_list[-14:])
-                    pdi = (pd14 / tr14 * 100) if tr14 > 0 else 0
-                    mdi = (md14 / tr14 * 100) if tr14 > 0 else 0
-                    dx = abs(pdi - mdi) / (pdi + mdi) * 100 if (pdi + mdi) > 0 else 0
-                    adx = dx  # 简化: 单日DX作为ADX近似
-                # 布林带宽
-                boll_width = (boll_upper - boll_lower) / boll_mid if boll_mid > 0 else 999
-                # 上市天数
-                first_date = bars[0].get('datetime', '') or bars[0].get('date', '')
-                days_listed = 999
-                if first_date:
-                    try:
-                        fd = datetime.strptime(str(first_date)[:8], '%Y%m%d')
-                        # v6.9.43: 使用data_date替代datetime.now()保持一致性
-                        ref_date = datetime.strptime(data_date, '%Y-%m-%d') if data_date else datetime.now()
-                        days_listed = (ref_date - fd).days
-                    except Exception: pass
-                kline_data[code] = {
-                    'ma5': ma5, 'ma10': ma10, 'ma20': ma20,
-                    'dif': dif, 'dea': dea_val, 'macd_hist': macd_hist,
-                    'rsi14': rsi14, 'k': k_val, 'd': d_val, 'j': j_val,
-                    'boll_upper': boll_upper, 'boll_mid': boll_mid, 'boll_lower': boll_lower,
-                    'boll_width': boll_width, 'wr14': wr14, 'obv': obv,
-                    'pdi': pdi, 'mdi': mdi, 'adx': adx,
-                    'high20': high20, 'low20': low20,
-                    'days_listed': days_listed, 'limit_up_days': limit_up_days,
-                    'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes
-                }
-            except Exception: kline_data[code] = {}
-        try: api.disconnect()
-        except Exception: pass
+        try:
+            for c in candidates:
+                code = c.get('code', '')
+                if not code: continue
+                mc = 1 if code.startswith('6') else 0
+                try:
+                    bars = api.get_security_bars(9, mc, code, 0, 60)
+                    if not bars or len(bars) < 20:
+                        kline_data[code] = {}
+                        continue
+                    bars.sort(key=lambda b: b['datetime'] if 'datetime' in b else b.get('date', ''))
+                    closes = [b['close'] for b in bars]
+                    highs = [b['high'] for b in bars]
+                    lows = [b['low'] for b in bars]
+                    volumes = [(b.get('volume') or 0) for b in bars]
+                    ma5 = sum(closes[-5:]) / 5 if len(closes) >= 5 else 0
+                    ma10 = sum(closes[-10:]) / 10 if len(closes) >= 10 else 0
+                    ma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else 0
+                    # MACD (12,26,9)
+                    ema12 = closes[0]; ema26 = closes[0]
+                    difs = [0.0]
+                    for pr in closes[1:]:
+                        ema12 = ema12 * 11/13 + pr * 2/13
+                        ema26 = ema26 * 25/27 + pr * 2/27
+                        difs.append(ema12 - ema26)
+                    dea = difs[0]
+                    macd_hists = [0.0]
+                    for d in difs[1:]:
+                        dea = dea * 8/10 + d * 2/10
+                        macd_hists.append((d - dea) * 2)
+                    dif = difs[-1]; dea_val = dea; macd_hist = macd_hists[-1]
+                    # RSI(14)
+                    rsi14 = 50.0
+                    if len(closes) >= 15:
+                        gains = [max(0, closes[i] - closes[i-1]) for i in range(1, len(closes))]
+                        losses = [max(0, closes[i-1] - closes[i]) for i in range(1, len(closes))]
+                        avg_gain = sum(gains[-14:]) / 14
+                        avg_loss = sum(losses[-14:]) / 14
+                        rsi14 = 100 - 100 / (1 + avg_gain / avg_loss) if avg_loss > 0 else 100
+                    # KDJ(9,3,3)
+                    k_val = 50.0; d_val = 50.0; j_val = 50.0
+                    if len(closes) >= 9:
+                        for i in range(8, len(closes)):
+                            h9 = max(highs[i-8:i+1]); l9 = min(lows[i-8:i+1])
+                            rsv = (closes[i] - l9) / (h9 - l9) * 100 if h9 > l9 else 50
+                            k_val = 2/3 * k_val + 1/3 * rsv
+                            d_val = 2/3 * d_val + 1/3 * k_val
+                        j_val = 3 * k_val - 2 * d_val
+                    # 布林带(20,2)
+                    boll_mid = ma20
+                    boll_upper = boll_mid; boll_lower = boll_mid
+                    if len(closes) >= 20 and boll_mid > 0:
+                        variance = sum((c - boll_mid) ** 2 for c in closes[-20:]) / 20
+                        std = variance ** 0.5
+                        boll_upper = boll_mid + 2 * std
+                        boll_lower = boll_mid - 2 * std
+                    # 20日高低点
+                    high20 = max(highs[-20:]) if len(highs) >= 20 else max(highs)
+                    low20 = min(lows[-20:]) if len(lows) >= 20 else min(lows)
+                    # 近10日涨停天数（涨幅≥9.5%且收盘≈最高价）
+                    limit_up_days = 0
+                    for i in range(max(0, len(closes) - 10), len(closes) - 1):
+                        if i > 0 and closes[i-1] > 0:
+                            day_chg = (closes[i] - closes[i-1]) / closes[i-1]
+                            if day_chg >= 0.095 and highs[i] > 0 and closes[i] >= highs[i] * 0.98:
+                                limit_up_days += 1
+                    # WR(14) 威廉指标
+                    wr14 = 50.0
+                    if len(highs) >= 14:
+                        h14 = max(highs[-14:]); l14 = min(lows[-14:])
+                        wr14 = (h14 - closes[-1]) / (h14 - l14) * 100 if h14 > l14 else 50
+                    # OBV
+                    obv = 0
+                    if len(closes) >= 2 and len(volumes) >= 2:
+                        for i in range(1, len(closes)):
+                            if volumes[i] > 0:
+                                obv += volumes[i] if closes[i] > closes[i-1] else (-volumes[i] if closes[i] < closes[i-1] else 0)
+                    # DMI(14): ±DI, ADX
+                    pdi = 0.0; mdi = 0.0; adx = 0.0
+                    if len(closes) >= 15:
+                        tr_list = []; pd_list = []; md_list = []
+                        for i in range(1, len(closes)):
+                            tr = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
+                            tr_list.append(tr)
+                            up_move = highs[i] - highs[i-1]; down_move = lows[i-1] - lows[i]
+                            pd_list.append(up_move if up_move > down_move and up_move > 0 else 0)
+                            md_list.append(down_move if down_move > up_move and down_move > 0 else 0)
+                        tr14 = sum(tr_list[-14:]); pd14 = sum(pd_list[-14:]); md14 = sum(md_list[-14:])
+                        pdi = (pd14 / tr14 * 100) if tr14 > 0 else 0
+                        mdi = (md14 / tr14 * 100) if tr14 > 0 else 0
+                        dx = abs(pdi - mdi) / (pdi + mdi) * 100 if (pdi + mdi) > 0 else 0
+                        adx = dx  # 简化: 单日DX作为ADX近似
+                    # 布林带宽
+                    boll_width = (boll_upper - boll_lower) / boll_mid if boll_mid > 0 else 999
+                    # 上市天数
+                    first_date = bars[0].get('datetime', '') or bars[0].get('date', '')
+                    days_listed = 999
+                    if first_date:
+                        try:
+                            fd = datetime.strptime(str(first_date)[:8], '%Y%m%d')
+                            # v6.9.43: 使用data_date替代datetime.now()保持一致性
+                            ref_date = datetime.strptime(data_date, '%Y-%m-%d') if data_date else datetime.now()
+                            days_listed = (ref_date - fd).days
+                        except Exception: pass
+                    kline_data[code] = {
+                        'ma5': ma5, 'ma10': ma10, 'ma20': ma20,
+                        'dif': dif, 'dea': dea_val, 'macd_hist': macd_hist,
+                        'rsi14': rsi14, 'k': k_val, 'd': d_val, 'j': j_val,
+                        'boll_upper': boll_upper, 'boll_mid': boll_mid, 'boll_lower': boll_lower,
+                        'boll_width': boll_width, 'wr14': wr14, 'obv': obv,
+                        'pdi': pdi, 'mdi': mdi, 'adx': adx,
+                        'high20': high20, 'low20': low20,
+                        'days_listed': days_listed, 'limit_up_days': limit_up_days,
+                        'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes
+                    }
+                except Exception: kline_data[code] = {}
+        finally:
+            try: api.disconnect()
+            except Exception: pass
         log_alert("INFO", "K线拉取", f"获取{len(kline_data)}只历史K线(KDJ迭代+BOLL)")
     except Exception as e:
         log_alert("WARNING", "K线拉取", f"pytdx不可用: {str(e)[:60]}")
@@ -1592,7 +1601,7 @@ def step10G_fetch_crowding_data(candidates):
             
             # 计算基金持仓总占比
             jjcg = data.get('jjcg', [])
-            total_fund_ratio = sum((item.get('FREESHARES_RATIO') or 0) for item in jjcg)
+            total_fund_ratio = sum(float(item.get('FREESHARES_RATIO') or 0) for item in jjcg)
             
             # 统计前十大股东中机构减持数量
             sdltgd = data.get('sdltgd', [])
@@ -1687,15 +1696,15 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
         if code in all_holdings_codes:
             reason = "当前持仓"
         elif code.startswith('688'): reason = "科创板"
-        elif code.startswith('8'): reason = "北交所"
+        elif code.startswith(('82', '83', '87', '88', '92')): reason = "北交所"
         elif code.startswith(('300', '301')): reason = "创业板"
         elif close < 5: reason = f"股价<5元"
         elif close > 100: reason = f"股价>100元"
-        elif c.get('name', '').startswith('ST') or c.get('name', '').startswith('*ST'): reason = "ST/*ST"
+        elif (c.get('name') or '').startswith('ST') or (c.get('name') or '').startswith('*ST'): reason = "ST/*ST"
         elif chg > 7: reason = f"涨幅>7%"
         elif close <= 0: reason = "停牌"
         # v6.9.22: PE<0已迁移至信号过滤，与F10净利润亏损合并判断
-        elif c.get('total_cap') is not None and c.get('total_cap', 0) < 1_000_000_000: reason = "市值<10亿"
+        elif c.get('total_cap') and c.get('total_cap') > 0 and c.get('total_cap') < 1_000_000_000: reason = "市值<10亿"
         elif c.get('amount') is not None and c.get('amount', 0) < 10_000_000: reason = "成交额<1000万"
         # v6.9.0: 上市天数
         kd = kline_data.get(code, {})
@@ -2417,7 +2426,7 @@ def step18B_top10_enrichment(candidates):
                         lh_amt_str = f'{lh_abs:.0f}万'
                     c['_longhu'] = f'{lh_date} {lh_dir} {lh_amt_str}'
                     tot_lh += 1
-        except Exception: pass
+        except (urllib.error.URLError, json.JSONDecodeError, OSError): pass
         
         # ── 正面新闻 ──
         try:
@@ -2437,7 +2446,7 @@ def step18B_top10_enrichment(candidates):
                 if pos_titles:
                     c['_news_positive'] = '; '.join(pos_titles)
                     tot_news += 1
-        except Exception: pass
+        except (urllib.error.URLError, json.JSONDecodeError, OSError): pass
         
         # ── 公司公告（v6.9.52）──
         try:
@@ -2471,7 +2480,7 @@ def step18B_top10_enrichment(candidates):
                 if pos_anns:
                     c['_announcement'] = '; '.join(pos_anns)
                     tot_ann += 1
-        except Exception: pass
+        except (urllib.error.URLError, json.JSONDecodeError, OSError): pass
     
     log_alert("INFO", "TOP10增强", f"龙虎榜{tot_lh}/10 正面新闻{tot_news}/10 公司公告{tot_ann}/10")
 
