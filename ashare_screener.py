@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.53
+A股每日盘前短线标的智能筛选 v6.9.54
 35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re
@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.53"
+BUILTIN_VERSION = "v6.9.54"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -2608,6 +2608,7 @@ def calc_entry_price(c):
 
 def _compute_pl_ratios(candidates):
     """预计算盈亏比TOP10，标注c['_entry']/c['_stop']/c['_target']/c['_pl_ratio']，返回_top10_codes集合"""
+    global _pl_sorted
     _pl_data = []
     for c in candidates:
         s = c.get('strategy', '?')
@@ -2656,8 +2657,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
             score = c.get('score', 0); conf = c.get('confidence', '★')
             chg_e = "🔴" if chg >= 0 else "🟢"
             entry = calc_entry_price(c)
-            sl = round(entry * sl_map.get(s, 0.96), 2)
-            tp = round(entry * tp_map.get(s, 1.05), 2)
+            sl = round(entry * _STRATEGY_STOP_LOSS.get(s, 0.96), 2)
+            tp = round(entry * _STRATEGY_TAKE_PROFIT.get(s, 1.05), 2)
             pl_ratio = c.get('_pl_ratio', round((tp - entry) / max(entry - sl, 0.01), 2))
             top10_mark = "⭐" if code in _top10_codes else ""
             r7d = c.get('_recent_7d')
@@ -2684,8 +2685,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
                 tind = _industry_str(tc)
                 tname = tc.get('name', '')
                 tentry = calc_entry_price(tc)
-                tsl = round(tentry * sl_map.get(ts, 0.96), 2)
-                ttp = round(tentry * tp_map.get(ts, 1.05), 2)
+                tsl = round(tentry * _STRATEGY_STOP_LOSS.get(ts, 0.96), 2)
+                ttp = round(tentry * _STRATEGY_TAKE_PROFIT.get(ts, 1.05), 2)
                 tscore = tc.get('score', 0)
                 turl = f"https://quote.eastmoney.com/sh{tcode}.html" if tcode.startswith('6') else f"https://quote.eastmoney.com/sz{tcode}.html"
                 lines.append(f"| {ti} | [{tname}]({turl}) | {tcode} | {ts} | {tind} | {tpl} | {tentry:.2f} | {tsl:.2f} | {ttp:.2f} | {tscore} |")
