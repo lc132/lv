@@ -514,6 +514,7 @@ def step4B_sync_holdings_xlsx(holdings):
             ws.cell(row=row, column=11).value = round(float(h.get('pnl_pct', 0)), 4)
             ws.cell(row=row, column=12).value = data_date; up += 1
         if up: wb.save(p); log_alert("INFO", "持仓跟踪", f"已更新{up}只")
+        wb.close()
     except Exception as e: log_alert("WARNING", "持仓跟踪", f"{str(e)[:80]}")
 
 def step4C_crisis_check(holdings):

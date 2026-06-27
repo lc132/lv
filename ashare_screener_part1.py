@@ -418,6 +418,7 @@ def step4b_holding_tracking(holdings):
         if updated > 0:
             wb.save(xlsx_path)
             log_alert("INFO", "持仓跟踪同步", f"已更新{updated}只持仓价格")
+        wb.close()
         print(f"✅ 步骤4B: 同步了 {updated} 条持仓到持仓跟踪.xlsx")
     except Exception as e:
         log_alert("WARNING", "持仓跟踪同步", f"失败: {str(e)[:100]}")

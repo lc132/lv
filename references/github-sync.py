@@ -68,6 +68,7 @@ try:
             _wc(ws11, 1, 1, f'关键纪律 — {file_version}', _bold_font)
 
         wb_cond.save(cond_xlsx)
+        wb_cond.close()
         cond_synced = True  # 标记已同步，推送时一并上传
         log_alert("INFO", "筛选条件", f"筛选条件.xlsx 已同步至 {file_version}")
     else:

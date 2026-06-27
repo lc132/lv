@@ -59,5 +59,6 @@ def sync_holding_prices_to_xlsx(holdings, path="/workspace/持仓跟踪.xlsx"):
         if updated > 0:
             wb.save(path)
             log_alert("INFO", "持仓跟踪同步", f"已更新{updated}只持仓价格")
+        wb.close()
     except Exception as e:
         log_alert("WARNING", "持仓跟踪同步", f"失败: {str(e)[:100]}")

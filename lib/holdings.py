@@ -277,6 +277,7 @@ def step4B_sync_holding_xlsx(ctx):
             log_alert("INFO", "持仓跟踪同步", f"已更新{updated}只持仓价格")
         else:
             print(f"  无需更新（0只匹配）")
+        wb.close()
     except Exception as e:
         log_alert("WARNING", "持仓跟踪同步", f"失败: {str(e)[:100]}")
         print(f"  持仓跟踪同步失败: {str(e)[:80]}")
