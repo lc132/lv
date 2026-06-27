@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.58
-35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复
+A股每日盘前短线标的智能筛选 v6.9.59
+35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复 | 步骤10B全日期仅读缓存
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.58"
+BUILTIN_VERSION = "v6.9.59"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -988,58 +988,17 @@ def _fetch_zjh_industry(code):
 
 def _preload_industry_from_eastmoney(all_stocks):
     """v6.9.35: 通过东方财富HTTP API批量获取行业分类（一级+二级）。
-    v6.9.36: 仅周日执行全量HTTP拉取更新缓存，其他日仅读取磁盘缓存。
-    v6.9.42: 首次运行缓存为空时使用代码段映射降级，不阻塞非周日（避免4929只×0.15s=739s超时）。"""
+    v6.9.59: 所有日期统一仅读取磁盘缓存，不再执行HTTP拉取（行业缓存由sunday_industry_pull.py单独维护）。"""
     global _industry_cache, _sub_industry_cache
     _load_industry_cache()
     
     cache_is_empty = len(_industry_cache) == 0 and len(_sub_industry_cache) == 0
     
-    # v6.9.42: 非周日统一跳过拉取（包括首次运行），使用代码段映射降级
-    if beijing_weekday is not None and beijing_weekday != 6:
-        if cache_is_empty:
-            print(f"[INFO] 行业缓存: 首次运行缓存为空，使用代码段映射降级（周日将全量拉取）")
-        else:
-            print(f"[INFO] 行业缓存: 非周日，仅读取缓存 (一级{len(_industry_cache)}条, 二级{len(_sub_industry_cache)}条)")
-        return
-    
-    # 收集需要拉取的股票
-    to_fetch = []
-    for s in all_stocks:
-        code = s.get('code', '')
-        if code and (code not in _industry_cache or code not in _sub_industry_cache):  # v6.9.35: 一级或二级缺一即拉取
-            if code not in HARDCODED_INDUSTRY or code not in _sub_industry_cache:
-                to_fetch.append(code)
-    
-    # 去重
-    to_fetch = list(set(to_fetch))
-    
-    if not to_fetch:
-        print(f"[INFO] 行业缓存: 全部命中，无需拉取")
-        return
-    
-    print(f"[INFO] 东方财富HTTP: 拉取 {len(to_fetch)} 只股票行业分类...")
-    new_primary = 0; new_secondary = 0; fail_count = 0
-    batch_size = 50
-    
-    for i in range(0, len(to_fetch), batch_size):
-        batch = to_fetch[i:i+batch_size]
-        for code in batch:
-            primary, secondary = _fetch_zjh_industry(code)
-            if primary and code not in _industry_cache:
-                _industry_cache[code] = primary
-                new_primary += 1
-            if secondary and code not in _sub_industry_cache:
-                _sub_industry_cache[code] = secondary
-                new_secondary += 1
-            if not primary and not secondary:
-                fail_count += 1
-            time.sleep(0.15)
-        print(f"  进度: {min(i+batch_size, len(to_fetch))}/{len(to_fetch)} (一级+{new_primary}, 二级+{new_secondary}, 失败{fail_count})")
-    
-    print(f"[INFO] 东方财富HTTP: 一级{len(_industry_cache)}条, 二级{len(_sub_industry_cache)}条, 失败{fail_count}条")
-    if new_primary > 0 or new_secondary > 0:
-        _save_industry_cache()
+    if cache_is_empty:
+        print(f"[INFO] 行业缓存: 缓存为空，使用代码段映射降级（请执行sunday_industry_pull.py初始化缓存）")
+    else:
+        print(f"[INFO] 行业缓存: 仅读取缓存 (一级{len(_industry_cache)}条, 二级{len(_sub_industry_cache)}条)")
+    return
 
 # v6.6.29: 知名股票硬编码覆盖（代码段查表无法精确区分时）
 HARDCODED_INDUSTRY = {

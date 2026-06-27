@@ -1,10 +1,11 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.9.58)。基于前一日收盘数据，通过36步筛选流程（网络授时北京→GitHub拉取行业缓存+验证+节假日→极端行情→外围市场→持仓同步→做T→持仓跟踪→持仓危机→全市场API拉取→东方财富HTTP行业(一级+二级)→pytdx历史K线→东方财富财务(已降级)→F10单股API→风险事件→拥挤度→14项硬排除→27项信号过滤→十七策略评分→TOP10龙虎榜采集+正面新闻筛查+公司公告→行业集中度→生成HTML报告（含TOP10精选推荐理由）→GitHub同步→飞书推送→每周复盘），输出短线标的_YYYYMMDD.md 为Markdown格式，同时生成可视化HTML报告。v6.9.58：修复步骤20 sl_map/tp_map未定义bug——改用全局_STRATEGY_STOP_LOSS/_STRATEGY_TAKE_PROFIT；修复_pl_sorted作用域问题添加global声明。使用sunday_industry_pull.py可在周日独立执行行业补全。
+description: A股每日盘前短线标的智能筛选(v6.9.59)。基于前一日收盘数据，通过36步筛选流程（网络授时北京→GitHub拉取行业缓存+验证+节假日→极端行情→外围市场→持仓同步→做T→持仓跟踪→持仓危机→全市场API拉取→东方财富HTTP行业(一级+二级)→pytdx历史K线→东方财富财务(已降级)→F10单股API→风险事件→拥挤度→14项硬排除→27项信号过滤→十七策略评分→TOP10龙虎榜采集+正面新闻筛查+公司公告→行业集中度→生成HTML报告（含TOP10精选推荐理由）→GitHub同步→飞书推送→每周复盘），输出短线标的_YYYYMMDD.md 为Markdown格式，同时生成可视化HTML报告。v6.9.59：步骤10B行业补全改为所有日期仅读取缓存（不再执行HTTP拉取），行业缓存由sunday_industry_pull.py单独维护。使用sunday_industry_pull.py可在周日独立执行行业补全。
 ---
-# A股盘前短线标的筛选 v6.9.58
+# A股盘前短线标的筛选 v6.9.59
 
 ## 版本历史
+- **v6.9.59**: 步骤10B行业补全改为所有日期仅读取缓存（不再执行HTTP拉取），缓存由sunday_industry_pull.py单独维护
 - **v6.9.58**: 修复步骤20 sl_map/tp_map未定义bug——改用全局_STRATEGY_STOP_LOSS/_STRATEGY_TAKE_PROFIT；修复_pl_sorted作用域问题添加global声明
 - **v6.9.53**: 修复HTML/Markdown版本号显示为旧版本问题——step6加入`_version_cmp`内置版本优先逻辑，若BUILTIN_VERSION比策略调整记录.json中的版本新，则自动更新该文件
 - **v6.9.51**: 移除HTML样式：TOP10行蓝色背景+边框、7日橙色背景、TOP10卡片盈亏比蓝色高亮、footer 7日提示行；修复7日列策略显示为?问题（step11延迟策略赋值，step13后回填）
@@ -46,7 +47,7 @@ description: A股每日盘前短线标的智能筛选(v6.9.58)。基于前一日
 腾讯一级 > 新浪二级 > pytdx三级降级策略。
 
 ### 步骤10B: 行业补全
-仅周日执行全量HTTP拉取更新缓存，其他日仅读取缓存。
+所有日期统一仅读取磁盘缓存，不执行HTTP拉取。行业缓存由 `sunday_industry_pull.py` 单独维护。
 
 ### 步骤10C: 历史K线
 pytdx拉取历史K线数据(KDJ迭代+BOLL)。
