@@ -249,6 +249,12 @@ def step26_github_sync(ctx):
             ["git", "-C", repo_dir, "commit", "-m", commit_msg],
             capture_output=True, text=True
         )
+        if result.returncode != 0:
+            if "nothing to commit" in (result.stderr + result.stdout):
+                log_alert("INFO", "GitHub同步", "无变更，跳过推送")
+                return
+            log_alert("WARNING", "GitHub同步", f"commit失败: {result.stderr[:100]}")
+            return
         
         # 如果有变更则推送（使用 _git_with_token 安全传递 Token）
         _git_with_token = ctx.get('_git_with_token')

@@ -66,22 +66,8 @@ def step14_16_scoring(ctx):
     
     # ============================================================
     # 步骤15: 冲突处理（E与A冲突→A优先，E与B冲突→E优先）
-    # 此冲突在步骤13已通过策略优先级排序解决(A>B>C>D>E)，在此显式记录日志
-    # ============================================================
-    if len(candidates) >= 2:
-        conflict_count = 0
-        for i, c1 in enumerate(candidates):
-            s1 = c1.get('strategy', '')
-            for c2 in candidates[i+1:]:
-                s2 = c2.get('strategy', '')
-                if c1.get('code') == c2.get('code'):
-                    continue
-                # 同一个code不可能同时有多个策略（步骤13已排序取最优），检查同类冲突
-                if s1 == s2:
-                    # 同一策略多个标的 → 无冲突（评分阶段解决）
-                    pass
-        # E与A/B冲突已在步骤13通过排序解决，标记日志
-        print(f"  步骤15: 策略冲突处理已生效（A>D>C>B>E优先级，E与A冲突→A优先，E与B冲突→E优先）")
+    # 此冲突在步骤13已通过策略优先级排序解决(A>B>C>D>E)
+    print(f"  步骤15: 策略冲突处理已生效（A>D>C>B>E优先级，E与A冲突→A优先，E与B冲突→E优先）")
     
     for c in candidates:
         reasons = []
@@ -305,7 +291,6 @@ def step17_industry_limit(ctx):
                 '弱市': {'A': 0, 'B': 5, 'C': 2, 'D': 3, 'E': 3},
             }
         limits = max_per_market.get(market, {'A': 2, 'B': 2, 'C': 2, 'D': 2, 'E': 2})
-    max_total = sum(limits.values())
     
     # 按评分排序（同分二次评估）
     candidates = tie_break_sort(candidates)

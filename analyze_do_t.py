@@ -204,7 +204,8 @@ def calc_entry_exit(current_price, cost_price, amp_pct, direction):
         "buy_zone": buy_zone,
         "sell_target": sell_target,
         "stop_loss": stop_loss,
-        "half_range": half_range
+        "half_range": half_range,
+        "buy_back": buy_back
     }
 
 
