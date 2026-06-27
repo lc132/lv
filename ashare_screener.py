@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.55
+A股每日盘前短线标的智能筛选 v6.9.56
 35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复
 """
-import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re
+import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.55"
+BUILTIN_VERSION = "v6.9.56"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -2178,7 +2178,7 @@ def step17_industry_limit(candidates):
     return final
 
 def step18_news_screening(candidates):
-    """步骤18：新闻筛查 — 对最终标的检测近5日利空新闻（v6.9.55: 双源并行查询，东方财富+Bing同时发起）"""
+    """步骤18：新闻筛查 — 四源并行（东方财富+Bing+巨潮资讯网+财联社），v6.9.56"""
     if not candidates:
         return candidates, 0
     
@@ -2214,12 +2214,10 @@ def step18_news_screening(candidates):
                 for news in news_list:
                     title = news.get('title', '') + news.get('summary', '')
                     for kw in NEGATIVE_KW:
-                        if kw not in title:
-                            continue
+                        if kw not in title: continue
                         if not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
                             return ('eastmoney', kw)
-        except Exception:
-            pass
+        except Exception: pass
         return None
     
     def _check_bing(code, name):
@@ -2233,18 +2231,86 @@ def step18_news_screening(candidates):
             with urllib.request.urlopen(req, timeout=4) as resp:
                 html_text = resp.read().decode('utf-8', errors='ignore')
                 for kw in NEGATIVE_KW:
-                    if kw not in html_text:
-                        continue
+                    if kw not in html_text: continue
                     kw_pos = html_text.find(kw)
-                    ctx_start = max(0, kw_pos - 300)
-                    ctx_end = min(len(html_text), kw_pos + 300)
-                    context = html_text[ctx_start:ctx_end]
-                    if name not in context and code not in context:
-                        continue
-                    if not any(neg in context for neg in FALSE_POSITIVE_NEGATORS):
+                    ctx = html_text[max(0,kw_pos-300):min(len(html_text),kw_pos+300)]
+                    if name not in ctx and code not in ctx: continue
+                    if not any(neg in ctx for neg in FALSE_POSITIVE_NEGATORS):
                         return ('bing', kw)
-        except Exception:
-            pass
+        except Exception: pass
+        return None
+    
+    def _check_cninfo(code, name):
+        """巨潮资讯网 — 法定信息披露平台，搜索风险提示/监管函/退市等公告"""
+        try:
+            org_id = f'gssz{code}' if code.startswith('0') else f'gssh{code}'
+            stock_param = f'{code},{org_id}'
+            cninfo_categories = ['fxts', 'cqdq', 'yjygjxz']  # 风险提示/澄清致歉/业绩预告
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'http://www.cninfo.com.cn/new/index',
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+            for cat in cninfo_categories:
+                params = urllib.parse.urlencode({
+                    'pageNum': '1', 'pageSize': '10', 'tabName': 'fulltext',
+                    'stock': stock_param, 'category': cat,
+                    'startTime': (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'),
+                    'endTime': datetime.now().strftime('%Y-%m-%d'),
+                    'sortName': 'announcementTime', 'sortType': '-1'
+                }).encode('utf-8')
+                req = urllib.request.Request('http://www.cninfo.com.cn/new/hisAnnouncement/query', data=params, headers=headers)
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+                    for ann in data.get('announcements', []):
+                        title = ann.get('title', '')
+                        for kw in NEGATIVE_KW:
+                            if kw in title and not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
+                                return ('cninfo', kw)
+            # 关键字搜索
+            for search_kw in ['退市', 'ST', '减持', '违规', '监管']:
+                params = urllib.parse.urlencode({
+                    'pageNum': '1', 'pageSize': '10', 'tabName': 'fulltext',
+                    'stock': stock_param, 'searchKey': search_kw,
+                    'startTime': (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'),
+                    'endTime': datetime.now().strftime('%Y-%m-%d'),
+                    'sortName': 'announcementTime', 'sortType': '-1'
+                }).encode('utf-8')
+                req = urllib.request.Request('http://www.cninfo.com.cn/new/hisAnnouncement/query', data=params, headers=headers)
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+                    for ann in data.get('announcements', []):
+                        title = ann.get('title', '')
+                        for kw in NEGATIVE_KW:
+                            if kw in title and not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
+                                return ('cninfo', kw)
+        except Exception: pass
+        return None
+    
+    def _check_cls(code, name):
+        """财联社 — 实时快讯，搜索股票名称在近期电报中出现"""
+        try:
+            sorted_params = sorted([
+                ('app', 'CailianpressWeb'), ('os', 'web'), ('refresh_type', '1'),
+                ('rn', '50'), ('sv', '8.4.6')
+            ], key=lambda x: x[0])
+            query_str = urllib.parse.urlencode(sorted_params)
+            sign = hashlib.md5(hashlib.sha1(query_str.encode()).hexdigest().encode()).hexdigest()
+            url = f'https://www.cls.cn/nodeapi/telegraphList?{query_str}&sign={sign}'
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://www.cls.cn/telegraph'
+            })
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                telegrams = data.get('data', {}).get('roll_data', [])
+                for tg in telegrams:
+                    content = tg.get('title', '') + tg.get('brief', '') + tg.get('content', '')
+                    if name not in content: continue
+                    for kw in NEGATIVE_KW:
+                        if kw in content and not any(neg in content for neg in FALSE_POSITIVE_NEGATORS):
+                            return ('cls', kw)
+        except Exception: pass
         return None
     
     excluded = []
@@ -2262,19 +2328,20 @@ def step18_news_screening(candidates):
         has_neg = False
         neg_reason = ''
         
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        with ThreadPoolExecutor(max_workers=4) as executor:
             futures = {
                 executor.submit(_check_eastmoney, code, name): 'eastmoney',
                 executor.submit(_check_bing, code, name): 'bing',
+                executor.submit(_check_cninfo, code, name): 'cninfo',
+                executor.submit(_check_cls, code, name): 'cls',
             }
             for future in as_completed(futures):
                 result = future.result()
                 if result is not None:
                     source, kw = result
                     has_neg = True
-                    neg_reason = f"{source}:{kw}" if source == 'bing' else kw
-                    for f in futures:
-                        f.cancel()
+                    neg_reason = f"{source}:{kw}" if source != 'eastmoney' else kw
+                    for f in futures: f.cancel()
                     break
         
         if has_neg:
@@ -2286,8 +2353,7 @@ def step18_news_screening(candidates):
     nex = len(excluded)
     if nex > 0:
         details = ", ".join(f"{c.get('name','')}({c.get('_news_reason','?')})" for c in excluded[:5])
-        if nex > 5:
-            details += f" 等{nex}只"
+        if nex > 5: details += f" 等{nex}只"
         log_alert("WARNING", "新闻筛查", f"排除{nex}只: {details}")
     else:
         log_alert("INFO", "新闻筛查", "全部通过，未发现利空")
