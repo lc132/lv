@@ -2,7 +2,7 @@
 """
 A股盘前短线标的筛选 v6.9.53 - Part 1: 步骤0-8 (前置检查)
 """
-import urllib.request, urllib.parse, urllib.error, json, os, sys, time
+import urllib.request, urllib.parse, urllib.error, json, os, sys
 from datetime import datetime, timedelta
 from collections import Counter
 

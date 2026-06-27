@@ -2,7 +2,7 @@
 """
 A股盘前短线标的筛选 v6.9.53 - Part 2: 步骤9-27 (核心筛选+输出)
 """
-import urllib.request, urllib.parse, urllib.error, json, os, sys, time, re, subprocess, shutil
+import urllib.request, urllib.parse, urllib.error, json, os, time, subprocess, shutil
 from datetime import datetime, timedelta
 from collections import Counter
 from openpyxl import Workbook

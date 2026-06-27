@@ -16,8 +16,6 @@
 触发：用户上传持仓截图后自动调用
 """
 
-import json
-import math
 from datetime import datetime
 
 # ============================================================

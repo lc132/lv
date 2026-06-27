@@ -4,9 +4,8 @@
 A股每日盘前短线标的筛选 v6.9.53 — 核心工具模块
 全局配置、工具函数
 """
-import os, sys, json, time, urllib.request, urllib.error, subprocess, shutil, re
-from datetime import datetime, timedelta
-from collections import Counter
+import os, json
+from datetime import datetime
 
 # ============================================================
 # 全局配置
@@ -61,7 +60,7 @@ def log_alert(level, module, message, timestamp=None):
     try:
         with open(f'{DATA_DIR}/系统告警.log', 'a', encoding='utf-8') as f:
             f.write(f"[{ts}] [{level}] {module}: {message}\n")
-    except Exception:
+    except (PermissionError, OSError):
         pass
 
 def safe_read_json(path, default=None):
@@ -79,9 +78,13 @@ def safe_read_json(path, default=None):
         return default if default is not None else []
 
 def safe_write_json(path, data):
+    """原子写入：先写临时文件再重命名，防止写入中断导致数据损坏"""
     try:
-        with open(path, 'w', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e: log_alert("ERROR", "safe_write_json", f"{path}: {str(e)}")
+        tmp_path = path + '.tmp'
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)  # 原子操作(POSIX)
+    except (PermissionError, OSError) as e: log_alert("ERROR", "safe_write_json", f"{path}: {str(e)}")
 
 def safe_append_json(path, record):
     data = safe_read_json(path)
