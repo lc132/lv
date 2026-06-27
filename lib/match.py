@@ -181,8 +181,7 @@ def step13_strategy_match(ctx):
             print(f"    {s}: {strategy_counts[s]}只")
     
     # 策略匹配后临时按策略优先级排序（A>D>C>B>E），最终评分排序在步骤14-16完成
-    strategy_order = {'A': 0, 'D': 1, 'C': 2, 'B': 3, 'E': 4}
-    matched.sort(key=lambda x: (strategy_order.get(x.get('strategy', 'Z'), 99), -x.get('change_pct', 0)))
+    matched.sort(key=lambda x: (_MATCH_STRATEGY_ORDER.get(x.get('strategy', 'Z'), 99), -x.get('change_pct', 0)))
     
     ctx['candidates'] = matched
     ctx['strategy_counts'] = strategy_counts

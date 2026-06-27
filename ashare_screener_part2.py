@@ -490,6 +490,9 @@ def step12_signal_filter(candidates):
 # ============================================================
 # 步骤13: 五策略筛选
 # ============================================================
+# 策略优先级（与 lib/match.py _MATCH_STRATEGY_ORDER 保持一致）
+_PART2_STRATEGY_ORDER = {'A': 0, 'D': 1, 'C': 2, 'B': 3, 'E': 4}
+
 def step13_strategy_matching(candidates):
     """五大策略匹配"""
     global matched_count, strategy_counts
@@ -538,7 +541,7 @@ def step13_strategy_matching(candidates):
         
         if strategies:
             # 选择优先级最高的策略
-            best = min(strategies, key=lambda x: {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4}[x[0]])
+            best = min(strategies, key=lambda x: _PART2_STRATEGY_ORDER.get(x[0], 99))
             c['strategy'] = best[0]
             c['strategy_name'] = best[1]
             c['score'] = best[2]
