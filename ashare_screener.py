@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.57
+A股每日盘前短线标的智能筛选 v6.9.58
 35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.57"
+BUILTIN_VERSION = "v6.9.58"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -159,8 +159,8 @@ def safe_read_json(path, default=None):
     try:
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            if not isinstance(data, list):
-                log_alert("WARNING", "safe_read_json", f"{path} 格式异常")
+            if not isinstance(data, (list, dict)):
+                log_alert("WARNING", "safe_read_json", f"{path} 格式异常(非list/dict)")
                 return default if default is not None else []
             return data
     except (json.JSONDecodeError, PermissionError) as e:
@@ -199,7 +199,7 @@ def _parse_tencent_field(raw, idx, default=None):
         v = raw[idx]
         if v in ('', '-', None): return default
         return float(v)
-    except Exception: return default
+    except (ValueError, TypeError, IndexError): return default
 
 def fetch_tencent_index(codes):
     """拉取指数行情，返回 {code: {name,price,prev_close,change_pct,change_amount}}"""
@@ -220,7 +220,7 @@ def fetch_tencent_index(codes):
                 chg = round((price - prev) / prev * 100, 2) if prev > 0 else 0
                 chg_amt = round(price - prev, 2)  # 涨跌点数
                 result[code] = {"name": raw[1], "price": price, "prev_close": prev, "change_pct": chg, "change_amount": chg_amt}
-            except Exception: pass
+            except (urllib.error.URLError, json.JSONDecodeError, OSError): pass
     except Exception as e: log_alert("WARNING", "腾讯指数", f"获取失败: {str(e)[:60]}")
     return result
 
@@ -262,7 +262,7 @@ def fetch_tencent_stocks(codes):
                         "total_cap": _parse_tencent_field(raw, 44, None) * 1e8 if _parse_tencent_field(raw, 44, None) else None,  # 亿元→元
                         "main_inflow": None,  # 腾讯基础API不提供主力资金流向
                     })
-                except Exception: pass
+                except (ValueError, TypeError, IndexError, AttributeError): pass
             time.sleep(0.05)
         except Exception as e: log_alert("WARNING", "腾讯个股", f"批次失败: {str(e)[:40]}")
     return result
@@ -295,7 +295,7 @@ def step0_get_beijing_time():
                 dt_str = date_part + '.' + frac[:6]
             beijing_now = datetime.fromisoformat(dt_str)
             break
-        except Exception: continue
+        except (urllib.error.URLError, json.JSONDecodeError, ValueError, OSError): continue
     if beijing_now is None:
         from datetime import timezone as _tz
         beijing_now = datetime.now(_tz(timedelta(hours=8)))
@@ -430,12 +430,12 @@ def step3_external_markets():
                 if '=""' in text: all_down = False; break
                 chg = float(text.split('"')[1].split(',')[1]) if ',' in text.split('"')[1] else 0
                 if chg > -2: all_down = False; break
-            except Exception: api_failures += 1; continue  # 单指数失败不中断，继续检查其他
+            except (urllib.error.URLError, ValueError, IndexError, json.JSONDecodeError, OSError): api_failures += 1; continue  # 单指数失败不中断
         if api_failures >= 2:
             log_alert("WARNING", "外围市场", f"新浪API {api_failures}/3 不可达，跳过美股检测")
             all_down = False  # 数据不可达时不触发弱市
         if all_down: position_pct = min(position_pct, 30); market_condition = "弱市(美股暴跌)"
-    except Exception: pass
+    except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError): pass
 
 def step3A_domestic_index_check():
     """v6.8.7: 原名step3A_premarket_futures，实际使用深证成指作为大盘强弱代理指标"""
@@ -450,7 +450,7 @@ def step3A_domestic_index_check():
             position_pct = max(position_pct - 15, MIN_POSITION_PCT)
             if market_condition == "强市": market_condition = "震荡"
             elif market_condition == "震荡": market_condition = "弱市"
-    except Exception: log_alert("INFO", "大盘代理", "数据不可得，跳过")
+    except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError): log_alert("INFO", "大盘代理", "数据不可得，跳过")
 
 # ============================================================
 # 步骤4：持仓行情同步（腾讯API）
@@ -526,7 +526,7 @@ def step4B_sync_holdings_xlsx(holdings):
             ws.cell(row=row, column=8).value = cur
             ws.cell(row=row, column=9).value = h.get('market_value')
             ws.cell(row=row, column=10).value = round(h.get('pnl_amount', 0), 2)
-            ws.cell(row=row, column=11).value = round(float(h.get('pnl_pct', 0)), 4)
+            ws.cell(row=row, column=11).value = round(float(h.get('pnl_pct') or 0), 4)
             ws.cell(row=row, column=12).value = data_date; up += 1
         if up: wb.save(p); log_alert("INFO", "持仓跟踪", f"已更新{up}只")
     except Exception as e: log_alert("WARNING", "持仓跟踪", f"{str(e)[:80]}")
@@ -554,7 +554,7 @@ def step4C_crisis_check(holdings):
             if cur < 5: triggers.append("股价<5元")
             if cur > 100: triggers.append("股价>100元")
             if code.startswith("688"): triggers.append("科创板")
-            if code.startswith("8") and len(str(code)) == 6: triggers.append("北交所")
+            if code.startswith(('82', '83', '87', '88', '92')): triggers.append("北交所")
             if triggers:
                 m = f"⚠️ {code} {name} 触发L1: {', '.join(triggers)}"
                 alerts.append(m); log_alert("INFO", "持仓L1", m)  # v6.8.6: L1条件降级为INFO
@@ -643,7 +643,7 @@ def step8_market_environment():
         finally:
             try: api.disconnect()
             except Exception: pass
-    except Exception: pass
+    except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError): pass
     # 降级：根据涨跌判断（仅在pytdx未设置时生效）
     if not idx:
         market_condition = "震荡"; position_pct = 55
@@ -720,9 +720,9 @@ def step10A_fetch_all_stocks():
                             "turnover": 0, "amplitude": amplitude_v,
                             "volume_ratio": None, "main_inflow": None, "total_cap": float(parts[14]) * 1e8 if len(parts) > 14 and parts[14] else None,  # v6.9.43: 新浪API补充total_cap
                         })
-                    except Exception: continue
+                    except (ValueError, TypeError, IndexError): continue
                 if i % (batch_size * 10) == 0: time.sleep(0.02)
-            except Exception: continue
+            except (urllib.error.URLError, json.JSONDecodeError, OSError): continue
         log_alert("INFO", "行情采集", f"新浪(二级) 成功拉取 {len(stocks)} 只")
         return stocks, "sina"
     except Exception as e:
@@ -756,7 +756,7 @@ def step10A_fetch_all_stocks():
                             "amount": q.get('amount', 0),
                             "turnover": 0, "amplitude": round((qh - qlow) / prev * 100, 2) if prev > 0 else 0,
                             "volume_ratio": None, "main_inflow": None, "total_cap": None})
-                except Exception: pass
+                except (ValueError, TypeError, AttributeError): pass
         return stocks, "pytdx"
     except Exception as e:
         log_alert("ERROR", "行情采集", f"三级数据源均不可达")
@@ -1399,7 +1399,7 @@ def step10C_fetch_klines(candidates):
                             # v6.9.43: 使用data_date替代datetime.now()保持一致性
                             ref_date = datetime.strptime(data_date, '%Y-%m-%d') if data_date else datetime.now()
                             days_listed = (ref_date - fd).days
-                        except Exception: pass
+                        except (ValueError, TypeError): pass
                     kline_data[code] = {
                         'ma5': ma5, 'ma10': ma10, 'ma20': ma20,
                         'dif': dif, 'dea': dea_val, 'macd_hist': macd_hist,
@@ -1411,7 +1411,7 @@ def step10C_fetch_klines(candidates):
                         'days_listed': days_listed, 'limit_up_days': limit_up_days,
                         'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes
                     }
-                except Exception: kline_data[code] = {}
+                except (ValueError, TypeError, ZeroDivisionError, IndexError): kline_data[code] = {}
         finally:
             try: api.disconnect()
             except Exception: pass
@@ -1480,7 +1480,7 @@ def step10E_fetch_fundamentals(candidates):
                         pass
                 fundamental_data[code] = fd
                 fetched += 1
-        except Exception:
+        except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError) as e:
             errors += 1
             continue
         # 每50只短暂休息，避免被限流
@@ -1521,7 +1521,7 @@ def step10F_fetch_risk_events():
             ratio = 0
             if rest and len(rest) >= 4:
                 try: ratio = float(rest[3])
-                except Exception: pass
+                except (ValueError, TypeError): pass
             if ratio > 0:
                 unlock_events[code] = {'date': date, 'ratio': ratio}
         if unlock_events:
@@ -2929,9 +2929,9 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             # 2. 基本面
             fin_parts = []
             try: roe_f = float(roe); fin_parts.append(f'ROE {roe_f:.1f}%') if roe_f != 0 else None
-            except Exception: pass
+            except (ValueError, TypeError): pass
             try: np_f = float(np_yoy); fin_parts.append(f'净利润同比 {np_f:+.1f}%') if np_f != 0 else None
-            except Exception: pass
+            except (ValueError, TypeError): pass
             if main_in and main_in != 0:
                 fin_parts.append(f'主力净流入 {main_in/1e4:+.0f}万')
             if fin_parts:
