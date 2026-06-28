@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v6.12.4 AI 策略分析师模块
+v6.12.5 AI 策略分析师模块
 将单纯的数据筛选升级为 AI 智能分析，让大模型充当专属策略分析师。
 对最终候选池进行多维度深度分析，输出结构化研判报告。
 """
@@ -24,17 +24,15 @@ def generate_market_overview(final_candidates, index_data, market_condition,
     lines.append(f"### 1.1 大盘环境：{env}格局")
     lines.append("")
 
-    # 指数数据
+    # 指数数据（v6.12.5: 腾讯API字段为price非close, 无volume字段）
     sse = index_data.get('sh', {})
     szse = index_data.get('sz', {})
     if sse:
         sse_chg = sse.get('change_pct', 0)
-        sse_vol = sse.get('volume', 0)
-        lines.append(f"- **上证指数**：{sse.get('close', '?')}（{sse_chg:+.2f}%），成交额 {sse_vol/1e8:.0f}亿")
+        lines.append(f"- **上证指数**：{sse.get('price', '?')}（{sse_chg:+.2f}%），涨跌 {sse.get('change_amount', 0):+.2f}点")
     if szse:
         sz_chg = szse.get('change_pct', 0)
-        sz_vol = szse.get('volume', 0)
-        lines.append(f"- **深证成指**：{szse.get('close', '?')}（{sz_chg:+.2f}%），成交额 {sz_vol/1e8:.0f}亿")
+        lines.append(f"- **深证成指**：{szse.get('price', '?')}（{sz_chg:+.2f}%），涨跌 {szse.get('change_amount', 0):+.2f}点")
 
     # 2. 市场情绪
     lines.append("")

@@ -2861,10 +2861,10 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
     sc = _STRATEGY_COLORS
     fc = len(candidates)
     
-    # 指数卡片HTML
-    idx_names = {"sh000001": "上证指数", "sz399001": "深证成指", "sz399006": "创业板指"}
+    # 指数卡片HTML（v6.12.5: 键名从sh000001/sz399001/sz399006改为sh/sz/cy，与step8 index_data一致）
+    idx_names = [("sh", "上证指数"), ("sz", "深证成指"), ("cy", "创业板指")]
     index_cards = ""
-    for code, name in idx_names.items():
+    for code, name in idx_names:
         info = index_data.get(code, {})
         price = info.get("price", 0)
         chg = info.get("change_pct", 0)
