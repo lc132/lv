@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-A股盘前短线标的筛选 v6.9.58 - Part 1: 步骤0-8 (前置检查)
+A股盘前短线标的筛选 v6.10.0 - Part 1: 步骤0-8 (前置检查)
 """
 import urllib.request, urllib.parse, urllib.error, json, os, sys
 from datetime import datetime, timedelta
@@ -630,7 +630,7 @@ def step8_market_environment():
 # ============================================================
 def run_part1():
     print("=" * 60)
-    print("A股盘前短线标的筛选 v6.9.58 - Part 1: 步骤0-8")
+    print("A股盘前短线标的筛选 v6.10.0 - Part 1: 步骤0-8")
     print("=" * 60)
     
     # 步骤0
