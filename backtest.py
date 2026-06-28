@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-A股短线标的回测机制 v6.10.1
+A股短线标的回测机制 v6.10.2
 基于推荐历史中的进场价/止损/止盈，拉取T+1实际收盘价，计算各策略胜率与收益
 """
 import urllib.request, json, os, time
@@ -180,7 +180,7 @@ def backtest(recommendations):
 # ============================================================
 def generate_report(results, stats):
     beijing_now = datetime.now(timezone.utc) + timedelta(hours=8)
-    strategy_names = {"A": "动量延续", "B": "超跌反弹", "C": "事件驱动", "D": "回调企稳", "E": "资金埋伏", "F": "北向资金", "G": "横盘突破", "H": "地量见底", "I": "均线突破", "J": "龙回头", "K": "缺口回补", "L": "黄金坑", "M": "涨停回调", "N": "新高突破", "O": "回踩均线", "P": "地量反弹", "Q": "W底突破"}
+    strategy_names = {"A": "动量延续", "B": "超跌反弹", "C": "事件驱动", "D": "回调企稳", "E": "资金埋伏", "F": "北向资金", "G": "横盘突破", "H": "地量见底", "I": "均线突破", "J": "龙回头", "K": "缺口回补", "L": "黄金坑", "M": "涨停回调", "N": "新高突破", "O": "回踩均线", "P": "地量反弹", "Q": "W底突破", "R": "主力共振(强)", "S": "主力共振(弱)", "T": "主力观察"}
     
     lines = []
     lines.append("# A股短线标的回测报告")
@@ -211,7 +211,7 @@ def generate_report(results, stats):
     total_win = 0
     total_returns = []
     
-    for s in ["A", "B", "C", "D", "E", "F"]:
+    for s in ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T"]:
         st = stats.get(s)
         if not st or st["total"] == 0:
             continue
@@ -253,7 +253,7 @@ def generate_report(results, stats):
     lines.append("## 策略诊断")
     lines.append("")
     
-    for s in ["A", "B", "C", "D", "E", "F"]:
+    for s in ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T"]:
         st = stats.get(s)
         if not st or st["total"] < 3:
             continue
@@ -306,14 +306,14 @@ def main():
     
     report = generate_report(results, stats)
     
-    out_path = f"{WORKSPACE}/回测报告_20260617.md"
+    out_path = f"{WORKSPACE}/回测报告_{datetime.now(timezone.utc).strftime('%Y%m%d')}.md"
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write(report)
     print(f"\n回测报告已生成: {out_path}")
     
     # Print summary
     print("\n📊 回测摘要:")
-    for s in ["A", "B", "C", "D", "E", "F"]:
+    for s in ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T"]:
         st = stats.get(s)
         if st and st["total"] > 0:
             win_rate = round(st["win"] / st["total"] * 100, 1)

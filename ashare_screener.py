@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.10.1
+A股每日盘前短线标的智能筛选 v6.10.2
 35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 from openpyxl import load_workbook
 from lib.factor import compute_main_force_position, compute_short_term_breakout, resonance_check
 
-BUILTIN_VERSION = "v6.10.1"
+BUILTIN_VERSION = "v6.10.2"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -2133,7 +2133,7 @@ def step14_scoring(candidates, kline_data=None):
             if dif > 0 and dea > 0: macd_kline_bonus += 1  # 零轴上方运行
             if dif > 0 and macd_hist > 0: macd_kline_bonus += 1  # 零轴上多头强化
             # K线指标 (最多+4分)
-            close_p = kd.get('closes', [0]); close = close_p[-1] if close_p else 0
+            close_p = kd.get('closes', [0]); close = close_p[-1] if close_p and close_p[-1] else 0
             ma5 = kd.get('ma5', 0); ma10 = kd.get('ma10', 0); ma20 = kd.get('ma20', 0)
             if close > ma5 > 0: macd_kline_bonus += 1     # 站上MA5
             if ma5 > ma10 > 0: macd_kline_bonus += 1      # 短期均线金叉

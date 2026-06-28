@@ -1,10 +1,11 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.10.1)。基于前一日收盘数据，通过35步筛选流程（网络授时北京→GitHub拉取行业缓存+验证+节假日→极端行情→外围市场→持仓同步→做T→持仓跟踪→持仓危机→全市场API拉取→行业缓存读取(一级+二级)→pytdx历史K线→东方财富财务(已降级)→F10单股API→风险事件→拥挤度→13项硬排除→27项信号过滤→二十策略评分+MACD/K线技术指标+多因子共振→TOP10龙虎榜采集+正面新闻筛查+公司公告→行业集中度→生成HTML报告（含TOP10精选推荐理由）→GitHub同步→飞书推送→每周复盘），输出短线标的_YYYYMMDD.md 为Markdown格式，同时生成可视化HTML报告。v6.10.1：审计修复6项漏洞（K线越界/主力流入阈值/策略分母/封板检测/NoneType除零/分页拉取）。
+description: A股每日盘前短线标的智能筛选(v6.10.2)。基于前一日收盘数据，通过35步筛选流程（网络授时北京→GitHub拉取行业缓存+验证+节假日→极端行情→外围市场→持仓同步→做T→持仓跟踪→持仓危机→全市场API拉取→行业缓存读取(一级+二级)→pytdx历史K线→东方财富财务(已降级)→F10单股API→风险事件→拥挤度→13项硬排除→27项信号过滤→二十策略评分+MACD/K线技术指标+多因子共振→TOP10龙虎榜采集+正面新闻筛查+公司公告→行业集中度→生成HTML报告（含TOP10精选推荐理由）→GitHub同步→飞书推送→每周复盘），输出短线标的_YYYYMMDD.md 为Markdown格式，同时生成可视化HTML报告。v6.10.2：审计修复7项漏洞（backtest.py策略映射/迭代范围/硬编码日期，close_p空列表IndexError，volumes除零防护，未使用导入清理）。
 ---
-# A股盘前短线标的筛选 v6.10.1
+# A股盘前短线标的筛选 v6.10.2
 
 ## 版本历史
+- **v6.10.2**: 审计修复7项漏洞——(1)backtest.py策略映射缺R/S/T (2)backtest.py回测汇总/诊断/摘要仅迭代A-F (3)backtest.py硬编码日期 (4)ashare_screener.py close_p[-1]空列表IndexError (5)lib/factor.py close_p[-1]空列表IndexError (6)lib/factor.py volumes除零防护 (7)清理lib/afternoon.py和lib/auction.py未使用导入(math/time)
 - **v6.10.1**: 审计修复6项漏洞——(1)lib/factor.py K线负数索引越界 (2)主力流入阈值5000→5000万 (3)策略分母16→20适配R/S/T (4)lib/afternoon.py 封板检测尾盘误判 (5)afternoon_decision.py main_inflow NoneType除零 (6)涨停股分页拉取(100→500只)；移除6处未使用参数
 - **v6.10.0**: 新增多因子共振模型（主力底仓+短线起爆双重共振，策略R/S/T）+早盘竞价模型（morning_auction.py）+尾盘决策模型（afternoon_decision.py）
 - **v6.9.60**: 步骤14评分新增MACD+K线技术指标（DIF/DEA/MACD柱/均线/KDJ），最多+8分

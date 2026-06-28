@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v6.10.1 尾盘决策模型 v1.0
+v6.10.2 尾盘决策模型 v1.0
 运行时机: 14:30-15:00
 功能: 筛选隔夜持有标的（封板质量+空间潜力+板块强度+资金强度）
 """
@@ -92,7 +92,7 @@ def main():
 
 
 def _fetch_limit_up_stocks():
-    """获取全市场涨停股（东方财富实时行情）v6.10.1: 分页拉取超过100只"""
+    """获取全市场涨停股（东方财富实时行情）v6.10.2: 分页拉取超过100只"""
     all_stocks = []
     for pn in range(1, 6):  # 最多5页=500只
         url = ("https://push2.eastmoney.com/api/qt/clist/get?"
