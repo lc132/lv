@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v6.12.0 尾盘决策数据获取与筛选模块
+v6.12.3 尾盘决策数据获取与筛选模块
 数据源: 东方财富分时API + clist主力资金
 """
 import urllib.request, json
