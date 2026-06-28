@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v6.10.2 多因子共振模块
+v6.11.0 多因子共振模块
 主力底仓埋伏 + 短线放量起爆 双重共振检测
 """
 
@@ -26,7 +26,7 @@ def compute_main_force_position(kline_data, c):
         return 0
     
     # 指标1: 连续缩量小阳线（5日内至少3日满足）
-    # v6.10.2: 修复负数索引越界，改用 len 检查
+    # v6.11.0: 修复负数索引越界，改用 len 检查
     small_yang_count = 0
     n = len(closes)
     for i in range(-5, 0):
@@ -44,7 +44,7 @@ def compute_main_force_position(kline_data, c):
         score += 1
     
     # 指标2: 底部放量（60日跌幅>15% + 近5日放量）
-    # v6.10.2: 修复 60日跌幅需要至少21根K线，改用60日最高价计算
+    # v6.11.0: 修复 60日跌幅需要至少21根K线，改用60日最高价计算
     if len(closes) >= 21 and closes[-21] > 0:
         drop_60d = (closes[-1] - closes[-21]) / closes[-21]
         if drop_60d <= -0.15:
@@ -56,7 +56,7 @@ def compute_main_force_position(kline_data, c):
                     score += 1
     
     # 指标3: 主力资金连续流入（主力净流入>5000万）
-    # v6.10.2: 修复阈值 5000→5000万(50000000)，原为5000元误写
+    # v6.11.0: 修复阈值 5000→5000万(50000000)，原为5000元误写
     main_inflow = c.get('main_inflow', 0)
     if main_inflow is not None and main_inflow > 50_000_000:
         score += 1

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-A股盘前短线标的筛选 v6.10.2 - Part 2: 步骤9-27 (核心筛选+输出)
+A股盘前短线标的筛选 v6.11.0 - Part 2: 步骤9-27 (核心筛选+输出)
 """
 import urllib.request, urllib.parse, urllib.error, json, os, time, subprocess, shutil
 from datetime import datetime, timedelta
@@ -1472,7 +1472,7 @@ def step27_feishu_push(summary_text):
 # ============================================================
 def run_part2():
     print("=" * 60)
-    print("A股盘前短线标的筛选 v6.10.2 - Part 2: 步骤9-27")
+    print("A股盘前短线标的筛选 v6.11.0 - Part 2: 步骤9-27")
     print("=" * 60)
     
     # 步骤9: 板块轮动

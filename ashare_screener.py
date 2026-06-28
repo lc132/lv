@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.10.2
-35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复
+A股每日盘前短线标的智能筛选 v6.11.0
+35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,8 +10,9 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 from lib.factor import compute_main_force_position, compute_short_term_breakout, resonance_check
+from lib.microstructure import microstructure_filter
 
-BUILTIN_VERSION = "v6.10.2"
+BUILTIN_VERSION = "v6.11.0"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -2475,6 +2476,15 @@ def step18B_top10_enrichment(candidates):
     
     log_alert("INFO", "TOP10增强", f"龙虎榜{tot_lh}/10 正面新闻{tot_news}/10 公司公告{tot_ann}/10")
 
+def step15_microstructure_filter(candidates, kline_data):
+    """
+    步骤15: 市场微观结构过滤 v6.11.0
+    在最终候选池输出前，基于流动性与冲击成本、消息敏感度进行过滤。
+    硬过滤: 换手率<2% / Amihud>2.0 / 20日均振幅<2%
+    评分加分: 流动性评分(0-4) + 消息敏感度(0-3)，折算到score
+    """
+    return microstructure_filter(candidates, kline_data)
+
 def step16_comprehensive_score(candidates):
     # v6.9.38: 步骤15(冲突检测)已合并入步骤14评分，步骤16仅负责排序
     candidates.sort(key=_tie_key)
@@ -2706,8 +2716,9 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
         f"| ②硬排除 | {ae} | {total_raw - ae} | 13项(持仓/科创/北交/低价/高价/ST/涨幅/停牌/市值/成交额/上市天数/质押商誉解禁已废弃) |",
         f"| ③信号过滤 | {asig} | {ae - asig} | 27项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉/涨停次日高开低走/布林突破失败/20日涨幅>45%/放量不涨/放量滞跌/长上影线/连续缩量/净利润亏损/冲击成本/限售解禁/可转债/业绩预告/机构减持/融资过热) |",
         f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKLMNOPQRST二十策略 |",
-        f"| ⑤行业+同策略限制 | {aind} | {astr - aind} | 同行业≤4只(弱市)/3只(强/震荡)+同策略≤30% |",
-        f"| ⑥新闻筛查 | {aind - anew} | {anew} | Bing/东方财富双源利空检测 |",
+        f"| ⑤微观结构过滤 | {amicro} | {astr - amicro} | 流动性(换手率/Amihud)+消息敏感度(波动性) |",
+        f"| ⑥行业+同策略限制 | {aind} | {amicro - aind} | 同行业≤4只(弱市)/3只(强/震荡)+同策略≤30% |",
+        f"| ⑦新闻筛查 | {aind - anew} | {anew} | Bing/东方财富双源利空检测 |",
         f"| ★最终推荐 | {len(candidates)} | {aind - anew - len(candidates)} | 评分门控+降级 |", "",
     ]
     if candidates:
@@ -3293,7 +3304,8 @@ def main():
         c['_recent_7d'] = c.get('_recent_7d', 0) + 1
         c['_recent_7d_strategies'][data_date] = c.get('strategy', '?')
     print("\n[步骤14] 评分..."); scored = step14_scoring(sm, kline_data)
-    print("\n[步骤16] 综合评分+平局打破..."); ranked = step16_comprehensive_score(scored)
+    print("\n[步骤15] 微观结构过滤..."); scored2, micro_filtered, micro_stats = step15_microstructure_filter(scored, kline_data); amicro = len(scored2)
+    print("\n[步骤16] 综合评分+平局打破..."); ranked = step16_comprehensive_score(scored2)
     print("\n[步骤17] 行业限制..."); ail = step17_industry_limit(ranked); aind = len(ail)
     print("\n[步骤18] 新闻筛查..."); ail, anew = step18_news_screening(ail)
     print("\n[步骤18B] TOP10龙虎榜+正面新闻..."); step18B_top10_enrichment(ail)
@@ -3318,7 +3330,7 @@ def main():
     print("📊 筛选概况")
     print("=" * 60)
     print(f"prediction_date={prediction_date} (数据来源:{data_date})")
-    print(f"①原始:N={total_raw} → ②硬排除:N={ae} → ③信号过滤:N={asig} → ④策略:N={astr} → ⑤行业限制:N={aind} → ⑥新闻筛查:N={aind - anew} → ★ 最终:N={fc}")
+    print(f"①原始:N={total_raw} → ②硬排除:N={ae} → ③信号过滤:N={asig} → ④策略:N={astr} → ⑤微观结构:N={amicro} → ⑥行业限制:N={aind} → ⑦新闻筛查:N={aind - anew} → ★ 最终:N={fc}")
     sn = _STRATEGY_NAMES
     print(f"策略分布: " + " ".join([f"{s}:{sd.get(s,0)}" for s in ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T']]))
     print(f"排除TOP5: " + " ".join([f"{r}:{c}只" for r, c in er.most_common(5)]))
