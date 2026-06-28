@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.12.3
-35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复
+A股每日盘前短线标的智能筛选 v6.12.4
+35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 板块深度研判修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,7 +13,7 @@ from lib.factor import compute_main_force_position, compute_short_term_breakout,
 from lib.microstructure import microstructure_filter
 from lib.analyst import generate_ai_report
 
-BUILTIN_VERSION = "v6.12.3"
+BUILTIN_VERSION = "v6.12.4"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -622,7 +622,8 @@ def step8_market_environment():
     pre_condition = market_condition
     pre_position = position_pct
     idx = fetch_tencent_index(["sh000001", "sz399001", "sz399006"])
-    index_data = idx  # 保存供HTML使用
+    # v6.12.4: 键名映射为 analyst.py 期望的 sh/sz/cy 格式
+    index_data = {'sh': idx.get('sh000001', {}), 'sz': idx.get('sz399001', {}), 'cy': idx.get('sz399006', {})}
     if idx:
         sh = idx.get("sh000001", {})
         cur = sh.get("price", 0); chg = sh.get("change_pct", 0)
@@ -3417,7 +3418,13 @@ def main():
     
     # v6.12.1: 预计算盈亏比（供AI分析使用）
     _compute_pl_ratios(final)
-    print("\n[步骤15B] AI智能分析(TOP10)..."); ai_report = step15B_ai_analysis(final, kline_data, index_data, market_condition, {}, total_raw, ae, asig, astr, amicro, aind, fc)
+    # v6.12.4: 构建涨停板块分布（供AI板块深度研判使用）
+    sector_limit_up = {}
+    for s in all_stocks:
+        if s.get('change_pct') is not None and s['change_pct'] >= 9.5:
+            ind = lookup_industry(s.get('code', ''))
+            sector_limit_up[ind] = sector_limit_up.get(ind, 0) + 1
+    print("\n[步骤15B] AI智能分析(TOP10)..."); ai_report = step15B_ai_analysis(final, kline_data, index_data, market_condition, sector_limit_up, total_raw, ae, asig, astr, amicro, aind, fc)
     
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report)
     print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report); hd = os.path.dirname(hp)
