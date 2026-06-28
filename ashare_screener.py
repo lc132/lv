@@ -2514,7 +2514,7 @@ def step15_microstructure_filter(candidates, kline_data):
 def step15B_ai_analysis(candidates, kline_data, index_data, market_condition,
                          sector_limit_up, total_raw, ae, asig, astr, amicro, aind, fc):
     """
-    步骤15B: AI 智能分析 v6.12.0
+    步骤15B: AI 智能分析 v6.12.4
     将单纯的数据筛选升级为 AI 智能分析，生成多维深度研判报告。
     返回: ai_report dict
     """
@@ -2813,7 +2813,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
     for r, cnt in er.most_common(5): lines.append(f"- {r}: {cnt}只")
     lines.append(f"\n\n> ⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。\n> 版本: {file_version} | 生成: {beijing_date}")
     
-    # ── v6.12.0: AI 策略分析 ──
+    # ── v6.12.4: AI 策略分析 ──
     if ai_report:
         lines.append("\n---\n")
         lines.append(ai_report.get('market_overview', ''))
@@ -3055,7 +3055,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
 <div class="top10-card-reason">{reason}</div></div>''')
         top10_cards_html = '\n'.join(cards)
     
-    # ── v6.12.0: AI 策略分析 HTML ──
+    # ── v6.12.4: AI 策略分析 HTML ──
     ai_html = ""
     if ai_report:
         ai_html += '<section><h2>AI 策略分析 — 市场全景</h2>'

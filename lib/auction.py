@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v6.12.3 早盘竞价数据获取与验证模块
+v6.12.4 早盘竞价数据获取与验证模块
 数据源: 东方财富竞价接口 (免费)
 """
 import urllib.request, json, time
