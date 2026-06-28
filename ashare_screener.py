@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.60
-35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 17策略 | 27信号 | 13项硬排除 | MACD+K线评分 | K线-pool匹配修复 | 盈亏比TOP10 | 数量校验修复
+A股每日盘前短线标的智能筛选 v6.10.0
+35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.60"
+BUILTIN_VERSION = "v6.10.0"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -121,11 +121,11 @@ DEFAULT_PARAMS = {
 }
 
 # 模块级策略映射表（DRY：避免函数内重复定义）
-_STRATEGY_ORDER = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16}
-_STRATEGY_NAMES = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破'}
-_STRATEGY_COLORS = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4', 'G': '#10b981', 'H': '#f97316', 'I': '#14b8a6', 'J': '#ef4444', 'K': '#a855f7', 'L': '#eab308', 'M': '#f472b6', 'N': '#84cc16', 'O': '#38bdf8', 'P': '#fb923c', 'Q': '#22d3ee'}
-_STRATEGY_STOP_LOSS = {'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965, 'F': 0.965, 'G': 0.95, 'H': 0.94, 'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95}
-_STRATEGY_TAKE_PROFIT = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06, 'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05}
+_STRATEGY_ORDER = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16, 'R': 17, 'S': 18, 'T': 19}
+_STRATEGY_NAMES = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破', 'R': '主力共振(强)', 'S': '主力共振(弱)', 'T': '主力观察'}
+_STRATEGY_COLORS = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4', 'G': '#10b981', 'H': '#f97316', 'I': '#14b8a6', 'J': '#ef4444', 'K': '#a855f7', 'L': '#eab308', 'M': '#f472b6', 'N': '#84cc16', 'O': '#38bdf8', 'P': '#fb923c', 'Q': '#22d3ee', 'R': '#dc2626', 'S': '#f97316', 'T': '#94a3b8'}
+_STRATEGY_STOP_LOSS = {'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965, 'F': 0.965, 'G': 0.95, 'H': 0.94, 'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95, 'R': 0.95, 'S': 0.95, 'T': 0.94}
+_STRATEGY_TAKE_PROFIT = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06, 'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05, 'R': 1.05, 'S': 1.04, 'T': 1.04}
 
 def _tie_key(c):
     """模块级平局打破键：策略优先级→评分→平局分→量比→换手偏离"""
@@ -1846,7 +1846,7 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
     return passed, excluded
 
 # ============================================================
-# 步骤13：十七策略匹配（ABCDEFGHIJKLMNOPQ，F为E子策略升级，v6.9.38修正注释）
+# 步骤13：二十策略匹配（ABCDEFGHIJKLMNOPQ + RST主力共振，F为E子策略升级，v6.10.0新增RST）
 # ============================================================
 def step13_strategy_match(candidates, kline_data=None):
     if kline_data is None: kline_data = {}
@@ -2044,6 +2044,18 @@ def step13_strategy_match(candidates, kline_data=None):
                         if neck > 0 and close > neck * 1.005 and close > op:
                             if vr is not None and vr >= 1.2:
                                 s = "Q"; reason = f"W底突破:两底{l1:.2f}/{l2:.2f}+突破颈线{neck:.2f}+放量"; score = 9
+        # ── R/S/T 主力共振（v6.10.0: 多因子共振模型，底仓+起爆双重确认）──
+        if not s:
+            from lib.factor import compute_main_force_position, compute_short_term_breakout, resonance_check
+            pos_score = compute_main_force_position(kline_data, c)
+            break_score = compute_short_term_breakout(kline_data, c)
+            res_strategy, res_level = resonance_check(pos_score, break_score)
+            if res_strategy == 'R':
+                s = "R"; reason = f"主力共振(强):底仓{pos_score}分+起爆{break_score}分"; score = 10
+            elif res_strategy == 'S':
+                s = "S"; reason = f"主力共振(弱):底仓{pos_score}分+起爆{break_score}分"; score = 8
+            elif res_strategy == 'T':
+                s = "T"; reason = f"主力观察:底仓{pos_score}分+起爆{break_score}分"; score = 5
         if s: c['strategy'] = s; c['score'] = score; matched.append(c)
     log_alert("INFO", "策略匹配", f"匹配{len(matched)}只")
     return matched
@@ -2693,7 +2705,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
         f"| ①原始标的池 | {total_raw} | - | 全市场活跃TOP500 |",
         f"| ②硬排除 | {ae} | {total_raw - ae} | 13项(持仓/科创/北交/低价/高价/ST/涨幅/停牌/市值/成交额/上市天数/质押商誉解禁已废弃) |",
         f"| ③信号过滤 | {asig} | {ae - asig} | 27项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉/涨停次日高开低走/布林突破失败/20日涨幅>45%/放量不涨/放量滞跌/长上影线/连续缩量/净利润亏损/冲击成本/限售解禁/可转债/业绩预告/机构减持/融资过热) |",
-        f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKLMNOPQ十七策略 |",
+        f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKLMNOPQRST二十策略 |",
         f"| ⑤行业+同策略限制 | {aind} | {astr - aind} | 同行业≤4只(弱市)/3只(强/震荡)+同策略≤30% |",
         f"| ⑥新闻筛查 | {aind - anew} | {anew} | Bing/东方财富双源利空检测 |",
         f"| ★最终推荐 | {len(candidates)} | {aind - anew - len(candidates)} | 评分门控+降级 |", "",
@@ -2748,7 +2760,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
     sd = Counter(c.get('strategy') for c in candidates)
     sn = _STRATEGY_NAMES
     lines.append("\n## 策略分布")
-    for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q']:
+    for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T']:
         if sd.get(s, 0) > 0: lines.append(f"- {s} {sn.get(s, '')}: {sd[s]}只")
     lines.append("\n## 硬排除 TOP5")
     for r, cnt in er.most_common(5): lines.append(f"- {r}: {cnt}只")
@@ -2818,7 +2830,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
     seg_html = ""; legend_html = ""
     total_m = sum(sd.values())
     if total_m > 0:
-        for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q']:
+        for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T']:
             cnt = sd.get(s, 0)
             if cnt > 0:
                 pct = cnt / total_m * 100
@@ -3163,7 +3175,7 @@ def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, anew, sd):
     try:
         fc = len(candidates)
         sn = _STRATEGY_NAMES
-        ss = " | ".join([f"{s}{sn.get(s,'')}:{sd.get(s,0)}只" for s in ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q'] if sd.get(s, 0) > 0]) or "无推荐标的"
+        ss = " | ".join([f"{s}{sn.get(s,'')}:{sd.get(s,0)}只" for s in ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T'] if sd.get(s, 0) > 0]) or "无推荐标的"
         pb = "https://lc132.github.io/lv"
         pr = f"{pb}/ashare-screening-{pred_yyyymmdd}/ashare-screening-{pred_yyyymmdd}.html"
         card = {"msg_type": "interactive", "card": {
@@ -3308,7 +3320,7 @@ def main():
     print(f"prediction_date={prediction_date} (数据来源:{data_date})")
     print(f"①原始:N={total_raw} → ②硬排除:N={ae} → ③信号过滤:N={asig} → ④策略:N={astr} → ⑤行业限制:N={aind} → ⑥新闻筛查:N={aind - anew} → ★ 最终:N={fc}")
     sn = _STRATEGY_NAMES
-    print(f"策略分布: " + " ".join([f"{s}:{sd.get(s,0)}" for s in ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q']]))
+    print(f"策略分布: " + " ".join([f"{s}:{sd.get(s,0)}" for s in ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T']]))
     print(f"排除TOP5: " + " ".join([f"{r}:{c}只" for r, c in er.most_common(5)]))
     print("=" * 60)
     
