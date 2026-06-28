@@ -3376,7 +3376,6 @@ def main():
         c['_recent_7d_strategies'][data_date] = c.get('strategy', '?')
     print("\n[步骤14] 评分..."); scored = step14_scoring(sm, kline_data)
     print("\n[步骤15] 微观结构过滤..."); scored2, micro_filtered, micro_stats = step15_microstructure_filter(scored, kline_data); amicro = len(scored2)
-    print("\n[步骤15B] AI智能分析..."); ai_report = step15B_ai_analysis(scored2, kline_data, index_data, market_condition, {}, total_raw, ae, asig, astr, amicro, len(scored2), len(scored2))
     print("\n[步骤16] 综合评分+平局打破..."); ranked = step16_comprehensive_score(scored2)
     print("\n[步骤17] 行业限制..."); ail = step17_industry_limit(ranked); aind = len(ail)
     print("\n[步骤18] 新闻筛查..."); ail, anew = step18_news_screening(ail)
@@ -3391,6 +3390,10 @@ def main():
         fd = fundamental_data.get(c.get('code', ''), {})
         for k, v in fd.items():
             if v is not None: c[f'_fd_{k}'] = v
+    
+    # v6.12.1: 预计算盈亏比（供AI分析使用）
+    _compute_pl_ratios(final)
+    print("\n[步骤15B] AI智能分析(TOP10)..."); ai_report = step15B_ai_analysis(final, kline_data, index_data, market_condition, {}, total_raw, ae, asig, astr, amicro, aind, fc)
     
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report)
     print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report); hd = os.path.dirname(hp)
