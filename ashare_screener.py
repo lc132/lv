@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 A股每日盘前短线标的智能筛选 v6.9.60
-35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复 | 步骤10B全日期仅读缓存 | MACD+K线评分
+35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 17策略 | 27信号 | 13项硬排除 | MACD+K线评分 | K线-pool匹配修复 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1621,7 +1621,7 @@ def step10H_fetch_sub_industry(candidates):
 # 步骤11：硬排除
 # ============================================================
 def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_data=None, goodwill_data=None, unlock_data=None, fundamental_data=None):
-    """v6.9.43: 14项硬排除（创业板/PE<0/质押/商誉已迁移至信号过滤，解禁API已废弃）"""
+    """v6.9.43: 13项硬排除（创业板/PE<0/质押/商誉已迁移至信号过滤，解禁API已废弃）"""
     if kline_data is None: kline_data = {}
     if pledge_data is None: pledge_data = {}
     if goodwill_data is None: goodwill_data = {}
