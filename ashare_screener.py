@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.12.4
-35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 板块深度研判修复
+A股每日盘前短线标的智能筛选 v6.12.5
+35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 板块深度研判修复 | 行业分类修正
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,7 +13,7 @@ from lib.factor import compute_main_force_position, compute_short_term_breakout,
 from lib.microstructure import microstructure_filter
 from lib.analyst import generate_ai_report
 
-BUILTIN_VERSION = "v6.12.4"
+BUILTIN_VERSION = "v6.12.5"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1267,6 +1267,9 @@ HARDCODED_INDUSTRY = {
     '600596': '基础化工',  # 新安股份（有机硅/化工，在600500-600599段但非食品饮料）
     '603688': '基础化工',  # 石英股份（石英材料，在603600-603699段但非轻工制造）
     '605020': '基础化工',  # 永和股份（氟化工，在605000-605099段但非机械设备）
+    # v6.12.5: 2只行业修正（基于2026-06-29筛选结果校对）
+    '603045': '有色金属',  # 福达合金（电接触材料/合金材料，在603000-603099段但非电子）
+    '600226': '农林牧渔',  # 亨通股份（农药兽药/生物制药，在600200-600299段但非医药生物）
 }
 
 # ============================================================
