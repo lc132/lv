@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v6.10.0 早盘竞价模型 v1.0
+v6.10.1 早盘竞价模型 v1.0
 运行时机: 9:26-9:30（竞价结束后、开盘前）
 功能: 通过集合竞价数据验证，筛选强势潜力股
 """
@@ -36,7 +36,7 @@ def main():
     passed = []
     filtered = []
     for a in auction_data:
-        ok, reason = hard_filter_auction(a, kline_data)
+        ok, reason = hard_filter_auction(a)
         if ok:
             passed.append(a)
         else:

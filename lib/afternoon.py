@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v6.10.0 尾盘决策数据获取与筛选模块
+v6.10.1 尾盘决策数据获取与筛选模块
 数据源: 东方财富分时API + clist主力资金
 """
 import urllib.request, json, time, math
 
 
-def fetch_intraday_minute(code, market_prefix="1"):
+def fetch_intraday_minute(code):
     """
     拉取当日分时数据（分钟K线）
     东方财富趋势接口
@@ -51,6 +51,7 @@ def detect_lock_time(intraday_minutes, prev_close):
     """
     检测封板时间
     返回: 封板分钟数(距开盘)，未封板返回None
+    v6.10.1: 修复尾盘封板被误判为未封板的bug（continuous_lock未延续到收盘）
     """
     if not intraday_minutes or not prev_close:
         return None
@@ -65,12 +66,21 @@ def detect_lock_time(intraday_minutes, prev_close):
                 lock_time = m['time']
             continuous_lock += 1
         else:
-            if continuous_lock < 3:
+            if continuous_lock >= 3:
+                # 已确认封板，后续开板不重置
+                pass
+            else:
                 lock_time = None
             continuous_lock = 0
     
     if lock_time is None:
         return None
+    
+    # v6.10.1: 至少连续3分钟在涨停价附近才算封板
+    if continuous_lock < 3 and len(intraday_minutes) > 0:
+        last_m = intraday_minutes[-1]
+        if last_m['high'] < limit_price * 0.995:
+            return None
     
     # 解析时间 HH:MM 转为分钟数
     try:
@@ -94,10 +104,10 @@ def compute_distance_to_high(kline_data, code, close):
     return (high60 - close) / close if high60 > 0 and close > 0 else 0
 
 
-def compute_overnight_score(c, kline_data, limit_up_map, sector_limit_up_count):
+def compute_overnight_score(c, kline_data, sector_limit_up_count):
     """
     尾盘隔夜标的评分（0-12分）
-    封板质量(0-3) + 空间潜力(0-3) + 板块强度(0-3) + 资金强度(0-3)
+    v6.10.1: 移除未使用的 limit_up_map 参数
     """
     score = 0
     code = c.get('code', '')
@@ -130,9 +140,10 @@ def compute_overnight_score(c, kline_data, limit_up_map, sector_limit_up_count):
     return score
 
 
-def hard_filter_afternoon(c, intraday_data, kline_data):
+def hard_filter_afternoon(c, kline_data):
     """
     尾盘硬过滤
+    v6.10.1: 移除未使用的 intraday_data 参数
     - 封板时间 < 10:30
     - 距前高 > 10%
     - 板块内 ≥ 2只涨停

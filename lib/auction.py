@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v6.10.0 早盘竞价数据获取与验证模块
+v6.10.1 早盘竞价数据获取与验证模块
 数据源: 东方财富竞价接口 (免费)
 """
 import urllib.request, json, time, math
@@ -11,11 +11,10 @@ _AUCTION_URL = "https://push2.eastmoney.com/api/qt/stock/auction/get"
 _AUCTION_FIELDS = "f42,f43,f44,f45,f46,f47,f48,f60,f170,f171"
 
 
-def fetch_auction_single(code, market_prefix="0"):
+def fetch_auction_single(code):
     """
     拉取单只股票竞价数据
     code: 6位股票代码
-    market_prefix: 0=深圳, 1=上海
     返回: dict 或 None
     """
     if code.startswith('6'):
@@ -128,9 +127,10 @@ def compute_auction_score(auction_data, kline_data, prev_close):
     return max(0, min(10, score))
 
 
-def hard_filter_auction(auction_data, kline_data):
+def hard_filter_auction(auction_data):
     """
     竞价硬过滤
+    v6.10.1: 移除未使用的 kline_data 参数
     返回: (通过, 过滤原因)
     """
     code = auction_data.get('code', '')

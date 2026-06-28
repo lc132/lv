@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.10.0
+A股每日盘前短线标的智能筛选 v6.10.1
 35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
@@ -9,8 +9,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
+from lib.factor import compute_main_force_position, compute_short_term_breakout, resonance_check
 
-BUILTIN_VERSION = "v6.10.0"
+BUILTIN_VERSION = "v6.10.1"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -2046,7 +2047,6 @@ def step13_strategy_match(candidates, kline_data=None):
                                 s = "Q"; reason = f"W底突破:两底{l1:.2f}/{l2:.2f}+突破颈线{neck:.2f}+放量"; score = 9
         # ── R/S/T 主力共振（v6.10.0: 多因子共振模型，底仓+起爆双重确认）──
         if not s:
-            from lib.factor import compute_main_force_position, compute_short_term_breakout, resonance_check
             pos_score = compute_main_force_position(kline_data, c)
             break_score = compute_short_term_breakout(kline_data, c)
             res_strategy, res_level = resonance_check(pos_score, break_score)
@@ -2108,7 +2108,7 @@ def step14_scoring(candidates, kline_data=None):
         amp = c.get('amplitude', 0) or 0
         ma_bonus = 0.05 if amp < 3 and vr > 1.2 else 0
         code = c.get('code', '')
-        c['_tie_score'] = max(0, vs * (0.25 if s == 'D' else 0.30) + ts * (0.35 if s == 'D' else 0.30) + cs * 0.30 + (1.0 - so.get(s, 99) / 16.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
+        c['_tie_score'] = max(0, vs * (0.25 if s == 'D' else 0.30) + ts * (0.35 if s == 'D' else 0.30) + cs * 0.30 + (1.0 - so.get(s, 99) / 20.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
         # 融入最终score
         sc = c.get('score', 0) * 2
         sc += round(c['_tie_score'] * 8)  # v6.9.18: _tie_score 0~1 → 0~8分浮动，扩大区分度
