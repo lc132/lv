@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.12.5
+A股每日盘前短线标的智能筛选 v6.12.6
 35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线降级+HTTP备选 | 主力资金HTTP
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
@@ -13,7 +13,7 @@ from lib.factor import compute_main_force_position, compute_short_term_breakout,
 from lib.microstructure import microstructure_filter
 from lib.analyst import generate_ai_report
 
-BUILTIN_VERSION = "v6.12.5"
+BUILTIN_VERSION = "v6.12.6"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
