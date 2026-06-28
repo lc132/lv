@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.11.0
-35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复
+A股每日盘前短线标的智能筛选 v6.12.0
+35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,8 +11,9 @@ from collections import Counter, defaultdict
 from openpyxl import load_workbook
 from lib.factor import compute_main_force_position, compute_short_term_breakout, resonance_check
 from lib.microstructure import microstructure_filter
+from lib.analyst import generate_ai_report
 
-BUILTIN_VERSION = "v6.11.0"
+BUILTIN_VERSION = "v6.12.0"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -2485,6 +2486,16 @@ def step15_microstructure_filter(candidates, kline_data):
     """
     return microstructure_filter(candidates, kline_data)
 
+def step15B_ai_analysis(candidates, kline_data, index_data, market_condition,
+                         sector_limit_up, total_raw, ae, asig, astr, amicro, aind, fc):
+    """
+    步骤15B: AI 智能分析 v6.12.0
+    将单纯的数据筛选升级为 AI 智能分析，生成多维深度研判报告。
+    返回: ai_report dict
+    """
+    return generate_ai_report(candidates, kline_data, index_data, market_condition,
+                              sector_limit_up, total_raw, ae, asig, astr, amicro, aind, fc)
+
 def step16_comprehensive_score(candidates):
     # v6.9.38: 步骤15(冲突检测)已合并入步骤14评分，步骤16仅负责排序
     candidates.sort(key=_tie_key)
@@ -2701,7 +2712,7 @@ def _compute_pl_ratios(candidates):
 # ============================================================
 # 步骤20：Markdown输出
 # ============================================================
-def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er):
+def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er, ai_report=None):
     mp = f"/workspace/短线标的_{prediction_date}.md"
     lines = [
         f"# A股短线标的筛选报告 — {prediction_date}", "",
@@ -2776,6 +2787,36 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
     lines.append("\n## 硬排除 TOP5")
     for r, cnt in er.most_common(5): lines.append(f"- {r}: {cnt}只")
     lines.append(f"\n\n> ⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。\n> 版本: {file_version} | 生成: {beijing_date}")
+    
+    # ── v6.12.0: AI 策略分析 ──
+    if ai_report:
+        lines.append("\n---\n")
+        lines.append(ai_report.get('market_overview', ''))
+        lines.append("\n---\n")
+        lines.append(ai_report.get('sector_analysis', ''))
+        lines.append("\n---\n")
+        lines.append("## 三、个股深度分析")
+        lines.append("")
+        for ca in ai_report.get('candidate_analyses', []):
+            lines.append(f"### {ca.get('code', '')} {ca.get('name', '')}（{ca.get('strategy', '')}）")
+            lines.append("")
+            lines.append(ca.get('summary', ''))
+            lines.append("")
+            lines.append(ca.get('strategy_logic', ''))
+            lines.append("")
+            lines.append(ca.get('technical', ''))
+            lines.append("")
+            lines.append(ca.get('capital', ''))
+            lines.append("")
+            lines.append(ca.get('fundamental', ''))
+            lines.append("")
+            lines.append(ca.get('risk', ''))
+            lines.append("")
+            lines.append(ca.get('suggestion', ''))
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+    
     with open(mp, 'w', encoding='utf-8') as f: f.write('\n'.join(lines))
     log_alert("INFO", "Markdown", f"已输出至 {mp}")
     return mp
@@ -2783,7 +2824,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, aind, anew, er
 # ============================================================
 # 步骤20B：HTML报告（v6.6.27 含指数行情）
 # ============================================================
-def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts):
+def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report=None):
     hd = f"/workspace/ashare-screening-{pred_yyyymmdd}"
     os.makedirs(hd, exist_ok=True)
     hp = f"{hd}/ashare-screening-{pred_yyyymmdd}.html"
@@ -2989,6 +3030,34 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
 <div class="top10-card-reason">{reason}</div></div>''')
         top10_cards_html = '\n'.join(cards)
     
+    # ── v6.12.0: AI 策略分析 HTML ──
+    ai_html = ""
+    if ai_report:
+        ai_html += '<section><h2>AI 策略分析 — 市场全景</h2>'
+        ai_html += '<div style="font-size:.85rem;color:#cbd5e1;line-height:1.7;white-space:pre-wrap">'
+        ai_html += ai_report.get('market_overview', '').replace('\n', '<br>')
+        ai_html += '</div></section>'
+        
+        ai_html += '<section><h2>AI 策略分析 — 板块深度研判</h2>'
+        ai_html += '<div style="font-size:.85rem;color:#cbd5e1;line-height:1.7;white-space:pre-wrap">'
+        ai_html += ai_report.get('sector_analysis', '').replace('\n', '<br>')
+        ai_html += '</div></section>'
+        
+        ai_html += '<section><h2>AI 策略分析 — 个股深度研判</h2>'
+        ai_html += '<div class="top10-cards">'
+        for ca in ai_report.get('candidate_analyses', []):
+            ai_html += f'''<div class="top10-card">
+<div class="top10-card-header"><span class="rank">AI</span><span class="name">{ca.get('name', '')}</span><span class="code">{ca.get('code', '')}</span></div>
+<div class="top10-card-reason"><strong>综合研判：</strong>{ca.get('summary', '')}</div>
+<div class="top10-card-reason" style="margin-top:6px">{ca.get('strategy_logic', '')}</div>
+<div class="top10-card-reason" style="margin-top:6px">{ca.get('technical', '')}</div>
+<div class="top10-card-reason" style="margin-top:6px">{ca.get('capital', '')}</div>
+<div class="top10-card-reason" style="margin-top:6px">{ca.get('fundamental', '')}</div>
+<div class="top10-card-reason" style="margin-top:6px">{ca.get('risk', '')}</div>
+<div class="top10-card-reason" style="margin-top:6px">{ca.get('suggestion', '')}</div>
+</div>'''
+        ai_html += '</div></section>'
+    
     html_content = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>A股短线标的筛选 — {prediction_date}</title>
 <style>
@@ -3100,7 +3169,9 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 <tr><td><span class="badge strat_q">Q W底突破</span></td><td style="white-space:normal;word-break:break-all">20日内两底相差<5%+放量vr≥1.2突破颈线+阳线+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
 </tbody></table></section>
 <section><h2>TOP10 盈亏比精选推荐理由</h2>
-<div class="top10-cards">{top10_cards_html if top10_cards_html else '<div style="color:#94a3b8;padding:1rem">暂无TOP10数据</div>'}</div></section></div>
+<div class="top10-cards">{top10_cards_html if top10_cards_html else '<div style="color:#94a3b8;padding:1rem">暂无TOP10数据</div>'}</div></section>
+{ai_html}
+</div>
 <div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
     
     with open(hp, 'w', encoding='utf-8') as f: f.write(html_content)
@@ -3305,6 +3376,7 @@ def main():
         c['_recent_7d_strategies'][data_date] = c.get('strategy', '?')
     print("\n[步骤14] 评分..."); scored = step14_scoring(sm, kline_data)
     print("\n[步骤15] 微观结构过滤..."); scored2, micro_filtered, micro_stats = step15_microstructure_filter(scored, kline_data); amicro = len(scored2)
+    print("\n[步骤15B] AI智能分析..."); ai_report = step15B_ai_analysis(scored2, kline_data, index_data, market_condition, {}, total_raw, ae, asig, astr, amicro, aind, len(scored2))
     print("\n[步骤16] 综合评分+平局打破..."); ranked = step16_comprehensive_score(scored2)
     print("\n[步骤17] 行业限制..."); ail = step17_industry_limit(ranked); aind = len(ail)
     print("\n[步骤18] 新闻筛查..."); ail, anew = step18_news_screening(ail)
@@ -3320,8 +3392,8 @@ def main():
         for k, v in fd.items():
             if v is not None: c[f'_fd_{k}'] = v
     
-    print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, aind, anew, er)
-    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts); hd = os.path.dirname(hp)
+    print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, aind, anew, er, ai_report)
+    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report); hd = os.path.dirname(hp)
     
     print("\n[步骤21] 验证..."); step21_final_verify(mp, fc)
     print("\n[步骤22] 推荐历史..."); step22_write_history(final)

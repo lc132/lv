@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v6.11.0 尾盘决策数据获取与筛选模块
+v6.12.0 尾盘决策数据获取与筛选模块
 数据源: 东方财富分时API + clist主力资金
 """
 import urllib.request, json
@@ -51,7 +51,7 @@ def detect_lock_time(intraday_minutes, prev_close):
     """
     检测封板时间
     返回: 封板分钟数(距开盘)，未封板返回None
-    v6.11.0: 修复尾盘封板被误判为未封板的bug（continuous_lock未延续到收盘）
+    v6.12.0: 修复尾盘封板被误判为未封板的bug（continuous_lock未延续到收盘）
     """
     if not intraday_minutes or not prev_close:
         return None
@@ -76,7 +76,7 @@ def detect_lock_time(intraday_minutes, prev_close):
     if lock_time is None:
         return None
     
-    # v6.11.0: 至少连续3分钟在涨停价附近才算封板
+    # v6.12.0: 至少连续3分钟在涨停价附近才算封板
     if continuous_lock < 3 and len(intraday_minutes) > 0:
         last_m = intraday_minutes[-1]
         if last_m['high'] < limit_price * 0.995:
@@ -107,7 +107,7 @@ def compute_distance_to_high(kline_data, code, close):
 def compute_overnight_score(c, kline_data, sector_limit_up_count):
     """
     尾盘隔夜标的评分（0-12分）
-    v6.11.0: 移除未使用的 limit_up_map 参数
+    v6.12.0: 移除未使用的 limit_up_map 参数
     """
     score = 0
     code = c.get('code', '')
@@ -143,7 +143,7 @@ def compute_overnight_score(c, kline_data, sector_limit_up_count):
 def hard_filter_afternoon(c, kline_data):
     """
     尾盘硬过滤
-    v6.11.0: 移除未使用的 intraday_data 参数
+    v6.12.0: 移除未使用的 intraday_data 参数
     - 封板时间 < 10:30
     - 距前高 > 10%
     - 板块内 ≥ 2只涨停
