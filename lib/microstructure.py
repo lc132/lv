@@ -163,7 +163,6 @@ def microstructure_filter(candidates, kline_data):
     for c in candidates:
         code = c.get('code', '')
         turnover = c.get('turnover', 0) or 0
-        amp = c.get('amplitude', 0) or 0
         amihud = compute_amihud_illiquidity(c)
         
         # 硬过滤1: 换手率 < 2%

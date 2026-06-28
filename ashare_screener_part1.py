@@ -15,7 +15,7 @@ beijing_hour = None
 beijing_weekday = None
 prediction_date = None
 data_date = None
-file_version = "v6.9.58"
+file_version = "v6.11.0"
 
 # 各阶段计数
 total_raw = 0
@@ -531,10 +531,10 @@ def step6_file_init():
     params = {}
     if adj_records and len(adj_records) > 0:
         latest = adj_records[-1]
-        file_version = latest.get('version', 'v6.9.58')
+        file_version = latest.get('version', 'v6.11.0')
         params = latest.get('params', {})
     else:
-        file_version = 'v6.9.58'
+        file_version = 'v6.11.0'
         params = {}
     
     print(f"✅ 步骤6: 策略版本 = {file_version}")

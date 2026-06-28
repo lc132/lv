@@ -18,7 +18,7 @@ beijing_weekday = 5
 beijing_hour = 13
 beijing_now = datetime(2026, 6, 13, 13, 9, 57)
 market_env = "震荡"
-file_version = "v6.9.58"
+file_version = "v6.11.0"
 
 # 策略参数
 params = {
