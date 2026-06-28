@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.12.6
-35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线降级+HTTP备选 | 主力资金HTTP
+A股每日盘前短线标的智能筛选 v6.12.7
+35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线降级+HTTP备选 | 主力资金HTTP | 周末跳过推荐历史
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,7 +13,7 @@ from lib.factor import compute_main_force_position, compute_short_term_breakout,
 from lib.microstructure import microstructure_filter
 from lib.analyst import generate_ai_report
 
-BUILTIN_VERSION = "v6.12.6"
+BUILTIN_VERSION = "v6.12.7"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -3570,7 +3570,7 @@ def main():
     print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report); hd = os.path.dirname(hp)
     
     print("\n[步骤21] 验证..."); step21_final_verify(mp, fc)
-    print("\n[步骤22] 推荐历史..."); step22_write_history(final)
+    if beijing_weekday in (5, 6): print("\n[步骤22] 推荐历史... 周末跳过"); else: print("\n[步骤22] 推荐历史..."); step22_write_history(final)
     
     print("\n" + "=" * 60)
     print("📊 筛选概况")
