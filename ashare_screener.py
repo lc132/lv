@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.9.59
-35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复 | 步骤10B全日期仅读缓存
+A股每日盘前短线标的智能筛选 v6.9.60
+35步完整执行流程 | 腾讯一级 | 东方财富HTTP行业 | 17策略 | 29信号 | K线-pool匹配修复 | 质押/商誉字段激活 | 新浪total_cap修复 | days_listed修复 | 成交额优先 | 原始池预过滤 | 行业缓存降级 | 盈亏比TOP10 | 数量校验修复 | 步骤10B全日期仅读缓存 | MACD+K线评分
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
 
-BUILTIN_VERSION = "v6.9.59"
+BUILTIN_VERSION = "v6.9.60"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -2051,8 +2051,9 @@ def step13_strategy_match(candidates, kline_data=None):
 # ============================================================
 # 步骤14-17：评分+行业限制
 # ============================================================
-def step14_scoring(candidates):
+def step14_scoring(candidates, kline_data=None):
     # v6.9.10: 先计算_tie_score（原在step16），再融入最终score
+    # v6.9.60: 新增MACD+K线技术指标评分（DIF/DEA/MACD柱/均线/KDJ）
     so = _STRATEGY_ORDER
     sector_ad = defaultdict(list)
     for c in candidates:
@@ -2109,6 +2110,25 @@ def step14_scoring(candidates):
             if chg < -7: sc += 2
             elif chg < -5: sc += 1
         if c.get('_first_yin') and s not in ('A', 'B'): sc += 2  # v6.9.39: 首阴加分仅适用于回调/低涨幅策略
+        # v6.9.60: MACD+K线技术指标评分（最多+8分）
+        macd_kline_bonus = 0
+        kd = (kline_data or {}).get(code, {})
+        if kd:
+            # MACD指标 (最多+4分)
+            dif = kd.get('dif', 0); dea = kd.get('dea', 0); macd_hist = kd.get('macd_hist', 0)
+            if dif > dea: macd_kline_bonus += 1          # MACD金叉形态
+            if macd_hist > 0: macd_kline_bonus += 1      # MACD柱状线多头
+            if dif > 0 and dea > 0: macd_kline_bonus += 1  # 零轴上方运行
+            if dif > 0 and macd_hist > 0: macd_kline_bonus += 1  # 零轴上多头强化
+            # K线指标 (最多+4分)
+            close_p = kd.get('closes', [0]); close = close_p[-1] if close_p else 0
+            ma5 = kd.get('ma5', 0); ma10 = kd.get('ma10', 0); ma20 = kd.get('ma20', 0)
+            if close > ma5 > 0: macd_kline_bonus += 1     # 站上MA5
+            if ma5 > ma10 > 0: macd_kline_bonus += 1      # 短期均线金叉
+            if close > ma20 > 0: macd_kline_bonus += 1    # 站上MA20
+            k_val = kd.get('k', 0); d_val = kd.get('d', 0)
+            if k_val > d_val: macd_kline_bonus += 1       # KDJ多头
+        sc += macd_kline_bonus
         c['score'] = max(0, sc)
         if c['score'] >= 18: c['confidence'] = '★★★'
         elif c['score'] >= 12: c['confidence'] = '★★'
@@ -3260,7 +3280,7 @@ def main():
     for c in sm:
         c['_recent_7d'] = c.get('_recent_7d', 0) + 1
         c['_recent_7d_strategies'][data_date] = c.get('strategy', '?')
-    print("\n[步骤14] 评分..."); scored = step14_scoring(sm)
+    print("\n[步骤14] 评分..."); scored = step14_scoring(sm, kline_data)
     print("\n[步骤16] 综合评分+平局打破..."); ranked = step16_comprehensive_score(scored)
     print("\n[步骤17] 行业限制..."); ail = step17_industry_limit(ranked); aind = len(ail)
     print("\n[步骤18] 新闻筛查..."); ail, anew = step18_news_screening(ail)
