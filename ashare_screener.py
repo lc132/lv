@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 A股每日盘前短线标的智能筛选 v6.12.5
-35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 板块深度研判修复 | 行业分类修正
+35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线降级+HTTP备选 | 主力资金HTTP
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1409,6 +1409,129 @@ def step10C_fetch_klines(candidates):
     except Exception as e:
         log_alert("WARNING", "K线拉取", f"pytdx不可用: {str(e)[:60]}")
     return kline_data
+
+# ============================================================
+# 步骤10C-备选：HTTP K线拉取（东方财富API，v6.12.5新增）
+# pytdx在沙箱网络中无法连接时，使用HTTP备选方案
+# ============================================================
+def step10C_fetch_klines_http(candidates):
+    """v6.12.5: HTTP备选K线拉取（东方财富日K线API）
+    返回格式与 step10C_fetch_klines 完全一致
+    """
+    kline_data = {}
+    try:
+        for c in candidates:
+            code = c.get('code', '')
+            if not code: continue
+            try:
+                mc = '1' if code.startswith('6') else '0'
+                secid = f'{mc}.{code}'
+                url = (f'https://push2his.eastmoney.com/api/qt/stock/kline/get?'
+                       f'secid={secid}&fields1=f1,f2,f3,f4,f5,f6&'
+                       f'fields2=f51,f52,f53,f54,f55,f56,f57&klt=101&fqt=1&'
+                       f'end={data_date.replace("-","")}&lmt=60')
+                req = urllib.request.Request(url, headers={
+                    'User-Agent': 'Mozilla/5.0',
+                    'Referer': 'https://quote.eastmoney.com/'})
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    data = json.loads(resp.read().decode())
+                klines = data.get('data', {}).get('klines', [])
+                if not klines or len(klines) < 20:
+                    kline_data[code] = {}
+                    continue
+                # 解析: '2026-06-25,34.65,35.92,34.55,35.85,123456,789.12,1.5,0.5'
+                closes = []; highs = []; lows = []; volumes = []
+                for k in klines:
+                    parts = k.split(',')
+                    closes.append(float(parts[2]))
+                    highs.append(float(parts[3]))
+                    lows.append(float(parts[4]))
+                    volumes.append(float(parts[5]))
+                ma5 = sum(closes[-5:]) / 5 if len(closes) >= 5 else 0
+                ma10 = sum(closes[-10:]) / 10 if len(closes) >= 10 else 0
+                ma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else 0
+                # MACD (12,26,9)
+                ema12 = closes[0]; ema26 = closes[0]
+                difs = [0.0]
+                for pr in closes[1:]:
+                    ema12 = ema12 * 11/13 + pr * 2/13
+                    ema26 = ema26 * 25/27 + pr * 2/27
+                    difs.append(ema12 - ema26)
+                dea = difs[0]
+                macd_hists = [0.0]
+                for d in difs[1:]:
+                    dea = dea * 8/10 + d * 2/10
+                    macd_hists.append((d - dea) * 2)
+                dif = difs[-1]; dea_val = dea; macd_hist = macd_hists[-1]
+                # KDJ(9,3,3)
+                k_val = 50.0; d_val = 50.0; j_val = 50.0
+                if len(closes) >= 9:
+                    for i in range(8, len(closes)):
+                        h9 = max(highs[i-8:i+1]); l9 = min(lows[i-8:i+1])
+                        rsv = (closes[i] - l9) / (h9 - l9) * 100 if h9 > l9 else 50
+                        k_val = 2/3 * k_val + 1/3 * rsv
+                        d_val = 2/3 * d_val + 1/3 * k_val
+                    j_val = 3 * k_val - 2 * d_val
+                # 布林带(20,2)
+                boll_mid = ma20; boll_upper = boll_mid; boll_lower = boll_mid
+                if len(closes) >= 20 and boll_mid > 0:
+                    variance = sum((c - boll_mid) ** 2 for c in closes[-20:]) / 20
+                    std = variance ** 0.5
+                    boll_upper = boll_mid + 2 * std; boll_lower = boll_mid - 2 * std
+                high20 = max(highs[-20:]) if len(highs) >= 20 else max(highs)
+                low20 = min(lows[-20:]) if len(lows) >= 20 else min(lows)
+                boll_width = (boll_upper - boll_lower) / boll_mid if boll_mid > 0 else 999
+                kline_data[code] = {
+                    'ma5': ma5, 'ma10': ma10, 'ma20': ma20,
+                    'dif': dif, 'dea': dea_val, 'macd_hist': macd_hist,
+                    'rsi14': 50.0, 'k': k_val, 'd': d_val, 'j': j_val,
+                    'boll_upper': boll_upper, 'boll_mid': boll_mid, 'boll_lower': boll_lower,
+                    'boll_width': boll_width, 'wr14': 50.0, 'obv': 0,
+                    'pdi': 0.0, 'mdi': 0.0, 'adx': 0.0,
+                    'high20': high20, 'low20': low20,
+                    'days_listed': 999, 'limit_up_days': 0,
+                    'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes
+                }
+            except (urllib.error.URLError, json.JSONDecodeError, OSError,
+                    ValueError, TypeError, ZeroDivisionError, IndexError):
+                kline_data[code] = {}
+        valid_count = sum(1 for v in kline_data.values() if v and v.get('closes'))
+        log_alert("INFO", "K线HTTP", f"东方财富HTTP获取{len(kline_data)}只({valid_count}只有效)")
+    except Exception as e:
+        log_alert("WARNING", "K线HTTP", f"东方财富API不可用: {str(e)[:60]}")
+    return kline_data
+
+# ============================================================
+# ============================================================
+# 步骤10C-附：东方财富资金流向（v6.12.5新增）
+# 腾讯基础API不提供主力资金流向，使用东方财富flow API获取
+# ============================================================
+def step10C_flow_fetch_main_inflow(candidates):
+    """v6.12.5: 东方财富资金流向API批量获取主力净流入
+    返回: {code: main_inflow_yuan} 字典，值为 float（元）"""
+    flow_data = {}
+    if not candidates: return flow_data
+    for c in candidates:
+        code = c.get('code', '')
+        if not code: continue
+        try:
+            mc = '1' if code.startswith('6') else '0'
+            secid = f'{mc}.{code}'
+            url = (f'https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?'
+                   f'secid={secid}&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57&lmt=1')
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0',
+                'Referer': 'https://quote.eastmoney.com/'})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode())
+            klines = data.get('data', {}).get('klines', [])
+            if klines:
+                parts = klines[0].split(',')
+                main_in = float(parts[1])  # 主力净流入(元)
+                flow_data[code] = main_in
+        except Exception:
+            flow_data[code] = None
+    return flow_data
 
 # ============================================================
 # 步骤10D：东方财富财务数据拉取（质押/商誉/解禁 — API已废弃，降级跳过）
@@ -3390,6 +3513,11 @@ def main():
     print(f"  原始池: {total_raw}只")
     
     print("\n[步骤10C] 历史K线..."); kline_data = step10C_fetch_klines(raw_pool)  # v6.9.43: 传入raw_pool而非all_stocks[:500]
+    # v6.12.5: pytdx失败时自动降级到东方财富HTTP K线API
+    valid_kline = sum(1 for v in kline_data.values() if v and v.get('closes'))
+    if valid_kline < len(raw_pool) * 0.5:
+        log_alert("WARNING", "K线降级", f"pytdx仅{valid_kline}只有效({valid_kline}/{len(raw_pool)})，切换到东方财富HTTP")
+        kline_data = step10C_fetch_klines_http(raw_pool)  # v6.12.5: HTTP备选方案
     
     print("\n[步骤11] 硬排除..."); ael, _, er = step11_hard_exclude(raw_pool, ahc, kline_data, pledge_data, goodwill_data, unlock_data, {}); ae = len(ael)
     print("\n[步骤10E] F10基本面..."); fundamental_data = step10E_fetch_fundamentals(ael)
@@ -3427,6 +3555,15 @@ def main():
         if s.get('change_pct') is not None and s['change_pct'] >= 9.5:
             ind = lookup_industry(s.get('code', ''))
             sector_limit_up[ind] = sector_limit_up.get(ind, 0) + 1
+    # v6.12.5: 主力资金流向批量获取（东方财富API，仅对最终股票池）
+    print("\n[步骤15A] 主力资金流向..."); flow_data = step10C_flow_fetch_main_inflow(final)
+    for s in final:
+        code = s.get('code', '')
+        if code in flow_data and flow_data[code] is not None:
+            s['main_inflow'] = flow_data[code]
+        else:
+            s['main_inflow'] = None
+    log_alert("INFO", "主力资金", f"获取{sum(1 for v in flow_data.values() if v is not None)}只/{len(final)}只")
     print("\n[步骤15B] AI智能分析(TOP10)..."); ai_report = step15B_ai_analysis(final, kline_data, index_data, market_condition, sector_limit_up, total_raw, ae, asig, astr, amicro, aind, fc)
     
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report)

@@ -189,16 +189,18 @@ def generate_candidate_analysis(c, kline_data, idx, total):
     news_sens = c.get('_news_sensitivity', 0)
 
     kd = kline_data.get(code, {}) if kline_data else {}
-    closes = kd.get('closes', [])
-    ma5 = kd.get('ma5', 0)
-    ma10 = kd.get('ma10', 0)
-    ma20 = kd.get('ma20', 0)
-    dif = kd.get('dif', 0)
-    dea = kd.get('dea', 0)
-    macd_hist = kd.get('macd_hist', 0)
-    k_val = kd.get('k', 0)
-    d_val = kd.get('d', 0)
-    high20 = kd.get('high20', 0)
+    # v6.12.5: 检测kline数据是否有效（pytdx在沙箱中可能连接失败，返回空dict）
+    has_kline = bool(kd and kd.get('closes') and len(kd.get('closes', [])) >= 20)
+    closes = kd.get('closes', []) if has_kline else []
+    ma5 = kd.get('ma5', 0) if has_kline else 0
+    ma10 = kd.get('ma10', 0) if has_kline else 0
+    ma20 = kd.get('ma20', 0) if has_kline else 0
+    dif = kd.get('dif', 0) if has_kline else 0
+    dea = kd.get('dea', 0) if has_kline else 0
+    macd_hist = kd.get('macd_hist', 0) if has_kline else 0
+    k_val = kd.get('k', 0) if has_kline else 0
+    d_val = kd.get('d', 0) if has_kline else 0
+    high20 = kd.get('high20', 0) if has_kline else 0
 
     strategy_names = {
         'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳',
@@ -214,7 +216,7 @@ def generate_candidate_analysis(c, kline_data, idx, total):
 
     # ========== 技术面分析 ==========
     technical = _build_technical_analysis(code, close, ma5, ma10, ma20, dif, dea, macd_hist,
-                                           k_val, d_val, high20, change_pct, ampl, vr, closes)
+                                           k_val, d_val, high20, change_pct, ampl, vr, closes, has_kline)
 
     # ========== 资金面分析 ==========
     capital = _build_capital_analysis(main_in, amount, turnover, vr, amihud, liq_score)
@@ -279,10 +281,20 @@ def _build_strategy_logic(strat, sname, change_pct, ampl, vr, turnover, industry
 
 
 def _build_technical_analysis(code, close, ma5, ma10, ma20, dif, dea, macd_hist,
-                               k_val, d_val, high20, change_pct, ampl, vr, closes):
+                               k_val, d_val, high20, change_pct, ampl, vr, closes, has_kline=True):
     """构建技术面分析"""
     lines = []
     lines.append("**技术面**：")
+
+    if not has_kline:
+        lines.append(f"- 技术指标数据不可得（pytdx连接不可用），建议参考基本面筛选结果")
+        lines.append(f"- 收盘价：{close:.2f}，涨跌幅：{change_pct:+.2f}%")
+        if vr > 0:
+            if vr > 1.5 and change_pct > 0:
+                lines.append(f"- 量价配合：放量上涨（量比{vr:.1f}），量价关系健康")
+            elif vr < 0.5 and change_pct < 0:
+                lines.append(f"- 量价配合：缩量下跌（量比{vr:.1f}），卖压衰竭")
+        return "\n".join(lines)
 
     # 均线系统
     ma_status = []
@@ -340,16 +352,16 @@ def _build_capital_analysis(main_in, amount, turnover, vr, amihud, liq_score):
     lines = []
     lines.append("**资金面**：")
 
-    if main_in > 300_000_000:
+    if main_in is not None and main_in > 300_000_000:
         lines.append(f"- 主力净流入 {main_in/1e4:.0f}万，大资金积极做多，资金面强势")
-    elif main_in > 100_000_000:
+    elif main_in is not None and main_in > 100_000_000:
         lines.append(f"- 主力净流入 {main_in/1e4:.0f}万，资金温和流入，有一定支撑")
-    elif main_in > 0:
+    elif main_in is not None and main_in > 0:
         lines.append(f"- 主力净流入 {main_in/1e4:.0f}万，资金小幅流入，关注后续变化")
-    elif main_in < 0:
+    elif main_in is not None and main_in < 0:
         lines.append(f"- 主力净流出 {abs(main_in)/1e4:.0f}万，资金面偏空，注意风险")
     else:
-        lines.append(f"- 主力资金方向不明，需进一步观察")
+        lines.append(f"- 主力资金数据不可得，需结合盘口观察")
 
     lines.append(f"- 成交额 {amount/1e8:.1f}亿，换手率 {turnover:.1f}%，流动性{'良好' if liq_score >= 3 else '一般' if liq_score >= 2 else '偏弱'}")
     if amihud > 0:
