@@ -1528,7 +1528,11 @@ def step10C_fetch_klines_itick(candidates):
         log_alert("WARNING", "K线iTick", "未配置ITICK_API_KEY环境变量，跳过")
         return kline_data
     try:
-        batch_size = 5  # 每批5只（免费套餐: 5次/分钟）
+        # 探测套餐速率: 试用期(7天) = 120次/分钟, 免费版 = 5次/分钟
+        # 默认保守使用5次/分钟，可通过 ITICK_RATE_LIMIT 环境变量覆盖
+        rate_limit = int(os.environ.get("ITICK_RATE_LIMIT", "5"))
+        batch_size = min(rate_limit, 10)  # 每批最多10只，避免单请求耗时过长
+        wait_seconds = 60 / max(rate_limit / batch_size, 1)  # 每批间隔
         total = len(candidates)
         for batch_start in range(0, total, batch_size):
             batch = candidates[batch_start:batch_start + batch_size]
@@ -1605,10 +1609,10 @@ def step10C_fetch_klines_itick(candidates):
                 except (urllib.error.URLError, json.JSONDecodeError, OSError,
                         ValueError, TypeError, ZeroDivisionError, IndexError):
                     kline_data[code] = {}
-            # 速率限制: 免费套餐5次/分钟，每批后等待
+            # 速率限制: 试用期120次/分钟(ITICK_RATE_LIMIT=120), 免费版5次/分钟(默认)
             elapsed = time.time() - batch_start_time
-            if elapsed < 60 and batch_start + batch_size < total:
-                wait = max(5, 60 - elapsed)
+            if elapsed < wait_seconds and batch_start + batch_size < total:
+                wait = max(1, wait_seconds - elapsed)
                 time.sleep(wait)
         valid_count = sum(1 for v in kline_data.values() if v and v.get('closes'))
         log_alert("INFO", "K线iTick", f"iTick获取{len(kline_data)}只({valid_count}只有效)")
