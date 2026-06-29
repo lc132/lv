@@ -3045,12 +3045,12 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
         scl = f"strat_{s.lower()}"
         url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
-        # v6.12.13: 回测标记列
+        # v6.12.14: 回测标记列 — 修复 no_data 映射为🔴的bug
         bt_mark = ''
         if bt_lookup and code in bt_lookup:
             bt = bt_lookup[code]
-            bt_emoji = "🟢" if bt["last_result"]=="win" else "🔴"
-        bt_mark = f'<span class="{"win" if bt["last_result"]=="win" else "loss"}">{bt_emoji}{bt["wins"]}/{bt["total"]}</span>'
+            bt_emoji = "🟢" if bt["last_result"]=="win" else ("🔴" if bt["last_result"]=="loss" else "⚪")
+            bt_mark = f'<span class="{bt["last_result"]}">{bt_emoji}{bt["wins"]}/{bt["total"]}</span>'
         rows_html += f"""<tr class="{scl}"><td>{idx}</td><td>{top10_mark}</td><td><span class="badge {scl}">{s}</span></td>
         <td><a href="{url}" target="_blank">{html.escape(name)}</a></td><td>{code}</td><td>{ind}</td><td>{html.escape(biz)}</td>
         <td class="{chg_cls}">{chg:+.2f}%</td><td>{op:.2f}</td><td>{close:.2f}</td>
