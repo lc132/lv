@@ -12,8 +12,9 @@ from openpyxl import load_workbook
 from lib.factor import compute_main_force_position, compute_short_term_breakout, resonance_check
 from lib.microstructure import microstructure_filter
 from lib.analyst import generate_ai_report
+from lib.backtest import run_backtest, generate_backtest_report
 
-BUILTIN_VERSION = "v6.12.10"
+BUILTIN_VERSION = "v6.12.11"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -3597,6 +3598,11 @@ def main():
         print("\n⚠️ 持仓危机:")
         for a in crisis_alerts: print(f"  {a}")
     
+# v6.12.11: 历史回测（读取推荐历史，模拟止盈止损，生成回测报告）
+    if any(f.startswith("推荐历史_") and f.endswith(".json") for f in os.listdir(DATA_DIR)):
+        bt_result = run_backtest(hold_days=10, max_days_lookback=90)
+        if bt_result['all_trades']:
+            generate_backtest_report(bt_result, "/workspace/回测报告.md")
     print("\n[步骤26] GitHub同步..."); step26_github_sync(mp, hd, final)
     print("\n[步骤27] 飞书推送..."); step27_feishu_push(final, total_raw, ae, asig, astr, aind, anew, sd)
     print(f"\n✅ 完成！ {mp}")
