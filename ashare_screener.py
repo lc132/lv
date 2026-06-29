@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.12.9
-35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线降级+HTTP备选 | 主力资金HTTP | 周末跳过推荐历史
+A股每日盘前短线标的智能筛选 v6.12.10
+35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线降级+HTTP备选 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,7 +13,7 @@ from lib.factor import compute_main_force_position, compute_short_term_breakout,
 from lib.microstructure import microstructure_filter
 from lib.analyst import generate_ai_report
 
-BUILTIN_VERSION = "v6.12.9"
+BUILTIN_VERSION = "v6.12.10"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -24,7 +24,7 @@ _CN_HOLIDAYS_2026 = [
     "2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07"
 ]
 file_version = BUILTIN_VERSION; params = {}
-_pl_sorted = []  # v6.12.9: 模块级初始化，防止 NameError
+_pl_sorted = []  # v6.12.10: 模块级初始化，防止 NameError
 market_condition = "震荡"; position_pct = 55
 index_data = {}  # 三大指数行情(供HTML使用)
 MIN_POSITION_PCT = 20  # v6.8.7: 全局仓位下限
@@ -266,7 +266,7 @@ def fetch_tencent_stocks(codes):
                         "amplitude": _parse_tencent_field(raw, 43, 0),
                         "volume_ratio": _parse_tencent_field(raw, 49, None),
                         "pe_ttm": _parse_tencent_field(raw, 39, None),
-                        "total_cap": (_tc := _parse_tencent_field(raw, 44, None)) and _tc * 1e8,  # v6.12.9: fix dup call, 亿元→元
+                        "total_cap": (_tc := _parse_tencent_field(raw, 44, None)) and _tc * 1e8,  # v6.12.10: fix dup call, 亿元→元
                         "main_inflow": None,  # 腾讯基础API不提供主力资金流向
                     })
                 except (ValueError, TypeError, IndexError, AttributeError): pass
@@ -2849,9 +2849,11 @@ def calc_entry_price(c):
     
     return round(close, 2)
 
-def _compute_pl_ratios(candidates):
-    """预计算盈亏比TOP10，标注c['_entry']/c['_stop']/c['_target']/c['_pl_ratio']，返回_top10_codes集合"""
+def _compute_pl_ratios(candidates, sector_limit_up=None):
+    """预计算盈亏比TOP10，标注c['_entry']/c['_stop']/c['_target']/c['_pl_ratio']，返回_top10_codes集合
+    v6.12.10: 板块热度排序——第一优先级板块涨停家数，第二优先级盈亏比"""
     global _pl_sorted
+    sector_heat = sector_limit_up or {}
     _pl_data = []
     for c in candidates:
         s = c.get('strategy', '?')
@@ -2859,10 +2861,14 @@ def _compute_pl_ratios(candidates):
         sl = round(entry * _STRATEGY_STOP_LOSS.get(s, 0.96), 2)
         tp = round(entry * _STRATEGY_TAKE_PROFIT.get(s, 1.05), 2)
         pl_ratio = round((tp - entry) / max(entry - sl, 0.01), 2)
-        _pl_data.append((c.get('code', ''), pl_ratio))
+        industry = lookup_industry(c.get('code', ''))
+        heat = sector_heat.get(industry, 0)
+        _pl_data.append((c.get('code', ''), pl_ratio, heat, industry))
         c['_entry'] = entry; c['_stop'] = sl; c['_target'] = tp; c['_pl_ratio'] = pl_ratio
-    _pl_sorted = sorted(_pl_data, key=lambda x: x[1], reverse=True)
-    return set(c for c, _ in _pl_sorted[:10])
+        c['_sector_heat'] = heat
+    # v6.12.10: 先按板块热度降序，再按盈亏比降序
+    _pl_sorted = sorted(_pl_data, key=lambda x: (-x[2], -x[1]))
+    return set(c for c, _, _, _ in _pl_sorted[:10])
 
 # ============================================================
 # 步骤20：Markdown输出
@@ -2918,11 +2924,11 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                 r7d_str = f"{r7d} ({','.join(uniq_s)})"
             url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
             lines.append(f"| {idx} | {top10_mark} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} | {pl_ratio} |")
-        # v6.9.46: TOP10盈亏比精选
-        lines.append("\n## TOP10 盈亏比精选\n")
-        lines.append("| # | 标的 | 代码 | 策略 | 行业 | 盈亏比 | 进场 | 止损 | 止盈 | 评分 |")
-        lines.append("|---|---|---|---|---|---|---|---|---|---|")
-        for ti, (tcode, tpl) in enumerate(_pl_sorted[:10], 1):
+        # v6.12.10: TOP10板块热度精选
+        lines.append("\n## TOP10 板块热度精选（按板块涨停家数排序，同热度按盈亏比优先）\n")
+        lines.append("| # | 标的 | 代码 | 策略 | 行业 | 板块热度 | 盈亏比 | 进场 | 止损 | 止盈 | 评分 |")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
+        for ti, (tcode, tpl, theat, _) in enumerate(_pl_sorted[:10], 1):
             tc = next((ct for ct in candidates if ct.get('code') == tcode), None)
             if tc:
                 ts = tc.get('strategy', '?')
@@ -2933,7 +2939,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                 ttp = round(tentry * _STRATEGY_TAKE_PROFIT.get(ts, 1.05), 2)
                 tscore = tc.get('score', 0)
                 turl = f"https://quote.eastmoney.com/sh{tcode}.html" if tcode.startswith('6') else f"https://quote.eastmoney.com/sz{tcode}.html"
-                lines.append(f"| {ti} | [{tname}]({turl}) | {tcode} | {ts} | {tind} | {tpl} | {tentry:.2f} | {tsl:.2f} | {ttp:.2f} | {tscore} |")
+                heat_str = f"🔥🔥🔥 {theat}涨停" if theat >= 10 else (f"🔥🔥 {theat}涨停" if theat >= 3 else f"🔥 {theat}涨停")
+                lines.append(f"| {ti} | [{tname}]({turl}) | {tcode} | {ts} | {tind} | {heat_str} | {tpl} | {tentry:.2f} | {tsl:.2f} | {ttp:.2f} | {tscore} |")
     sd = Counter(c.get('strategy') for c in candidates)
     sn = _STRATEGY_NAMES
     lines.append("\n## 策略分布")
@@ -3323,7 +3330,7 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 <tr><td><span class="badge strat_p">P地量反弹</span></td><td style="white-space:normal;word-break:break-all">连续3日缩量至地量+当日放量vr≥1.2+涨1.0-5%阳线+弱市跳过</td><td>6-8%</td><td>3-5%</td></tr>
 <tr><td><span class="badge strat_q">Q W底突破</span></td><td style="white-space:normal;word-break:break-all">20日内两底相差<5%+放量vr≥1.2突破颈线+阳线+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
 </tbody></table></section>
-<section><h2>TOP10 盈亏比精选推荐理由</h2>
+<section><h2>TOP10 板块热度精选推荐理由</h2>
 <div class="top10-cards">{top10_cards_html if top10_cards_html else '<div style="color:#94a3b8;padding:1rem">暂无TOP10数据</div>'}</div></section>
 {ai_html}
 </div>
@@ -3551,14 +3558,14 @@ def main():
         for k, v in fd.items():
             if v is not None: c[f'_fd_{k}'] = v
     
-    # v6.12.1: 预计算盈亏比（供AI分析使用）
-    _compute_pl_ratios(final)
     # v6.12.4: 构建涨停板块分布（供AI板块深度研判使用）
     sector_limit_up = {}
     for s in all_stocks:
         if s.get('change_pct') is not None and s['change_pct'] >= 9.5:
             ind = lookup_industry(s.get('code', ''))
             sector_limit_up[ind] = sector_limit_up.get(ind, 0) + 1
+    # v6.12.10: 预计算盈亏比（板块热度→盈亏比排序，供AI和TOP10使用）
+    _compute_pl_ratios(final, sector_limit_up)
     # v6.12.5: 主力资金流向批量获取（东方财富API，仅对最终股票池）
     print("\n[步骤15A] 主力资金流向..."); flow_data = step10C_flow_fetch_main_inflow(final)
     for s in final:
