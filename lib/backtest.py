@@ -5,6 +5,7 @@
 # ============================================================
 
 import urllib.request
+import urllib.error
 import json
 import time
 import os
@@ -46,8 +47,9 @@ def _safe_read_json(path, default=None):
 
 
 def _fetch_kline_range(code, start_date, lmt=15):
-    """获取指定日期之后N根日K线（东方财富HTTP API）"""
+    """获取指定日期之后N根日K线（东方财富HTTP → iTick降级）"""
     try:
+        # 一级: 东方财富HTTP
         mc = '1' if code.startswith('6') else '0'
         secid = f'{mc}.{code}'
         end_dt = datetime.strptime(start_date, '%Y-%m-%d') + timedelta(days=30)
@@ -62,20 +64,49 @@ def _fetch_kline_range(code, start_date, lmt=15):
         with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read().decode())
         klines = data.get('data', {}).get('klines', [])
-        if not klines:
-            return []
-        result = []
-        for k in klines:
-            parts = k.split(',')
-            result.append({
-                'date': parts[0], 'open': float(parts[1]),
-                'close': float(parts[2]), 'high': float(parts[3]),
-                'low': float(parts[4]), 'volume': float(parts[5]),
-            })
-        result = [r for r in result if r['date'] > start_date]
-        return result
+        if klines:
+            result = []
+            for k in klines:
+                parts = k.split(',')
+                result.append({
+                    'date': parts[0], 'open': float(parts[1]),
+                    'close': float(parts[2]), 'high': float(parts[3]),
+                    'low': float(parts[4]), 'volume': float(parts[5]),
+                })
+            result = [r for r in result if r['date'] > start_date]
+            return result
     except Exception:
-        return []
+        pass
+
+    # 二级降级: iTick API
+    itick_key = os.environ.get("ITICK_API_KEY", "6a6dba133463414c838fe9811f0f354d87e9711a2ef9457aa05f58ccc468d510")
+    if itick_key:
+        try:
+            region = 'SH' if code.startswith('6') else 'SZ'
+            url = f'https://api.itick.org/stock/kline?region={region}&code={code}&kType=8&limit={lmt + 10}'
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0',
+                'accept': 'application/json',
+                'token': itick_key})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+            bars = data.get('data', [])
+            if bars:
+                bars.sort(key=lambda b: b.get('t', 0))
+                result = []
+                for b in bars:
+                    date_str = datetime.fromtimestamp(b['t'] / 1000).strftime('%Y-%m-%d')
+                    result.append({
+                        'date': date_str, 'open': b['o'],
+                        'close': b['c'], 'high': b['h'],
+                        'low': b['l'], 'volume': b['v'],
+                    })
+                result = [r for r in result if r['date'] > start_date]
+                return result
+        except Exception:
+            pass
+
+    return []
 
 
 def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):

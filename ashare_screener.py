@@ -13,6 +13,7 @@ from lib.factor import compute_main_force_position, compute_short_term_breakout,
 from lib.microstructure import microstructure_filter
 from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
+from lib.core import DATA_DIR
 
 BUILTIN_VERSION = "v6.12.15"
 GITHUB_REPO = "lc132/lv"
@@ -1515,7 +1516,7 @@ def step10C_fetch_klines_http(candidates):
 # 步骤10C-三级备选：iTick HTTP K线拉取（v6.12.15新增）
 # pytdx和东方财富HTTP均不可达时，使用iTick API作为第三级降级
 # ============================================================
-_ITICK_API_KEY = os.environ.get("ITICK_API_KEY", "")  # 从环境变量读取，或在此处硬编码
+_ITICK_API_KEY = os.environ.get("ITICK_API_KEY", "6a6dba133463414c838fe9811f0f354d87e9711a2ef9457aa05f58ccc468d510")
 _ITICK_BASE_URL = "https://api.itick.org"  # 生产环境；免费版可用 https://api-free.itick.org
 
 def step10C_fetch_klines_itick(candidates):
@@ -1545,6 +1546,7 @@ def step10C_fetch_klines_itick(candidates):
                     region = 'SH' if code.startswith('6') else 'SZ'
                     url = (f'{_ITICK_BASE_URL}/stock/kline?'
                            f'region={region}&code={code}&kType=8&limit=60')
+                    time.sleep(0.5)  # 请求间隔，避免429（试用期120/min → 2/sec）
                     req = urllib.request.Request(url, headers={
                         'User-Agent': 'Mozilla/5.0',
                         'accept': 'application/json',
