@@ -1,6 +1,7 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.12.12
+# A股短线筛选 — 历史回测模块 v6.12.13
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
+# 新增: HTML报告生成、飞书推送、回测标记查找
 # ============================================================
 
 import urllib.request
@@ -337,7 +338,7 @@ def generate_backtest_report(bt_result, output_path=None):
     ])
     recent = sorted(trades, key=lambda x: x.get('prediction_date', ''), reverse=True)[:20]
     for t in recent:
-        res_emoji = '🟢' if t['result'] == 'win' else ('🔴' if t['result'] == 'loss' else '⚪')
+        res_emoji = '\U0001f7e2' if t['result'] == 'win' else ('\U0001f534' if t['result'] == 'loss' else '\u26aa')
         lines.append(
             f"| {t['prediction_date']} | {t['name']} | {t['code']} | {t['strategy']} | "
             f"{t['industry']} | {t['entry']:.2f} | {res_emoji}{t['result']} | "
@@ -346,8 +347,8 @@ def generate_backtest_report(bt_result, output_path=None):
 
     lines.extend([
         "",
-        f"> ⚠️ 免责声明：回测结果不代表未来表现，仅供参考。",
-        f"> 版本: v6.12.12 | 生成: {today_str}",
+        f"> \u26a0\ufe0f 免责声明：回测结果不代表未来表现，仅供参考。",
+        f"> 版本: v6.12.13 | 生成: {today_str}",
     ])
 
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -355,3 +356,244 @@ def generate_backtest_report(bt_result, output_path=None):
 
     print(f"  回测报告: {output_path}")
     return output_path
+
+
+# ============================================================
+# v6.12.13: 回测标记查找、HTML报告、飞书推送
+# ============================================================
+
+def _build_backtest_lookup(bt_result):
+    """构建 代码→历史回测汇总 的查找字典，供筛选结果表格标记回测结果"""
+    trades = bt_result.get('all_trades', [])
+    if not trades:
+        return {}
+    code_trades = defaultdict(list)
+    for t in trades:
+        code_trades[t['code']].append(t)
+    lookup = {}
+    for code, ts in code_trades.items():
+        total = len(ts)
+        wins = sum(1 for t in ts if t['result'] == 'win')
+        losses = sum(1 for t in ts if t['result'] == 'loss')
+        no_data = sum(1 for t in ts if t['result'] == 'no_data')
+        avg_ret = sum(t['return_pct'] for t in ts) / total if total > 0 else 0
+        valid = [t for t in ts if t['result'] != 'no_data']
+        last = valid[-1] if valid else ts[-1]
+        lookup[code] = {
+            'total': total, 'wins': wins, 'losses': losses, 'no_data': no_data,
+            'avg_return': round(avg_ret, 2),
+            'last_result': last['result'], 'last_return': last['return_pct'],
+            'last_date': last.get('prediction_date', ''),
+        }
+    return lookup
+
+
+def generate_backtest_html(bt_result, output_path=None):
+    """生成自包含HTML回测报告（含图表可视化）"""
+    if output_path is None:
+        output_path = os.path.join(DATA_DIR, '回测报告.html')
+
+    metrics = bt_result.get('metrics', {})
+    strategy_metrics = bt_result.get('strategy_metrics', {})
+    industry_metrics = bt_result.get('industry_metrics', {})
+    trades = bt_result.get('all_trades', [])
+    today_str = datetime.now().strftime('%Y-%m-%d')
+
+    if not trades:
+        html = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>历史回测报告</title>
+<style>body{{font-family:"Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif;max-width:900px;margin:40px auto;padding:20px;background:#f8fafc;color:#1e293b}}h1{{color:#2563eb}}</style></head>
+<body><h1>历史回测报告</h1><p>暂无回测数据。</p><p style="color:#94a3b8">版本: v6.12.13 | 生成: {today_str}</p></body></html>'''
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(html)
+        return output_path
+
+    # 综合指标卡片
+    card_items = [
+        ('总交易', f"{metrics['total']}笔"),
+        ('胜率', f"{metrics['win_rate']}%"),
+        ('平均收益', f"{metrics['avg_return']}%"),
+        ('盈亏比', f"{metrics['profit_factor']}"),
+        ('夏普', f"{metrics['sharpe']}"),
+        ('最大回撤', f"{metrics['max_drawdown']}%"),
+        ('平均盈利', f"{metrics['avg_win']}%"),
+        ('平均亏损', f"{metrics['avg_loss']}%"),
+        ('平均持仓', f"{metrics['avg_hold_days']}天"),
+    ]
+    cards_html = ''
+    for label, value in card_items:
+        cards_html += f'<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{value}</div></div>'
+
+    # 策略维度表
+    strategy_rows = ''
+    for s in sorted(strategy_metrics.keys()):
+        sm = strategy_metrics[s]
+        sname = _STRATEGY_NAMES.get(s, s)
+        wr = sm['win_rate']
+        wr_cls = 'win' if wr >= 50 else 'loss'
+        strategy_rows += f'''<tr><td><span class="badge">{s}</span> {sname}</td>
+        <td>{sm['total']}</td><td class="{wr_cls}">{wr}%</td>
+        <td>{sm['avg_return']}%</td><td>{sm['profit_factor']}</td><td>{sm['sharpe']}</td></tr>'''
+
+    # 行业维度表
+    industry_rows = ''
+    for ind in sorted(industry_metrics.keys(), key=lambda x: -industry_metrics[x]['total']):
+        im = industry_metrics[ind]
+        wr = im['win_rate']
+        wr_cls = 'win' if wr >= 50 else 'loss'
+        industry_rows += f'''<tr><td>{ind}</td><td>{im['total']}</td>
+        <td class="{wr_cls}">{wr}%</td><td>{im['avg_return']}%</td><td>{im['profit_factor']}</td></tr>'''
+
+    # 交易明细表
+    trade_rows = ''
+    recent = sorted(trades, key=lambda x: x.get('prediction_date', ''), reverse=True)[:30]
+    for t in recent:
+        res_cls = 'win' if t['result'] == 'win' else ('loss' if t['result'] == 'loss' else 'nodata')
+        res_label = '\u76c8\u5229' if t['result'] == 'win' else ('\u4e8f\u635f' if t['result'] == 'loss' else '\u65e0\u6570\u636e')
+        ret_sign = '+' if t['return_pct'] >= 0 else ''
+        trade_rows += f'''<tr><td>{t['prediction_date']}</td><td>{t['name']}</td><td>{t['code']}</td>
+        <td>{t['strategy']}</td><td>{t['industry']}</td><td>{t['entry']:.2f}</td>
+        <td class="{res_cls}">{res_label}</td><td>{t['exit_price']:.2f}</td>
+        <td class="{res_cls}">{ret_sign}{t['return_pct']:.2f}%</td><td>{t['hold_days']}\u5929</td></tr>'''
+
+    html = f'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>A\u80a1\u77ed\u7ebf\u7b5b\u9009 \u2014 \u5386\u53f2\u56de\u6d4b\u62a5\u544a</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:"Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}}
+.container{{max-width:1100px;margin:0 auto;padding:30px 20px}}
+.header{{text-align:center;padding:40px 0 30px}}
+.header h1{{font-size:28px;color:#38bdf8;margin-bottom:8px}}
+.header .meta{{color:#94a3b8;font-size:14px}}
+.metrics-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:30px}}
+.metric-card{{background:#1e293b;border-radius:10px;padding:16px;text-align:center;border:1px solid #334155}}
+.metric-label{{color:#94a3b8;font-size:12px;margin-bottom:6px}}
+.metric-value{{color:#e2e8f0;font-size:22px;font-weight:700}}
+.section{{background:#1e293b;border-radius:12px;padding:24px;margin-bottom:20px;border:1px solid #334155}}
+.section h2{{color:#38bdf8;font-size:18px;margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid #334155}}
+table{{width:100%;border-collapse:collapse;font-size:13px}}
+th{{background:#0f172a;color:#94a3b8;padding:10px 8px;text-align:left;font-weight:600;white-space:nowrap}}
+td{{padding:8px;border-bottom:1px solid #1e293b}}
+tr:hover td{{background:rgba(56,189,248,0.05)}}
+.badge{{display:inline-block;background:#334155;color:#38bdf8;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600}}
+.win{{color:#22c55e}}
+.loss{{color:#ef4444}}
+.nodata{{color:#94a3b8}}
+.footer{{text-align:center;color:#64748b;font-size:12px;padding:20px;margin-top:20px}}
+@media(max-width:600px){{.metrics-grid{{grid-template-columns:repeat(3,1fr)}}table{{font-size:11px}}}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+<h1>\U0001f4ca A\u80a1\u77ed\u7ebf\u7b5b\u9009 \u2014 \u5386\u53f2\u56de\u6d4b\u62a5\u544a</h1>
+<p class="meta">\u751f\u6210\u65e5\u671f: {today_str} | \u56de\u6d4b\u5468\u671f: \u6700\u8fd190\u5929 | \u6700\u5927\u6301\u4ed3: 10\u4e2a\u4ea4\u6613\u65e5</p>
+</div>
+
+<div class="metrics-grid">{cards_html}</div>
+
+<div class="section">
+<h2>\u7b56\u7565\u7ef4\u5ea6</h2>
+<table><thead><tr><th>\u7b56\u7565</th><th>\u7b14\u6570</th><th>\u80dc\u7387</th><th>\u5747\u6536</th><th>\u76c8\u4e8f\u6bd4</th><th>\u590f\u666e</th></tr></thead>
+<tbody>{strategy_rows}</tbody></table>
+</div>
+
+<div class="section">
+<h2>\u884c\u4e1a\u7ef4\u5ea6</h2>
+<table><thead><tr><th>\u884c\u4e1a</th><th>\u7b14\u6570</th><th>\u80dc\u7387</th><th>\u5747\u6536</th><th>\u76c8\u4e8f\u6bd4</th></tr></thead>
+<tbody>{industry_rows}</tbody></table>
+</div>
+
+<div class="section">
+<h2>\u6700\u8fd1\u4ea4\u6613\u660e\u7ec6</h2>
+<table><thead><tr><th>\u65e5\u671f</th><th>\u6807\u7684</th><th>\u4ee3\u7801</th><th>\u7b56\u7565</th><th>\u884c\u4e1a</th><th>\u8fdb\u573a</th><th>\u7ed3\u679c</th><th>\u51fa\u573a</th><th>\u6536\u76ca</th><th>\u6301\u4ed3</th></tr></thead>
+<tbody>{trade_rows}</tbody></table>
+</div>
+
+<div class="footer">
+<p>\u26a0\ufe0f \u514d\u8d23\u58f0\u660e\uff1a\u56de\u6d4b\u7ed3\u679c\u4e0d\u4ee3\u8868\u672a\u6765\u8868\u73b0\uff0c\u4ec5\u4f9b\u53c2\u8003\u3002</p>
+<p>\u7248\u672c: v6.12.13 | \u751f\u6210: {today_str}</p>
+</div>
+</div>
+</body>
+</html>'''
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(html)
+    print(f"  回测HTML: {output_path}")
+    return output_path
+
+
+def push_backtest_to_feishu(bt_result):
+    """推送回测核心指标到飞书卡片消息"""
+    webhook = os.environ.get('FEISHU_WEBHOOK', '')
+    if not webhook:
+        webhook_path = os.path.join(DATA_DIR, '.feishu_webhook')
+        try:
+            with open(webhook_path, 'r', encoding='utf-8') as f:
+                webhook = f.read().strip()
+        except (FileNotFoundError, PermissionError):
+            pass
+    if not webhook:
+        print("  飞书Webhook未配置，跳过回测推送")
+        return False
+
+    try:
+        metrics = bt_result.get('metrics', {})
+        if not metrics or metrics.get('total', 0) == 0:
+            print("  无回测数据，跳过飞书推送")
+            return False
+
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        pb = "https://lc132.github.io/lv"
+        bt_url = f"{pb}/回测报告.html"
+
+        # 策略TOP3（按胜率）
+        strategy_metrics = bt_result.get('strategy_metrics', {})
+        top_strats = sorted(strategy_metrics.items(), key=lambda x: -x[1].get('win_rate', 0))[:3]
+        top_strat_lines = []
+        for s, sm in top_strats:
+            sname = _STRATEGY_NAMES.get(s, s)
+            top_strat_lines.append(f"**{s} {sname}**: 胜率{sm['win_rate']}% | {sm['total']}笔 | 均收{sm['avg_return']}%")
+        top_strat_text = '\n'.join(top_strat_lines) if top_strat_lines else '无数据'
+
+        card = {
+            "msg_type": "interactive",
+            "card": {
+                "header": {
+                    "title": {"tag": "plain_text", "content": f"\U0001f4c8 历史回测报告 — {today_str}"},
+                    "template": "blue"
+                },
+                "elements": [
+                    {"tag": "div", "text": {"tag": "lark_md",
+                        "content": f"**回测周期**: 最近90天 | **最大持仓**: 10个交易日 | **总交易**: {metrics['total']}笔"}},
+                    {"tag": "hr"},
+                    {"tag": "div", "text": {"tag": "lark_md",
+                        "content": f"胜率: **{metrics['win_rate']}%** | 均收: **{metrics['avg_return']}%** | 盈亏比: **{metrics['profit_factor']}** | 夏普: **{metrics['sharpe']}**"}},
+                    {"tag": "hr"},
+                    {"tag": "div", "text": {"tag": "lark_md",
+                        "content": f"平均盈利: {metrics['avg_win']}% | 平均亏损: {metrics['avg_loss']}% | 最大回撤: {metrics['max_drawdown']}% | 平均持仓: {metrics['avg_hold_days']}天"}},
+                    {"tag": "hr"},
+                    {"tag": "div", "text": {"tag": "lark_md", "content": f"**策略TOP3**:\n{top_strat_text}"}},
+                    {"tag": "hr"},
+                    {"tag": "div", "text": {"tag": "lark_md", "content": f"\U0001f4ca [**查看完整回测报告（HTML）**]({bt_url})"}},
+                    {"tag": "note", "elements": [{"tag": "plain_text", "content": "\u26a0\ufe0f 回测结果不代表未来表现，仅供参考"}]}
+                ]
+            }
+        }
+        req = urllib.request.Request(webhook, data=json.dumps(card, ensure_ascii=False).encode('utf-8'),
+                                     headers={'Content-Type': 'application/json'}, method='POST')
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+        if result.get('code') == 0:
+            print(f"  回测飞书推送: \u2705")
+            return True
+        else:
+            print(f"  回测飞书推送失败: {result.get('msg', '')}")
+            return False
+    except Exception as e:
+        print(f"  回测飞书推送异常: {str(e)[:80]}")
+        return False

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.12.10
+A股每日盘前短线标的智能筛选 v6.12.13
 35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线降级+HTTP备选 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
@@ -12,9 +12,9 @@ from openpyxl import load_workbook
 from lib.factor import compute_main_force_position, compute_short_term_breakout, resonance_check
 from lib.microstructure import microstructure_filter
 from lib.analyst import generate_ai_report
-from lib.backtest import run_backtest, generate_backtest_report
+from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 
-BUILTIN_VERSION = "v6.12.12"
+BUILTIN_VERSION = "v6.12.13"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -2874,7 +2874,7 @@ def _compute_pl_ratios(candidates, sector_limit_up=None):
 # ============================================================
 # 步骤20：Markdown输出
 # ============================================================
-def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report=None):
+def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report=None, bt_lookup=None):
     mp = f"/workspace/短线标的_{prediction_date}.md"
     lines = [
         f"# A股短线标的筛选报告 — {prediction_date}", "",
@@ -2898,8 +2898,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         _top10_codes = _compute_pl_ratios(candidates)
 
         lines.append("## 推荐标的\n")
-        lines.append("| # | TOP10 | 策略 | 标的 | 代码 | 行业 | 二级行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 | 盈亏比 |")
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        lines.append("| # | TOP10 | 策略 | 标的 | 代码 | 行业 | 二级行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 | 盈亏比 | 回测 |\n")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
         for idx, c in enumerate(candidates, 1):
             code = c.get('code', ''); name = c.get('name', '')
             s = c.get('strategy', '?'); ind = _industry_str(c); biz = c.get('business', '')
@@ -2924,8 +2924,13 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                     if s_ not in seen: seen.add(s_); uniq_s.append(s_)
                 r7d_str = f"{r7d} ({','.join(uniq_s)})"
             url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
-            lines.append(f"| {idx} | {top10_mark} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} | {pl_ratio} |")
-        # v6.12.10: TOP10板块热度精选
+            # v6.12.13: 回测标记列
+            bt_mark = ''
+            if bt_lookup and code in bt_lookup:
+                bt = bt_lookup[code]
+                emoji = '🟢' if bt['last_result'] == 'win' else ('🔴' if bt['last_result'] == 'loss' else '⚪')
+                bt_mark = f'{emoji}{bt["wins"]}/{bt["total"]}'
+            lines.append(f"| {idx} | {top10_mark} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} | {pl_ratio} | {bt_mark} |\n")
         lines.append("\n## TOP10 板块热度精选（按板块涨停家数排序，同热度按盈亏比优先）\n")
         lines.append("| # | 标的 | 代码 | 策略 | 行业 | 板块热度 | 盈亏比 | 进场 | 止损 | 止盈 | 评分 |")
         lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
@@ -2987,7 +2992,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
 # ============================================================
 # 步骤20B：HTML报告（v6.6.27 含指数行情）
 # ============================================================
-def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report=None):
+def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report=None, bt_lookup=None):
     hd = f"/workspace/ashare-screening-{pred_yyyymmdd}"
     os.makedirs(hd, exist_ok=True)
     hp = f"{hd}/ashare-screening-{pred_yyyymmdd}.html"
@@ -3036,12 +3041,17 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
         scl = f"strat_{s.lower()}"
         url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
+        # v6.12.13: 回测标记列
+        bt_mark = ''
+        if bt_lookup and code in bt_lookup:
+            bt = bt_lookup[code]
+            bt_emoji = "🟢" if bt["last_result"]=="win" else "🔴"
+        bt_mark = f'<span class="{"win" if bt["last_result"]=="win" else "loss"}">{bt_emoji}{bt["wins"]}/{bt["total"]}</span>'
         rows_html += f"""<tr class="{scl}"><td>{idx}</td><td>{top10_mark}</td><td><span class="badge {scl}">{s}</span></td>
         <td><a href="{url}" target="_blank">{html.escape(name)}</a></td><td>{code}</td><td>{ind}</td><td>{html.escape(biz)}</td>
         <td class="{chg_cls}">{chg:+.2f}%</td><td>{op:.2f}</td><td>{close:.2f}</td>
         <td>{amp:.2f}%</td><td>{r7d_html}</td><td>{score}</td><td class="conf {conf_cls}">{conf}</td>
-        <td class="entry">{entry:.2f}</td><td>{sl:.2f}</td><td>{tp:.2f}</td><td>{pl_ratio}</td></tr>"""
-    
+        <td class="entry">{entry:.2f}</td><td>{sl:.2f}</td><td>{tp:.2f}</td><td>{pl_ratio}</td><td>{bt_mark}</td></tr>"""
     seg_html = ""; legend_html = ""
     total_m = sum(sd.values())
     if total_m > 0:
@@ -3308,8 +3318,8 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 </div></section>
 <section><h2>系统告警</h2><div class="alert-list">{alerts_html}</div></section>
 <section><h2>最终推荐标的</h2><div style="overflow-x:auto"><table>
-<thead><tr><th>#</th><th>TOP10</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>二级行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th><th>盈亏比</th></tr></thead>
-<tbody>{rows_html if rows_html else '<tr><td colspan="18" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div></section>
+<thead><tr><th>#</th><th>TOP10</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>二级行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th><th>盈亏比</th><th>回测</th></tr></thead>
+<tbody>{rows_html if rows_html else '<tr><td colspan="19" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div></section>
 <section><h2>策略说明</h2><table>
 <thead><tr><th style="width:18%">策略</th><th style="width:48%">条件</th><th style="width:16%">仓位(震荡)</th><th style="width:18%">仓位(弱市)</th></tr></thead>
 <tbody>
@@ -3401,6 +3411,11 @@ def step26_github_sync(mp, hd, candidates):
         for f in os.listdir('/workspace'):
             if f.startswith('推荐历史_') and f.endswith('.json'):
                 shutil.copy(os.path.join('/workspace', f), os.path.join(rd, f))
+        # v6.12.13: 同步回测报告
+        for f in ['回测报告.md', '回测报告.html']:
+            fp = os.path.join('/workspace', f)
+            if os.path.exists(fp):
+                shutil.copy(fp, os.path.join(rd, f))
         subprocess.run(["git", "-C", rd, "config", "user.email", "ashare-bot@github.com"], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", rd, "config", "user.name", "ashare-screener"], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", rd, "add", "."], capture_output=True, timeout=15)
@@ -3578,12 +3593,25 @@ def main():
     log_alert("INFO", "主力资金", f"获取{sum(1 for v in flow_data.values() if v is not None)}只/{len(final)}只")
     print("\n[步骤15B] AI智能分析(TOP10)..."); ai_report = step15B_ai_analysis(final, kline_data, index_data, market_condition, sector_limit_up, total_raw, ae, asig, astr, amicro, aind, fc)
     
-    print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report)
-    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report); hd = os.path.dirname(hp)
-    
+
+# v6.12.13: 历史回测（读取推荐历史，模拟止盈止损，生成HTML/MD报告+飞书推送+筛选标记）
+    bt_result = None; bt_lookup = {}
+    if any(f.startswith("推荐历史_") and f.endswith(".json") for f in os.listdir(DATA_DIR)):
+        bt_result = run_backtest(hold_days=10, max_days_lookback=90)
+        if bt_result['all_trades']:
+            generate_backtest_report(bt_result, "/workspace/回测报告.md")
+            generate_backtest_html(bt_result, "/workspace/回测报告.html")
+            push_backtest_to_feishu(bt_result)
+            bt_lookup = _build_backtest_lookup(bt_result)
+
+    print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup)
+    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report, bt_lookup); hd = os.path.dirname(hp)
     print("\n[步骤21] 验证..."); step21_final_verify(mp, fc)
-    if beijing_weekday in (5, 6): print("\n[步骤22] 推荐历史... 周末跳过"); else: print("\n[步骤22] 推荐历史..."); step22_write_history(final)
-    
+    print("\n[步骤21] 验证..."); step21_final_verify(mp, fc)
+    if beijing_weekday in (5, 6):
+        print("\n[步骤22] 推荐历史... 周末跳过")
+    else:
+        print("\n[步骤22] 推荐历史..."); step22_write_history(final)
     print("\n" + "=" * 60)
     print("📊 筛选概况")
     print("=" * 60)
@@ -3598,11 +3626,6 @@ def main():
         print("\n⚠️ 持仓危机:")
         for a in crisis_alerts: print(f"  {a}")
     
-# v6.12.12: 历史回测（读取推荐历史，模拟止盈止损，生成回测报告）
-    if any(f.startswith("推荐历史_") and f.endswith(".json") for f in os.listdir(DATA_DIR)):
-        bt_result = run_backtest(hold_days=10, max_days_lookback=90)
-        if bt_result['all_trades']:
-            generate_backtest_report(bt_result, "/workspace/回测报告.md")
     print("\n[步骤26] GitHub同步..."); step26_github_sync(mp, hd, final)
     print("\n[步骤27] 飞书推送..."); step27_feishu_push(final, total_raw, ae, asig, astr, aind, anew, sd)
     print(f"\n✅ 完成！ {mp}")
