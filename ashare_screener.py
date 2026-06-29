@@ -1425,91 +1425,104 @@ def step10C_fetch_klines(candidates):
 # pytdx在沙箱网络中无法连接时，使用HTTP备选方案
 # ============================================================
 def step10C_fetch_klines_http(candidates):
-    """v6.12.5: HTTP备选K线拉取（东方财富日K线API）
+    """v6.12.15-fix: HTTP备选K线拉取（腾讯日K线API，东方财富SSL不可达时使用）
     返回格式与 step10C_fetch_klines 完全一致
+    腾讯API格式: qfqday每项为 [date, open, close, high, low, volume]
     """
     kline_data = {}
+    _KLINE_BATCH = 20  # 每批并发数
     try:
-        for c in candidates:
-            code = c.get('code', '')
-            if not code: continue
-            try:
-                mc = '1' if code.startswith('6') else '0'
-                secid = f'{mc}.{code}'
-                url = (f'https://push2his.eastmoney.com/api/qt/stock/kline/get?'
-                       f'secid={secid}&fields1=f1,f2,f3,f4,f5,f6&'
-                       f'fields2=f51,f52,f53,f54,f55,f56,f57&klt=101&fqt=1&'
-                       f'end={data_date.replace("-","")}&lmt=60')
-                req = urllib.request.Request(url, headers={
-                    'User-Agent': 'Mozilla/5.0',
-                    'Referer': 'https://quote.eastmoney.com/'})
-                with urllib.request.urlopen(req, timeout=8) as resp:
-                    data = json.loads(resp.read().decode())
-                klines = data.get('data', {}).get('klines', [])
-                if not klines or len(klines) < 20:
-                    kline_data[code] = {}
-                    continue
-                # 解析: '2026-06-25,34.65,35.92,34.55,35.85,123456,789.12,1.5,0.5'
-                closes = []; highs = []; lows = []; volumes = []
-                for k in klines:
-                    parts = k.split(',')
-                    closes.append(float(parts[2]))
-                    highs.append(float(parts[3]))
-                    lows.append(float(parts[4]))
-                    volumes.append(float(parts[5]))
-                ma5 = sum(closes[-5:]) / 5 if len(closes) >= 5 else 0
-                ma10 = sum(closes[-10:]) / 10 if len(closes) >= 10 else 0
-                ma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else 0
-                # MACD (12,26,9)
-                ema12 = closes[0]; ema26 = closes[0]
-                difs = [0.0]
-                for pr in closes[1:]:
-                    ema12 = ema12 * 11/13 + pr * 2/13
-                    ema26 = ema26 * 25/27 + pr * 2/27
-                    difs.append(ema12 - ema26)
-                dea = difs[0]
-                macd_hists = [0.0]
-                for d in difs[1:]:
-                    dea = dea * 8/10 + d * 2/10
-                    macd_hists.append((d - dea) * 2)
-                dif = difs[-1]; dea_val = dea; macd_hist = macd_hists[-1]
-                # KDJ(9,3,3)
-                k_val = 50.0; d_val = 50.0; j_val = 50.0
-                if len(closes) >= 9:
-                    for i in range(8, len(closes)):
-                        h9 = max(highs[i-8:i+1]); l9 = min(lows[i-8:i+1])
-                        rsv = (closes[i] - l9) / (h9 - l9) * 100 if h9 > l9 else 50
-                        k_val = 2/3 * k_val + 1/3 * rsv
-                        d_val = 2/3 * d_val + 1/3 * k_val
-                    j_val = 3 * k_val - 2 * d_val
-                # 布林带(20,2)
-                boll_mid = ma20; boll_upper = boll_mid; boll_lower = boll_mid
-                if len(closes) >= 20 and boll_mid > 0:
-                    variance = sum((c - boll_mid) ** 2 for c in closes[-20:]) / 20
-                    std = variance ** 0.5
-                    boll_upper = boll_mid + 2 * std; boll_lower = boll_mid - 2 * std
-                high20 = max(highs[-20:]) if len(highs) >= 20 else max(highs)
-                low20 = min(lows[-20:]) if len(lows) >= 20 else min(lows)
-                boll_width = (boll_upper - boll_lower) / boll_mid if boll_mid > 0 else 999
-                kline_data[code] = {
-                    'ma5': ma5, 'ma10': ma10, 'ma20': ma20,
-                    'dif': dif, 'dea': dea_val, 'macd_hist': macd_hist,
-                    'rsi14': 50.0, 'k': k_val, 'd': d_val, 'j': j_val,
-                    'boll_upper': boll_upper, 'boll_mid': boll_mid, 'boll_lower': boll_lower,
-                    'boll_width': boll_width, 'wr14': 50.0, 'obv': 0,
-                    'pdi': 0.0, 'mdi': 0.0, 'adx': 0.0,
-                    'high20': high20, 'low20': low20,
-                    'days_listed': 999, 'limit_up_days': 0,
-                    'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes
-                }
-            except (urllib.error.URLError, json.JSONDecodeError, OSError,
-                    ValueError, TypeError, ZeroDivisionError, IndexError):
-                kline_data[code] = {}
+        for batch_start in range(0, len(candidates), _KLINE_BATCH):
+            batch = candidates[batch_start:batch_start + _KLINE_BATCH]
+            with ThreadPoolExecutor(max_workers=_KLINE_BATCH) as executor:
+                futures = {executor.submit(_fetch_single_kline_tencent, c): c for c in batch}
+                for f in as_completed(futures):
+                    code = futures[f].get('code', '')
+                    try:
+                        kline_data[code] = f.result()
+                    except Exception:
+                        kline_data[code] = {}
+            time.sleep(0.3)  # 批次间间隔，避免频率限制
         valid_count = sum(1 for v in kline_data.values() if v and v.get('closes'))
-        log_alert("INFO", "K线HTTP", f"东方财富HTTP获取{len(kline_data)}只({valid_count}只有效)")
+        log_alert("INFO", "K线HTTP", f"腾讯HTTP获取{len(kline_data)}只({valid_count}只有效)")
     except Exception as e:
-        log_alert("WARNING", "K线HTTP", f"东方财富API不可用: {str(e)[:60]}")
+        log_alert("WARNING", "K线HTTP", f"腾讯K线API不可用: {str(e)[:60]}")
     return kline_data
+
+
+def _fetch_single_kline_tencent(c):
+    """v6.12.15-fix: 单只股票腾讯K线拉取+指标计算"""
+    code = c.get('code', '')
+    if not code:
+        return {}
+    try:
+        prefix = 'sh' if code.startswith('6') else 'sz'
+        url = (f'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?'
+               f'param={prefix}{code},day,,,60,qfq')
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0',
+            'Referer': 'https://gu.qq.com/'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        stock_key = f'{prefix}{code}'
+        qfqday = data.get('data', {}).get(stock_key, {}).get('qfqday', [])
+        # 过滤掉非列表元素（如分红信息字典）
+        bars = [b for b in qfqday if isinstance(b, list) and len(b) >= 6]
+        if not bars or len(bars) < 20:
+            return {}
+        # 腾讯格式: [date, open, close, high, low, volume]
+        closes = [float(b[2]) for b in bars]
+        highs = [float(b[3]) for b in bars]
+        lows = [float(b[4]) for b in bars]
+        volumes = [float(b[5]) for b in bars]
+        ma5 = sum(closes[-5:]) / 5 if len(closes) >= 5 else 0
+        ma10 = sum(closes[-10:]) / 10 if len(closes) >= 10 else 0
+        ma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else 0
+        # MACD (12,26,9)
+        ema12 = closes[0]; ema26 = closes[0]
+        difs = [0.0]
+        for pr in closes[1:]:
+            ema12 = ema12 * 11/13 + pr * 2/13
+            ema26 = ema26 * 25/27 + pr * 2/27
+            difs.append(ema12 - ema26)
+        dea = difs[0]
+        macd_hists = [0.0]
+        for d in difs[1:]:
+            dea = dea * 8/10 + d * 2/10
+            macd_hists.append((d - dea) * 2)
+        dif = difs[-1]; dea_val = dea; macd_hist = macd_hists[-1]
+        # KDJ(9,3,3)
+        k_val = 50.0; d_val = 50.0; j_val = 50.0
+        if len(closes) >= 9:
+            for i in range(8, len(closes)):
+                h9 = max(highs[i-8:i+1]); l9 = min(lows[i-8:i+1])
+                rsv = (closes[i] - l9) / (h9 - l9) * 100 if h9 > l9 else 50
+                k_val = 2/3 * k_val + 1/3 * rsv
+                d_val = 2/3 * d_val + 1/3 * k_val
+            j_val = 3 * k_val - 2 * d_val
+        # 布林带(20,2)
+        boll_mid = ma20; boll_upper = boll_mid; boll_lower = boll_mid
+        if len(closes) >= 20 and boll_mid > 0:
+            variance = sum((c - boll_mid) ** 2 for c in closes[-20:]) / 20
+            std = variance ** 0.5
+            boll_upper = boll_mid + 2 * std; boll_lower = boll_mid - 2 * std
+        high20 = max(highs[-20:]) if len(highs) >= 20 else max(highs)
+        low20 = min(lows[-20:]) if len(lows) >= 20 else min(lows)
+        boll_width = (boll_upper - boll_lower) / boll_mid if boll_mid > 0 else 999
+        return {
+            'ma5': ma5, 'ma10': ma10, 'ma20': ma20,
+            'dif': dif, 'dea': dea_val, 'macd_hist': macd_hist,
+            'rsi14': 50.0, 'k': k_val, 'd': d_val, 'j': j_val,
+            'boll_upper': boll_upper, 'boll_mid': boll_mid, 'boll_lower': boll_lower,
+            'boll_width': boll_width, 'wr14': 50.0, 'obv': 0,
+            'pdi': 0.0, 'mdi': 0.0, 'adx': 0.0,
+            'high20': high20, 'low20': low20,
+            'days_listed': 999, 'limit_up_days': 0,
+            'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes
+        }
+    except (urllib.error.URLError, json.JSONDecodeError, OSError,
+            ValueError, TypeError, ZeroDivisionError, IndexError):
+        return {}
 
 
 # ============================================================
@@ -1517,7 +1530,7 @@ def step10C_fetch_klines_http(candidates):
 # pytdx和东方财富HTTP均不可达时，使用iTick API作为第三级降级
 # ============================================================
 _ITICK_API_KEY = os.environ.get("ITICK_API_KEY", "6a6dba133463414c838fe9811f0f354d87e9711a2ef9457aa05f58ccc468d510")
-_ITICK_BASE_URL = "https://api.itick.org"  # 生产环境；免费版可用 https://api-free.itick.org
+_ITICK_BASE_URL = "https://api-free.itick.org"  # 生产环境；免费版可用 https://api-free.itick.org
 
 def step10C_fetch_klines_itick(candidates):
     """v6.12.15: iTick HTTP备选K线拉取（三级降级）
