@@ -14,7 +14,7 @@ from lib.microstructure import microstructure_filter
 from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 
-BUILTIN_VERSION = "v6.12.13"
+BUILTIN_VERSION = "v6.12.14"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1275,6 +1275,10 @@ HARDCODED_INDUSTRY = {
     # v6.12.5: 2只行业修正（基于2026-06-29筛选结果校对）
     '603045': '有色金属',  # 福达合金（电接触材料/合金材料，在603000-603099段但非电子）
     '600226': '农林牧渔',  # 亨通股份（农药兽药/生物制药，在600200-600299段但非医药生物）
+    # v6.12.14: 3只行业修正（基于2026-06-29筛选结果校对）
+    '000921': '家用电器',  # 海信家电（家电制造，在000900-000999段但非非银金融）
+    '600839': '家用电器',  # 四川长虹（电视/家电制造，在600800-600899段但非煤炭）
+    '603119': '电力设备',  # 浙江荣泰（新能源车热失控防护/云母制品，在603100-603199段但非电子）
 }
 
 # ============================================================
