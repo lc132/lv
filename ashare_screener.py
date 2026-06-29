@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.12.8
+A股每日盘前短线标的智能筛选 v6.12.9
 35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线降级+HTTP备选 | 主力资金HTTP | 周末跳过推荐历史
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
@@ -13,7 +13,7 @@ from lib.factor import compute_main_force_position, compute_short_term_breakout,
 from lib.microstructure import microstructure_filter
 from lib.analyst import generate_ai_report
 
-BUILTIN_VERSION = "v6.12.8"
+BUILTIN_VERSION = "v6.12.9"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -24,7 +24,7 @@ _CN_HOLIDAYS_2026 = [
     "2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07"
 ]
 file_version = BUILTIN_VERSION; params = {}
-_pl_sorted = []  # v6.12.8: 模块级初始化，防止 NameError
+_pl_sorted = []  # v6.12.9: 模块级初始化，防止 NameError
 market_condition = "震荡"; position_pct = 55
 index_data = {}  # 三大指数行情(供HTML使用)
 MIN_POSITION_PCT = 20  # v6.8.7: 全局仓位下限
@@ -76,6 +76,9 @@ _ZJH_TO_SHENWAN = {
     '制造业-家具制造业': '轻工制造',
     '制造业-木材加工和木、竹、藤、棕、草制品业': '轻工制造',
     '制造业-石油加工、炼焦和核燃料加工业': '石油石化',
+    '制造业-石油、煤炭及其他燃料加工业': '石油石化',
+    '制造业-废弃资源综合利用业': '环保',
+    '制造业-金属制品、机械和设备修理业': '机械设备',
     '制造业-其他制造业': '综合',
     # 采矿业
     '采矿业-煤炭开采和洗选业': '煤炭',
@@ -263,7 +266,7 @@ def fetch_tencent_stocks(codes):
                         "amplitude": _parse_tencent_field(raw, 43, 0),
                         "volume_ratio": _parse_tencent_field(raw, 49, None),
                         "pe_ttm": _parse_tencent_field(raw, 39, None),
-                        "total_cap": (_tc := _parse_tencent_field(raw, 44, None)) and _tc * 1e8,  # v6.12.8: fix dup call, 亿元→元
+                        "total_cap": (_tc := _parse_tencent_field(raw, 44, None)) and _tc * 1e8,  # v6.12.9: fix dup call, 亿元→元
                         "main_inflow": None,  # 腾讯基础API不提供主力资金流向
                     })
                 except (ValueError, TypeError, IndexError, AttributeError): pass
