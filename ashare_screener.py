@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.12.13
+A股每日盘前短线标的智能筛选 v6.12.15
 35步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线降级+HTTP备选 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
@@ -14,7 +14,7 @@ from lib.microstructure import microstructure_filter
 from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 
-BUILTIN_VERSION = "v6.12.14"
+BUILTIN_VERSION = "v6.12.15"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1275,7 +1275,7 @@ HARDCODED_INDUSTRY = {
     # v6.12.5: 2只行业修正（基于2026-06-29筛选结果校对）
     '603045': '有色金属',  # 福达合金（电接触材料/合金材料，在603000-603099段但非电子）
     '600226': '农林牧渔',  # 亨通股份（农药兽药/生物制药，在600200-600299段但非医药生物）
-    # v6.12.14: 3只行业修正（基于2026-06-29筛选结果校对）
+    # v6.12.15: 3只行业修正（基于2026-06-29筛选结果校对）
     '000921': '家用电器',  # 海信家电（家电制造，在000900-000999段但非非银金融）
     '600839': '家用电器',  # 四川长虹（电视/家电制造，在600800-600899段但非煤炭）
     '603119': '电力设备',  # 浙江荣泰（新能源车热失控防护/云母制品，在603100-603199段但非电子）
@@ -1509,6 +1509,113 @@ def step10C_fetch_klines_http(candidates):
     except Exception as e:
         log_alert("WARNING", "K线HTTP", f"东方财富API不可用: {str(e)[:60]}")
     return kline_data
+
+
+# ============================================================
+# 步骤10C-三级备选：iTick HTTP K线拉取（v6.12.15新增）
+# pytdx和东方财富HTTP均不可达时，使用iTick API作为第三级降级
+# ============================================================
+_ITICK_API_KEY = os.environ.get("ITICK_API_KEY", "")  # 从环境变量读取，或在此处硬编码
+_ITICK_BASE_URL = "https://api.itick.org"  # 生产环境；免费版可用 https://api-free.itick.org
+
+def step10C_fetch_klines_itick(candidates):
+    """v6.12.15: iTick HTTP备选K线拉取（三级降级）
+    返回格式与 step10C_fetch_klines 完全一致
+    免费套餐限制: 5次/分钟，A股热门产品（非全覆盖）
+    """
+    kline_data = {}
+    if not _ITICK_API_KEY:
+        log_alert("WARNING", "K线iTick", "未配置ITICK_API_KEY环境变量，跳过")
+        return kline_data
+    try:
+        batch_size = 5  # 每批5只（免费套餐: 5次/分钟）
+        total = len(candidates)
+        for batch_start in range(0, total, batch_size):
+            batch = candidates[batch_start:batch_start + batch_size]
+            batch_start_time = time.time()
+            for c in batch:
+                code = c.get('code', '')
+                if not code:
+                    continue
+                try:
+                    region = 'SH' if code.startswith('6') else 'SZ'
+                    url = (f'{_ITICK_BASE_URL}/stock/kline?'
+                           f'region={region}&code={code}&kType=8&limit=60')
+                    req = urllib.request.Request(url, headers={
+                        'User-Agent': 'Mozilla/5.0',
+                        'accept': 'application/json',
+                        'token': _ITICK_API_KEY})
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        data = json.loads(resp.read().decode())
+                    bars = data.get('data', [])
+                    if not bars or len(bars) < 20:
+                        kline_data[code] = {}
+                        continue
+                    # iTick返回: [{o, h, l, c, v, tu, t}, ...] 按时间升序
+                    bars.sort(key=lambda b: b.get('t', 0))
+                    closes = [b['c'] for b in bars]
+                    highs = [b['h'] for b in bars]
+                    lows = [b['l'] for b in bars]
+                    volumes = [b['v'] for b in bars]
+                    ma5 = sum(closes[-5:]) / 5 if len(closes) >= 5 else 0
+                    ma10 = sum(closes[-10:]) / 10 if len(closes) >= 10 else 0
+                    ma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else 0
+                    # MACD (12,26,9)
+                    ema12 = closes[0]; ema26 = closes[0]
+                    difs = [0.0]
+                    for pr in closes[1:]:
+                        ema12 = ema12 * 11/13 + pr * 2/13
+                        ema26 = ema26 * 25/27 + pr * 2/27
+                        difs.append(ema12 - ema26)
+                    dea = difs[0]
+                    macd_hists = [0.0]
+                    for d in difs[1:]:
+                        dea = dea * 8/10 + d * 2/10
+                        macd_hists.append((d - dea) * 2)
+                    dif = difs[-1]; dea_val = dea; macd_hist = macd_hists[-1]
+                    # KDJ(9,3,3)
+                    k_val = 50.0; d_val = 50.0; j_val = 50.0
+                    if len(closes) >= 9:
+                        for i in range(8, len(closes)):
+                            h9 = max(highs[i-8:i+1]); l9 = min(lows[i-8:i+1])
+                            rsv = (closes[i] - l9) / (h9 - l9) * 100 if h9 > l9 else 50
+                            k_val = 2/3 * k_val + 1/3 * rsv
+                            d_val = 2/3 * d_val + 1/3 * k_val
+                        j_val = 3 * k_val - 2 * d_val
+                    # 布林带(20,2)
+                    boll_mid = ma20; boll_upper = boll_mid; boll_lower = boll_mid
+                    if len(closes) >= 20 and boll_mid > 0:
+                        variance = sum((c - boll_mid) ** 2 for c in closes[-20:]) / 20
+                        std = variance ** 0.5
+                        boll_upper = boll_mid + 2 * std; boll_lower = boll_mid - 2 * std
+                    high20 = max(highs[-20:]) if len(highs) >= 20 else max(highs)
+                    low20 = min(lows[-20:]) if len(lows) >= 20 else min(lows)
+                    boll_width = (boll_upper - boll_lower) / boll_mid if boll_mid > 0 else 999
+                    kline_data[code] = {
+                        'ma5': ma5, 'ma10': ma10, 'ma20': ma20,
+                        'dif': dif, 'dea': dea_val, 'macd_hist': macd_hist,
+                        'rsi14': 50.0, 'k': k_val, 'd': d_val, 'j': j_val,
+                        'boll_upper': boll_upper, 'boll_mid': boll_mid, 'boll_lower': boll_lower,
+                        'boll_width': boll_width, 'wr14': 50.0, 'obv': 0,
+                        'pdi': 0.0, 'mdi': 0.0, 'adx': 0.0,
+                        'high20': high20, 'low20': low20,
+                        'days_listed': 999, 'limit_up_days': 0,
+                        'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes
+                    }
+                except (urllib.error.URLError, json.JSONDecodeError, OSError,
+                        ValueError, TypeError, ZeroDivisionError, IndexError):
+                    kline_data[code] = {}
+            # 速率限制: 免费套餐5次/分钟，每批后等待
+            elapsed = time.time() - batch_start_time
+            if elapsed < 60 and batch_start + batch_size < total:
+                wait = max(5, 60 - elapsed)
+                time.sleep(wait)
+        valid_count = sum(1 for v in kline_data.values() if v and v.get('closes'))
+        log_alert("INFO", "K线iTick", f"iTick获取{len(kline_data)}只({valid_count}只有效)")
+    except Exception as e:
+        log_alert("WARNING", "K线iTick", f"iTick API不可用: {str(e)[:60]}")
+    return kline_data
+
 
 # ============================================================
 # ============================================================
@@ -2928,7 +3035,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                     if s_ not in seen: seen.add(s_); uniq_s.append(s_)
                 r7d_str = f"{r7d} ({','.join(uniq_s)})"
             url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
-            # v6.12.13: 回测标记列
+            # v6.12.15: 回测标记列
             bt_mark = ''
             if bt_lookup and code in bt_lookup:
                 bt = bt_lookup[code]
@@ -3045,7 +3152,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
         scl = f"strat_{s.lower()}"
         url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
-        # v6.12.14: 回测标记列 — 修复 no_data 映射为🔴的bug
+        # v6.12.15: 回测标记列 — 修复 no_data 映射为🔴的bug
         bt_mark = ''
         if bt_lookup and code in bt_lookup:
             bt = bt_lookup[code]
@@ -3415,7 +3522,7 @@ def step26_github_sync(mp, hd, candidates):
         for f in os.listdir('/workspace'):
             if f.startswith('推荐历史_') and f.endswith('.json'):
                 shutil.copy(os.path.join('/workspace', f), os.path.join(rd, f))
-        # v6.12.13: 同步回测报告
+        # v6.12.15: 同步回测报告
         for f in ['回测报告.md', '回测报告.html']:
             fp = os.path.join('/workspace', f)
             if os.path.exists(fp):
@@ -3549,6 +3656,11 @@ def main():
     if valid_kline < len(raw_pool) * 0.5:
         log_alert("WARNING", "K线降级", f"pytdx仅{valid_kline}只有效({valid_kline}/{len(raw_pool)})，切换到东方财富HTTP")
         kline_data = step10C_fetch_klines_http(raw_pool)  # v6.12.5: HTTP备选方案
+    # v6.12.15: 东方财富HTTP也失败时，三级降级到iTick API
+    valid_kline2 = sum(1 for v in kline_data.values() if v and v.get('closes'))
+    if valid_kline2 < len(raw_pool) * 0.5:
+        log_alert("WARNING", "K线降级", f"东方财富HTTP仅{valid_kline2}只有效({valid_kline2}/{len(raw_pool)})，切换到iTick API")
+        kline_data = step10C_fetch_klines_itick(raw_pool)  # v6.12.15: iTick三级备选
     
     print("\n[步骤11] 硬排除..."); ael, _, er = step11_hard_exclude(raw_pool, ahc, kline_data, pledge_data, goodwill_data, unlock_data, {}); ae = len(ael)
     print("\n[步骤10E] F10基本面..."); fundamental_data = step10E_fetch_fundamentals(ael)
@@ -3598,7 +3710,7 @@ def main():
     print("\n[步骤15B] AI智能分析(TOP10)..."); ai_report = step15B_ai_analysis(final, kline_data, index_data, market_condition, sector_limit_up, total_raw, ae, asig, astr, amicro, aind, fc)
     
 
-# v6.12.13: 历史回测（读取推荐历史，模拟止盈止损，生成HTML/MD报告+飞书推送+筛选标记）
+# v6.12.15: 历史回测（读取推荐历史，模拟止盈止损，生成HTML/MD报告+飞书推送+筛选标记）
     bt_result = None; bt_lookup = {}
     if any(f.startswith("推荐历史_") and f.endswith(".json") for f in os.listdir(DATA_DIR)):
         bt_result = run_backtest(hold_days=10, max_days_lookback=90)
