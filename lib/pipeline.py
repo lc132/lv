@@ -191,7 +191,7 @@ def step8_market_judgment(ctx):
     except Exception as e:
         print(f"  K线数据获取失败({str(e)[:40]})，使用涨跌幅简化判断")
     
-    sh_price = closes[-1] if 'closes' in dir() and closes else None
+    sh_price = closes[-1] if closes else None  # v6.12.8: closes已初始化, 移除脆弱dir()检查
     
     if ma5 and ma10 and ma20 and sh_price:
         # 三级判断：MA均线 + 涨跌比 + 成交量

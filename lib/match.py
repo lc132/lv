@@ -28,7 +28,7 @@ def step13_strategy_match(ctx):
         close = c.get('close', 0)
         high = c.get('high') or 0
         low = c.get('low') or 0
-        open_p = c.get('open') or 0
+        open_p = c.get('open') or 0  # v6.12.8: None→0, 下游条件需 open_p>0 防误判
         prev_close = c.get('prev_close') or 0
         amount = c.get('amount') or 0  # 成交额(元)
         volume = c.get('volume', 0)    # 成交量(手)
@@ -70,7 +70,7 @@ def step13_strategy_match(ctx):
         strategies = []
         
         # 策略A: 动量延续 (涨幅3-7%、活跃、收盘>开盘、非弱市)
-        if market != '弱市' and 3 <= change_pct <= 7 and close > open_p and is_active:
+        if market != '弱市' and 3 <= change_pct <= 7 and open_p > 0 and close > open_p and is_active:
             strategies.append(('A', '动量延续', 2))
         
         # 策略B: 超跌反弹 (跌幅-1%到-5%、活跃度中等、缩量特征)
@@ -105,7 +105,7 @@ def step13_strategy_match(ctx):
             strategies.append(('C', '事件驱动(放量异动)', 1))
         
         # 策略D: 回调企稳 (极温和涨幅0-1.5%+中等活跃+收盘>开盘+量比>0.8)
-        if 0 < change_pct <= 1.5 and is_moderate and close > open_p and volume_ratio >= 0.8:
+        if 0 < change_pct <= 1.5 and is_moderate and open_p > 0 and close > open_p and volume_ratio >= 0.8:
             strategies.append(('D', '回调企稳', 0.5))
         
         # 策略D增强: 主力流入信号+量比>0.8
@@ -116,7 +116,7 @@ def step13_strategy_match(ctx):
         # TODO: 北向资金净流入>5000万验证（需北向数据API）
         # TODO: 退出: 连续3日缩量→退出（需K线历史API）
         # TODO: 加仓: 突破前高+放量→加仓（需K线/分时API）
-        if 3 <= change_pct <= 7 and is_active and volume_ratio > 1.0 and close > open_p:
+        if 3 <= change_pct <= 7 and is_active and volume_ratio > 1.0 and open_p > 0 and close > open_p:
             strategies.append(('D', '量价异动', 1.5))
         
         # 策略E: 资金埋伏 (温和涨幅1-3%+高活跃+收盘>开盘+有一定振幅)
@@ -124,7 +124,7 @@ def step13_strategy_match(ctx):
         # TODO: MA20回调到位（需K线历史API）
         # TODO: 连续缩量确认（需K线历史API）
         # TODO: 站上MA5+放量验证（需K线历史API）
-        if 1 <= change_pct <= 3 and is_active and close > open_p and amplitude >= 2:
+        if 1 <= change_pct <= 3 and is_active and open_p > 0 and close > open_p and amplitude >= 2:
             # 假突破过滤：如果收盘价接近当日最低价(收盘-最低)/最低价<0.5%，可能是假突破
             low = c.get('low', 0)
             if low > 0 and close > 0 and (close - low) / close < 0.002 and amplitude < 1.5:
@@ -133,7 +133,7 @@ def step13_strategy_match(ctx):
                 strategies.append(('E', '资金埋伏', 1))
         
         # 策略E: 强势资金 (涨幅3-5%+高活跃+收盘>开盘+高振幅)
-        if 3 < change_pct <= 5 and is_active and close > open_p and amplitude >= 3:
+        if 3 < change_pct <= 5 and is_active and open_p > 0 and close > open_p and amplitude >= 3:
             high = c.get('high', 0)
             if high > 0 and (high - close) / high < 0.01:
                 # 收盘接近高点→强趋势，加分
@@ -142,11 +142,11 @@ def step13_strategy_match(ctx):
                 strategies.append(('E', '强势资金', 1.5))
         
         # 兜底策略：涨幅适中+活跃→A
-        if not strategies and 2 < change_pct <= 5 and is_active and close > open_p:
+        if not strategies and 2 < change_pct <= 5 and is_active and open_p > 0 and close > open_p:
             strategies.append(('A', '动量延续(活跃)', 1))
         
         # 兜底：极温和+活跃→D
-        if not strategies and 0 < change_pct <= 2 and is_active and close > open_p and volume_ratio >= 0.8:
+        if not strategies and 0 < change_pct <= 2 and is_active and open_p > 0 and close > open_p and volume_ratio >= 0.8:
             strategies.append(('D', '回调企稳(活跃)', 0.5))
         
         if not strategies and -3 <= change_pct < 0 and is_moderate:

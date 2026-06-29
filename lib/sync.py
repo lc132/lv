@@ -403,6 +403,7 @@ def step28_weekly_review(ctx):
     
     print("  周六 → 执行每周复盘...")
     
+    if not GITHUB_TOKEN: print("  ⚠️ 无GitHub Token，跳过复盘"); return  # v6.12.8
     repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
     temp_dir = f"{TEMP_DIR}/lv_weekly_review"
     

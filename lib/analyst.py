@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v6.12.7 AI 策略分析师模块
+v6.12.8 AI 策略分析师模块
 将单纯的数据筛选升级为 AI 智能分析，让大模型充当专属策略分析师。
 对最终候选池进行多维度深度分析，输出结构化研判报告。
 """
@@ -64,12 +64,12 @@ def generate_market_overview(final_candidates, index_data, market_condition,
     lines.append(f"| 阶段 | 数量 | 过滤率 | 说明 |")
     lines.append(f"|------|------|--------|------|")
     lines.append(f"| 原始池 | {total_raw} | - | 全市场满足基本条件的标的 |")
-    lines.append(f"| 硬排除 | {ae} | {(1-ae/total_raw)*100:.1f}% | 13项硬性排除 |")
-    lines.append(f"| 信号过滤 | {asig} | {(1-asig/ae)*100:.1f}% | 27项信号过滤 |")
-    lines.append(f"| 策略匹配 | {astr} | {(1-astr/asig)*100:.1f}% | 20策略匹配 |")
-    lines.append(f"| 微观结构 | {amicro} | {(1-amicro/astr)*100:.1f}% | 流动性+消息敏感度 |")
-    lines.append(f"| 行业限制 | {aind} | {(1-aind/amicro)*100:.1f}% | 行业集中度控制 |")
-    lines.append(f"| **最终推荐** | **{fc}** | **{(1-fc/total_raw)*100:.1f}%** | 精选标的 |")
+    lines.append(f"| 硬排除 | {ae} | {(1-ae/max(total_raw,1))*100:.1f}% | 13项硬性排除 |")
+    lines.append(f"| 信号过滤 | {asig} | {(1-asig/max(ae,1))*100:.1f}% | 27项信号过滤 |")
+    lines.append(f"| 策略匹配 | {astr} | {(1-astr/max(asig,1))*100:.1f}% | 20策略匹配 |")
+    lines.append(f"| 微观结构 | {amicro} | {(1-amicro/max(astr,1))*100:.1f}% | 流动性+消息敏感度 |")
+    lines.append(f"| 行业限制 | {aind} | {(1-aind/max(amicro,1))*100:.1f}% | 行业集中度控制 |")
+    lines.append(f"| **最终推荐** | **{fc}** | **{(1-fc/max(total_raw,1))*100:.1f}%** | 精选标的 |")
 
     # 4. 资金流向
     lines.append("")

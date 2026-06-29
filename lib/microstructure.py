@@ -67,7 +67,7 @@ def compute_news_sensitivity(kline_data, code):
     
     # 指标1: 20日平均振幅
     amps = []
-    for i in range(-n, 0):
+    for i in range(-n + 1, 0):  # v6.12.8: fix n==20 closes[-21] IndexError
         if closes[i - 1] > 0:
             amp = (highs[i] - lows[i]) / closes[i - 1] * 100
             amps.append(amp)
