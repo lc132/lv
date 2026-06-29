@@ -14,7 +14,7 @@ from lib.microstructure import microstructure_filter
 from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report
 
-BUILTIN_VERSION = "v6.12.11"
+BUILTIN_VERSION = "v6.12.12"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -3598,7 +3598,7 @@ def main():
         print("\n⚠️ 持仓危机:")
         for a in crisis_alerts: print(f"  {a}")
     
-# v6.12.11: 历史回测（读取推荐历史，模拟止盈止损，生成回测报告）
+# v6.12.12: 历史回测（读取推荐历史，模拟止盈止损，生成回测报告）
     if any(f.startswith("推荐历史_") and f.endswith(".json") for f in os.listdir(DATA_DIR)):
         bt_result = run_backtest(hold_days=10, max_days_lookback=90)
         if bt_result['all_trades']:

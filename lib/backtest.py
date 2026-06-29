@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.12.11
+# A股短线筛选 — 历史回测模块 v6.12.12
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # ============================================================
 
@@ -93,6 +93,10 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
         low_pct = (k['low'] - entry) / entry * 100
         max_profit = max(max_profit, high_pct)
         max_drawdown = min(max_drawdown, low_pct)
+
+        # v6.12.12: A股T+1规则 — 当日买入不可卖出，i=0跳过止盈止损检查
+        if i == 0:
+            continue
 
         if k['low'] <= stop_loss:
             return {
@@ -343,7 +347,7 @@ def generate_backtest_report(bt_result, output_path=None):
     lines.extend([
         "",
         f"> ⚠️ 免责声明：回测结果不代表未来表现，仅供参考。",
-        f"> 版本: v6.12.11 | 生成: {today_str}",
+        f"> 版本: v6.12.12 | 生成: {today_str}",
     ])
 
     with open(output_path, 'w', encoding='utf-8') as f:
