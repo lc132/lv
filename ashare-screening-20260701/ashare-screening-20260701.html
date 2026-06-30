@@ -1,0 +1,640 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>A股短线标的筛选 — 2026-07-01</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Noto Sans CJK SC','WenQuanYi Micro Hei',sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.6}
+.header{background:linear-gradient(135deg,#1e3a5f 0%,#0f2744 100%);padding:2rem;text-align:center}
+.header h1{font-size:clamp(1.2rem,2.5vw,1.8rem);color:#f0f9ff}.header .sub{color:#94a3b8;font-size:.9rem;margin-top:.3rem}
+.container{max-width:1200px;margin:0 auto;padding:1rem}
+.meta-row{display:flex;flex-wrap:wrap;gap:.8rem;justify-content:center;margin:1rem 0}
+.meta-card{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:.6rem 1.2rem;text-align:center;min-width:100px}
+.meta-card .label{font-size:.7rem;color:#94a3b8}.meta-card .value{font-size:1.1rem;font-weight:bold;color:#38bdf8}
+.index-row{display:flex;flex-wrap:wrap;gap:1rem;justify-content:center;margin:1rem 0}
+.index-card{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:1rem 1.5rem;text-align:center;min-width:140px;flex:1}
+.index-card .idx-name{font-size:.85rem;color:#cbd5e1}.index-card .idx-price{font-size:1.5rem;font-weight:bold;color:#f8fafc}
+.index-card .idx-chg{font-size:.9rem;font-weight:bold}
+.index-card .idx-amt{font-size:1.1rem;display:block} .index-card .idx-pct{font-size:.75rem;color:#94a3b8;font-weight:normal}
+.up{color:#ef4444}.down{color:#22c55e}
+section{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:1.5rem;margin:1.2rem 0}
+section h2{font-size:1.2rem;color:#38bdf8;margin-bottom:1rem;border-bottom:2px solid #334155;padding-bottom:.5rem}
+.funnel{display:flex;flex-direction:column;align-items:center;gap:.3rem}
+.funnel-step{background:linear-gradient(90deg,#6366f1,#8b5cf6);color:#fff;text-align:center;padding:.5rem;border-radius:6px;font-size:.8rem}
+.funnel-last{background:linear-gradient(90deg,#3b82f6,#06b6d4);border:2px solid #38bdf8;font-weight:bold}
+.seg-bar{display:flex;height:32px;border-radius:6px;overflow:hidden;margin:.5rem 0}
+.seg{display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:.8rem}
+.legend{display:flex;flex-wrap:wrap;gap:1rem;margin:.5rem 0;font-size:.8rem}
+.legend-item{display:flex;align-items:center;gap:.3rem}
+.legend-dot{width:12px;height:12px;border-radius:3px;display:inline-block}
+.bar-row{display:flex;align-items:center;margin:.4rem 0;gap:.5rem}
+.bar-label{width:200px;font-size:.8rem;color:#cbd5e1;text-align:right;flex-shrink:0}
+.bar-track{flex:1;background:#334155;border-radius:4px;height:24px;overflow:hidden}
+.bar-fill{height:100%;border-radius:4px;display:flex;align-items:center;justify-content:flex-end;padding:0 .5rem;color:#fff;font-size:.75rem;font-weight:bold;min-width:30px}
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem}
+table{width:100%;border-collapse:collapse;font-size:.8rem}
+th{background:#334155;padding:.5rem;text-align:left;color:#38bdf8;position:sticky;top:0;white-space:nowrap}
+td{padding:.4rem .5rem;border-bottom:1px solid #334155;white-space:nowrap}
+tr:hover{background:#2d3b4f}
+.badge{padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:bold}
+.strat_a{background:#14532d;color:#22c55e}.strat_b{background:#1e3a5f;color:#3b82f6}.strat_c{background:#3b1f6e;color:#8b5cf6}
+.strat_d{background:#5c3d0e;color:#f59e0b}.strat_e{background:#5c1648;color:#ec4899}.strat_f{background:#0f4c5c;color:#06b6d4}.strat_g{background:#0e4c3d;color:#10b981}.strat_h{background:#4c1d0e;color:#f97316}.strat_i{background:#0e3d3d;color:#14b8a6}.strat_j{background:#5c1515;color:#ef4444}.strat_k{background:#3b1f3b;color:#a855f7}.strat_l{background:#4c3d0e;color:#eab308}.strat_m{background:#4c1d3b;color:#f472b6}.strat_n{background:#1e3d0e;color:#84cc16}.strat_o{background:#0e2e4c;color:#38bdf8}.strat_p{background:#4c2e0e;color:#fb923c}.strat_q{background:#0e3e4c;color:#22d3ee}
+tr.strat_a{background:rgba(34,197,94,0.05)}tr.strat_b{background:rgba(59,130,246,0.05)}tr.strat_c{background:rgba(139,92,246,0.05)}
+tr.strat_d{background:rgba(245,158,11,0.05)}tr.strat_e{background:rgba(236,72,153,0.05)}tr.strat_f{background:rgba(6,182,212,0.05)}tr.strat_g{background:rgba(16,185,129,0.05)}tr.strat_h{background:rgba(249,115,22,0.05)}tr.strat_i{background:rgba(20,184,166,0.05)}tr.strat_j{background:rgba(239,68,68,0.05)}tr.strat_k{background:rgba(168,85,247,0.05)}tr.strat_l{background:rgba(234,179,8,0.05)}tr.strat_m{background:rgba(244,114,182,0.05)}tr.strat_n{background:rgba(132,204,22,0.05)}tr.strat_o{background:rgba(56,189,248,0.05)}tr.strat_p{background:rgba(251,146,60,0.05)}tr.strat_q{background:rgba(34,211,238,0.05)}
+/* v6.9.51: TOP10蓝色背景+边框 / 7日橙色背景已移除 */
+.conf{font-weight:bold}.conf.high{color:#22c55e}.conf.mid{color:#f59e0b}.conf.low{color:#ef4444}
+.entry{color:#38bdf8;font-weight:bold}
+.alert-item{display:flex;gap:.8rem;padding:.4rem 0;border-bottom:1px solid #334155;font-size:.8rem}
+.alert-level{padding:2px 10px;border-radius:4px;font-weight:bold;font-size:.7rem;white-space:nowrap}
+.alert-level.warning{background:#5c3d0e;color:#f59e0b}.alert-level.info{background:#1e3a5f;color:#3b82f6}
+.footer{text-align:center;padding:2rem;color:#64748b;font-size:.8rem}
+.footer .disclaimer{color:#ef4444;font-weight:bold;margin-top:.5rem}
+a{color:#38bdf8;text-decoration:none}a:hover{text-decoration:underline}
+@media(max-width:768px){.chart-grid{grid-template-columns:1fr}.container{padding:.5rem}th,td{font-size:.7rem;padding:.3rem}}
+/* v6.9.50: TOP10盈亏比精选卡片 */
+.top10-cards{display:grid;grid-template-columns:1fr;gap:14px;margin-top:1rem}
+.top10-card{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:16px 20px;transition:border-color .2s}
+.top10-card:hover{border-color:#38bdf8}
+.top10-card-header{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.top10-card-header .rank{font-size:1.3rem;font-weight:800;color:#38bdf8;min-width:28px}
+.top10-card-header .name{font-size:1rem;font-weight:700;color:#f8fafc}
+.top10-card-header .code{font-size:.75rem;color:#94a3b8;margin-left:2px}
+.top10-card-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:8px;margin-bottom:12px}
+.top10-card-metrics .metric{text-align:center}
+.top10-card-metrics .metric .val{font-size:1rem;font-weight:700;color:#f8fafc}
+.top10-card-metrics .metric .lbl{font-size:.68rem;color:#94a3b8}
+.top10-card-metrics .ratio-hl{font-size:1.2rem!important}
+.top10-card-reason{font-size:.82rem;color:#94a3b8;line-height:1.6}
+.top10-card-reason strong{color:#e2e8f0}
+.top10-conclusion{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:16px 20px;margin-top:20px}
+.top10-conclusion h3{font-size:1rem;color:#38bdf8;margin-bottom:10px}
+.top10-conclusion p{font-size:.82rem;color:#94a3b8;line-height:1.7;margin-top:8px}
+</style></head><body>
+<div class="header"><h1>A股短线标的筛选报告</h1><div class="sub">2026-07-01 | 规则版本 v6.12.17</div></div>
+<div class="container">
+<div class="index-row"><div class="index-card"><div class="idx-name">上证指数</div><div class="idx-price">4094.40</div><div class="idx-chg up"><span class="idx-amt">+20.50</span> <span class="idx-pct">+0.50%</span></div></div><div class="index-card"><div class="idx-name">深证成指</div><div class="idx-price">16205.56</div><div class="idx-chg up"><span class="idx-amt">+392.69</span> <span class="idx-pct">+2.48%</span></div></div><div class="index-card"><div class="idx-name">创业板指</div><div class="idx-price">4342.71</div><div class="idx-chg up"><span class="idx-amt">+126.01</span> <span class="idx-pct">+2.99%</span></div></div></div>
+<div class="meta-row">
+<div class="meta-card"><div class="label">预测日期</div><div class="value">2026-07-01</div></div>
+<div class="meta-card"><div class="label">数据日期</div><div class="value">2026-06-30</div></div>
+<div class="meta-card"><div class="label">市场环境</div><div class="value">震荡</div></div>
+<div class="meta-card"><div class="label">建议仓位</div><div class="value">55%</div></div>
+<div class="meta-card"><div class="label">最终推荐</div><div class="value">39只</div></div></div>
+<section><h2>筛选管道</h2><div class="funnel"><div class="funnel-step " style="width:100%">原始标的池: 500只</div><div class="funnel-step " style="width:85%">硬排除(13项): 429只</div><div class="funnel-step " style="width:19%">信号过滤(27项): 96只</div><div class="funnel-step " style="width:13%">策略匹配(17策略): 66只</div><div class="funnel-step " style="width:12%">行业+同策略限制: 39只</div><div class="funnel-step " style="width:12%">新闻筛查: 39只</div><div class="funnel-step funnel-last" style="width:12%">最终推荐: 39只</div></div></section>
+<section><h2>数据可视化</h2><div class="chart-grid">
+<div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">策略分布</h3><div class="seg-bar"><div class="seg" style="width:2.564102564102564%;background:#22c55e">1</div><div class="seg" style="width:23.076923076923077%;background:#3b82f6">9</div><div class="seg" style="width:5.128205128205128%;background:#8b5cf6">2</div><div class="seg" style="width:28.205128205128204%;background:#f59e0b">11</div><div class="seg" style="width:5.128205128205128%;background:#ec4899">2</div><div class="seg" style="width:2.564102564102564%;background:#10b981">1</div><div class="seg" style="width:5.128205128205128%;background:#f97316">2</div><div class="seg" style="width:5.128205128205128%;background:#14b8a6">2</div><div class="seg" style="width:15.384615384615385%;background:#ef4444">6</div><div class="seg" style="width:2.564102564102564%;background:#eab308">1</div><div class="seg" style="width:5.128205128205128%;background:#84cc16">2</div></div><div class="legend"><span class="legend-item"><span class="legend-dot" style="background:#22c55e"></span> A动量延续: 1只 (3%)</span><span class="legend-item"><span class="legend-dot" style="background:#3b82f6"></span> B超跌反弹: 9只 (23%)</span><span class="legend-item"><span class="legend-dot" style="background:#8b5cf6"></span> C事件驱动: 2只 (5%)</span><span class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span> D回调企稳: 11只 (28%)</span><span class="legend-item"><span class="legend-dot" style="background:#ec4899"></span> E资金埋伏: 2只 (5%)</span><span class="legend-item"><span class="legend-dot" style="background:#10b981"></span> G横盘突破: 1只 (3%)</span><span class="legend-item"><span class="legend-dot" style="background:#f97316"></span> H地量见底: 2只 (5%)</span><span class="legend-item"><span class="legend-dot" style="background:#14b8a6"></span> I均线突破: 2只 (5%)</span><span class="legend-item"><span class="legend-dot" style="background:#ef4444"></span> J龙回头: 6只 (15%)</span><span class="legend-item"><span class="legend-dot" style="background:#eab308"></span> L黄金坑: 1只 (3%)</span><span class="legend-item"><span class="legend-dot" style="background:#84cc16"></span> N新高突破: 2只 (5%)</span></div></div>
+<div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">硬排除TOP5</h3><div class="bar-row"><div class="bar-label">涨幅>7%</div><div class="bar-track"><div class="bar-fill" style="width:100.0%">71</div></div></div></div>
+<div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">各策略数量</h3><div class="bar-row"><div class="bar-label">A 动量延续</div><div class="bar-track"><div class="bar-fill" style="width:9.090909090909092%;background:#22c55e">1</div></div></div><div class="bar-row"><div class="bar-label">B 超跌反弹</div><div class="bar-track"><div class="bar-fill" style="width:81.81818181818183%;background:#3b82f6">9</div></div></div><div class="bar-row"><div class="bar-label">C 事件驱动</div><div class="bar-track"><div class="bar-fill" style="width:18.181818181818183%;background:#8b5cf6">2</div></div></div><div class="bar-row"><div class="bar-label">D 回调企稳</div><div class="bar-track"><div class="bar-fill" style="width:100.0%;background:#f59e0b">11</div></div></div><div class="bar-row"><div class="bar-label">E 资金埋伏</div><div class="bar-track"><div class="bar-fill" style="width:18.181818181818183%;background:#ec4899">2</div></div></div><div class="bar-row"><div class="bar-label">G 横盘突破</div><div class="bar-track"><div class="bar-fill" style="width:9.090909090909092%;background:#10b981">1</div></div></div><div class="bar-row"><div class="bar-label">H 地量见底</div><div class="bar-track"><div class="bar-fill" style="width:18.181818181818183%;background:#f97316">2</div></div></div></div>
+<div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">概述</h3><div style="font-size:.8rem;color:#cbd5e1">全市场→500只入围→429只通过硬排除→96只通过信号过滤→66只匹配策略→39只通过行业限制→39只通过新闻筛查→<strong style="color:#38bdf8">最终39只</strong></div></div>
+</div></section>
+<section><h2>系统告警</h2><div class="alert-list"><div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">今日无异常告警</span></div></div></section>
+<section><h2>最终推荐标的</h2><div style="overflow-x:auto"><table>
+<thead><tr><th>#</th><th>TOP10</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>二级行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th><th>盈亏比</th><th>回测</th></tr></thead>
+<tbody><tr class="strat_b"><td>1</td><td>⭐</td><td><span class="badge strat_b">B</span></td>
+        <td><a href="https://quote.eastmoney.com/sh605006.html" target="_blank">山东玻纤</a></td><td>605006</td><td>机械设备</td><td></td>
+        <td class="down">-6.06%</td><td>20.21</td><td>21.09</td>
+        <td>9.31%</td><td>3 (B)</td><td>25</td><td class="conf high">★★★</td>
+        <td class="entry">20.47</td><td>19.04</td><td>21.90</td><td>1.0</td><td><span class="no_data">⚪0/1</span></td></tr><tr class="strat_b"><td>2</td><td>⭐</td><td><span class="badge strat_b">B</span></td>
+        <td><a href="https://quote.eastmoney.com/sh600096.html" target="_blank">云天化</a></td><td>600096</td><td>银行</td><td></td>
+        <td class="down">-4.88%</td><td>31.65</td><td>30.40</td>
+        <td>4.94%</td><td>1 (B)</td><td>25</td><td class="conf high">★★★</td>
+        <td class="entry">30.25</td><td>28.13</td><td>32.37</td><td>1.0</td><td></td></tr><tr class="strat_b"><td>3</td><td>⭐</td><td><span class="badge strat_b">B</span></td>
+        <td><a href="https://quote.eastmoney.com/sh601117.html" target="_blank">中国化学</a></td><td>601117</td><td>有色金属</td><td></td>
+        <td class="down">-3.67%</td><td>7.56</td><td>7.35</td>
+        <td>4.19%</td><td>1 (B)</td><td>21</td><td class="conf high">★★★</td>
+        <td class="entry">7.28</td><td>6.77</td><td>7.79</td><td>1.0</td><td></td></tr><tr class="strat_d"><td>4</td><td>⭐</td><td><span class="badge strat_d">D</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002203.html" target="_blank">海亮股份</a></td><td>002203</td><td>建筑装饰</td><td></td>
+        <td class="up">+5.15%</td><td>21.52</td><td>22.85</td>
+        <td>8.88%</td><td>1 (D)</td><td>25</td><td class="conf high">★★★</td>
+        <td class="entry">22.04</td><td>20.94</td><td>23.14</td><td>1.0</td><td></td></tr><tr class="strat_e"><td>5</td><td>⭐</td><td><span class="badge strat_e">E</span></td>
+        <td><a href="https://quote.eastmoney.com/sz003036.html" target="_blank">泰坦股份</a></td><td>003036</td><td>食品饮料</td><td></td>
+        <td class="up">+0.34%</td><td>91.47</td><td>92.49</td>
+        <td>5.04%</td><td>1 (E)</td><td>22</td><td class="conf high">★★★</td>
+        <td class="entry">90.14</td><td>86.99</td><td>93.75</td><td>1.15</td><td></td></tr><tr class="strat_h"><td>6</td><td>⭐</td><td><span class="badge strat_h">H</span></td>
+        <td><a href="https://quote.eastmoney.com/sh601020.html" target="_blank">华钰矿业</a></td><td>601020</td><td>煤炭</td><td></td>
+        <td class="down">-0.66%</td><td>23.86</td><td>23.99</td>
+        <td>4.39%</td><td>3 (H,B)</td><td>24</td><td class="conf high">★★★</td>
+        <td class="entry">23.41</td><td>22.01</td><td>24.81</td><td>1.0</td><td><span class="no_data">⚪0/2</span></td></tr><tr class="strat_j"><td>7</td><td>⭐</td><td><span class="badge strat_j">J</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002245.html" target="_blank">蔚蓝锂芯</a></td><td>002245</td><td>建筑装饰</td><td></td>
+        <td class="up">+1.35%</td><td>18.37</td><td>18.71</td>
+        <td>4.44%</td><td>1 (J)</td><td>24</td><td class="conf high">★★★</td>
+        <td class="entry">18.37</td><td>17.27</td><td>19.47</td><td>1.0</td><td></td></tr><tr class="strat_j"><td>8</td><td>⭐</td><td><span class="badge strat_j">J</span></td>
+        <td><a href="https://quote.eastmoney.com/sz000630.html" target="_blank">铜陵有色</a></td><td>000630</td><td>公用事业</td><td></td>
+        <td class="down">-0.16%</td><td>6.25</td><td>6.36</td>
+        <td>4.24%</td><td>1 (J)</td><td>24</td><td class="conf high">★★★</td>
+        <td class="entry">6.22</td><td>5.85</td><td>6.59</td><td>1.0</td><td></td></tr><tr class="strat_l"><td>9</td><td>⭐</td><td><span class="badge strat_l">L</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002735.html" target="_blank">王子新材</a></td><td>002735</td><td>机械设备</td><td></td>
+        <td class="up">+2.66%</td><td>15.70</td><td>16.23</td>
+        <td>9.11%</td><td>1 (L)</td><td>26</td><td class="conf high">★★★</td>
+        <td class="entry">16.30</td><td>15.32</td><td>17.28</td><td>1.0</td><td></td></tr><tr class="strat_a"><td>10</td><td></td><td><span class="badge strat_a">A</span></td>
+        <td><a href="https://quote.eastmoney.com/sz000920.html" target="_blank">沃顿科技</a></td><td>000920</td><td>非银金融</td><td></td>
+        <td class="up">+4.84%</td><td>15.85</td><td>16.46</td>
+        <td>8.92%</td><td>2 (G,A)</td><td>38</td><td class="conf high">★★★</td>
+        <td class="entry">17.13</td><td>16.27</td><td>17.99</td><td>1.0</td><td></td></tr><tr class="strat_b"><td>11</td><td></td><td><span class="badge strat_b">B</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002522.html" target="_blank">浙江众成</a></td><td>002522</td><td>基础化工</td><td></td>
+        <td class="down">-4.09%</td><td>8.05</td><td>7.97</td>
+        <td>9.15%</td><td>3 (A,B)</td><td>31</td><td class="conf high">★★★</td>
+        <td class="entry">7.63</td><td>7.10</td><td>8.16</td><td>1.0</td><td><span class="no_data">⚪0/1</span></td></tr><tr class="strat_b"><td>12</td><td></td><td><span class="badge strat_b">B</span></td>
+        <td><a href="https://quote.eastmoney.com/sh600497.html" target="_blank">驰宏锌锗</a></td><td>600497</td><td>电力设备</td><td></td>
+        <td class="down">-5.39%</td><td>12.42</td><td>12.11</td>
+        <td>6.64%</td><td>2 (B)</td><td>30</td><td class="conf high">★★★</td>
+        <td class="entry">11.79</td><td>10.96</td><td>12.62</td><td>1.0</td><td></td></tr><tr class="strat_b"><td>13</td><td></td><td><span class="badge strat_b">B</span></td>
+        <td><a href="https://quote.eastmoney.com/sh600531.html" target="_blank">豫光金铅</a></td><td>600531</td><td>食品饮料</td><td></td>
+        <td class="down">-4.71%</td><td>15.30</td><td>14.76</td>
+        <td>5.16%</td><td>2 (B)</td><td>29</td><td class="conf high">★★★</td>
+        <td class="entry">14.69</td><td>13.66</td><td>15.72</td><td>1.0</td><td></td></tr><tr class="strat_b"><td>14</td><td></td><td><span class="badge strat_b">B</span></td>
+        <td><a href="https://quote.eastmoney.com/sh603698.html" target="_blank">航天工程</a></td><td>603698</td><td>轻工制造</td><td></td>
+        <td class="down">-3.29%</td><td>39.87</td><td>38.56</td>
+        <td>8.38%</td><td>1 (B)</td><td>28</td><td class="conf high">★★★</td>
+        <td class="entry">37.82</td><td>35.17</td><td>40.47</td><td>1.0</td><td></td></tr><tr class="strat_b"><td>15</td><td></td><td><span class="badge strat_b">B</span></td>
+        <td><a href="https://quote.eastmoney.com/sh601958.html" target="_blank">金钼股份</a></td><td>601958</td><td>有色金属</td><td></td>
+        <td class="down">-4.87%</td><td>28.73</td><td>28.11</td>
+        <td>7.24%</td><td>2 (E,B)</td><td>28</td><td class="conf high">★★★</td>
+        <td class="entry">27.06</td><td>25.17</td><td>28.95</td><td>1.0</td><td><span class="no_data">⚪0/1</span></td></tr><tr class="strat_b"><td>16</td><td></td><td><span class="badge strat_b">B</span></td>
+        <td><a href="https://quote.eastmoney.com/sh600352.html" target="_blank">浙江龙盛</a></td><td>600352</td><td>基础化工</td><td></td>
+        <td class="down">-4.19%</td><td>12.50</td><td>12.11</td>
+        <td>4.91%</td><td>1 (B)</td><td>28</td><td class="conf high">★★★</td>
+        <td class="entry">11.96</td><td>11.12</td><td>12.80</td><td>1.0</td><td></td></tr><tr class="strat_c"><td>17</td><td></td><td><span class="badge strat_c">C</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002430.html" target="_blank">杭氧股份</a></td><td>002430</td><td>传媒</td><td></td>
+        <td class="up">+1.84%</td><td>29.45</td><td>30.96</td>
+        <td>7.86%</td><td>4 (D,G,N,C)</td><td>30</td><td class="conf high">★★★</td>
+        <td class="entry">31.56</td><td>29.98</td><td>33.14</td><td>1.0</td><td><span class="no_data">⚪0/2</span></td></tr><tr class="strat_c"><td>18</td><td></td><td><span class="badge strat_c">C</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002237.html" target="_blank">恒邦股份</a></td><td>002237</td><td>建筑装饰</td><td></td>
+        <td class="up">+1.24%</td><td>14.37</td><td>14.69</td>
+        <td>8.34%</td><td>1 (C)</td><td>26</td><td class="conf high">★★★</td>
+        <td class="entry">15.12</td><td>14.36</td><td>15.88</td><td>1.0</td><td></td></tr><tr class="strat_d"><td>19</td><td></td><td><span class="badge strat_d">D</span></td>
+        <td><a href="https://quote.eastmoney.com/sh600171.html" target="_blank">上海贝岭</a></td><td>600171</td><td>电子</td><td></td>
+        <td class="up">+3.43%</td><td>30.48</td><td>31.94</td>
+        <td>5.89%</td><td>2 (D)</td><td>34</td><td class="conf high">★★★</td>
+        <td class="entry">31.05</td><td>29.50</td><td>32.60</td><td>1.0</td><td></td></tr><tr class="strat_d"><td>20</td><td></td><td><span class="badge strat_d">D</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002158.html" target="_blank">汉钟精机</a></td><td>002158</td><td>医药生物</td><td></td>
+        <td class="up">+5.94%</td><td>35.42</td><td>37.08</td>
+        <td>7.03%</td><td>2 (D)</td><td>33</td><td class="conf high">★★★</td>
+        <td class="entry">35.99</td><td>34.19</td><td>37.79</td><td>1.0</td><td></td></tr><tr class="strat_d"><td>21</td><td></td><td><span class="badge strat_d">D</span></td>
+        <td><a href="https://quote.eastmoney.com/sh603010.html" target="_blank">万盛股份</a></td><td>603010</td><td>电子</td><td></td>
+        <td class="up">+3.01%</td><td>17.30</td><td>18.12</td>
+        <td>8.13%</td><td>3 (D,A)</td><td>32</td><td class="conf high">★★★</td>
+        <td class="entry">17.47</td><td>16.60</td><td>18.34</td><td>1.0</td><td><span class="no_data">⚪0/1</span></td></tr><tr class="strat_d"><td>22</td><td></td><td><span class="badge strat_d">D</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002179.html" target="_blank">中航光电</a></td><td>002179</td><td>医药生物</td><td></td>
+        <td class="up">+4.76%</td><td>44.36</td><td>46.20</td>
+        <td>9.02%</td><td>2 (D)</td><td>32</td><td class="conf high">★★★</td>
+        <td class="entry">44.78</td><td>42.54</td><td>47.02</td><td>1.0</td><td></td></tr><tr class="strat_d"><td>23</td><td></td><td><span class="badge strat_d">D</span></td>
+        <td><a href="https://quote.eastmoney.com/sh603505.html" target="_blank">金石资源</a></td><td>603505</td><td>电子</td><td></td>
+        <td class="up">+5.22%</td><td>18.99</td><td>20.15</td>
+        <td>7.42%</td><td>2 (D)</td><td>31</td><td class="conf high">★★★</td>
+        <td class="entry">19.52</td><td>18.54</td><td>20.50</td><td>1.0</td><td></td></tr><tr class="strat_d"><td>24</td><td></td><td><span class="badge strat_d">D</span></td>
+        <td><a href="https://quote.eastmoney.com/sh600522.html" target="_blank">中天科技</a></td><td>600522</td><td>通信</td><td></td>
+        <td class="up">+3.13%</td><td>59.81</td><td>60.68</td>
+        <td>5.86%</td><td>2 (J,D)</td><td>31</td><td class="conf high">★★★</td>
+        <td class="entry">59.41</td><td>56.44</td><td>62.38</td><td>1.0</td><td></td></tr><tr class="strat_d"><td>25</td><td></td><td><span class="badge strat_d">D</span></td>
+        <td><a href="https://quote.eastmoney.com/sh600516.html" target="_blank">方大炭素</a></td><td>600516</td><td>基础化工</td><td></td>
+        <td class="up">+5.83%</td><td>5.80</td><td>6.17</td>
+        <td>9.61%</td><td>2 (B,D)</td><td>29</td><td class="conf high">★★★</td>
+        <td class="entry">5.96</td><td>5.66</td><td>6.26</td><td>1.0</td><td><span class="no_data">⚪0/1</span></td></tr><tr class="strat_d"><td>26</td><td></td><td><span class="badge strat_d">D</span></td>
+        <td><a href="https://quote.eastmoney.com/sh600458.html" target="_blank">时代新材</a></td><td>600458</td><td>电力设备</td><td></td>
+        <td class="up">+3.44%</td><td>15.66</td><td>16.55</td>
+        <td>7.94%</td><td>1 (D)</td><td>28</td><td class="conf high">★★★</td>
+        <td class="entry">16.01</td><td>15.21</td><td>16.81</td><td>1.0</td><td></td></tr><tr class="strat_d"><td>27</td><td></td><td><span class="badge strat_d">D</span></td>
+        <td><a href="https://quote.eastmoney.com/sh603859.html" target="_blank">能科科技</a></td><td>603859</td><td>机械设备</td><td></td>
+        <td class="up">+5.13%</td><td>45.71</td><td>47.98</td>
+        <td>6.55%</td><td>4 (B,D)</td><td>27</td><td class="conf high">★★★</td>
+        <td class="entry">46.58</td><td>44.25</td><td>48.91</td><td>1.0</td><td><span class="no_data">⚪0/2</span></td></tr><tr class="strat_d"><td>28</td><td></td><td><span class="badge strat_d">D</span></td>
+        <td><a href="https://quote.eastmoney.com/sh603659.html" target="_blank">璞泰来</a></td><td>603659</td><td>轻工制造</td><td></td>
+        <td class="up">+5.24%</td><td>27.24</td><td>28.93</td>
+        <td>7.28%</td><td>1 (D)</td><td>27</td><td class="conf high">★★★</td>
+        <td class="entry">28.00</td><td>26.60</td><td>29.40</td><td>1.0</td><td></td></tr><tr class="strat_e"><td>29</td><td>⭐</td><td><span class="badge strat_e">E</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002335.html" target="_blank">科华数据</a></td><td>002335</td><td>电力设备</td><td></td>
+        <td class="up">+0.43%</td><td>41.88</td><td>42.45</td>
+        <td>5.06%</td><td>1 (E)</td><td>28</td><td class="conf high">★★★</td>
+        <td class="entry">42.05</td><td>40.58</td><td>43.73</td><td>1.14</td><td></td></tr><tr class="strat_g"><td>30</td><td></td><td><span class="badge strat_g">G</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002180.html" target="_blank">奔图科技</a></td><td>002180</td><td>医药生物</td><td></td>
+        <td class="up">+2.19%</td><td>16.17</td><td>16.36</td>
+        <td>4.00%</td><td>1 (G)</td><td>31</td><td class="conf high">★★★</td>
+        <td class="entry">16.43</td><td>15.61</td><td>17.25</td><td>1.0</td><td></td></tr><tr class="strat_h"><td>31</td><td></td><td><span class="badge strat_h">H</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002080.html" target="_blank">中材科技</a></td><td>002080</td><td>建筑材料</td><td></td>
+        <td class="down">-0.55%</td><td>90.00</td><td>90.00</td>
+        <td>6.67%</td><td>3 (D,B,H)</td><td>28</td><td class="conf high">★★★</td>
+        <td class="entry">88.66</td><td>83.34</td><td>93.98</td><td>1.0</td><td><span class="no_data">⚪0/1</span></td></tr><tr class="strat_i"><td>32</td><td></td><td><span class="badge strat_i">I</span></td>
+        <td><a href="https://quote.eastmoney.com/sh603687.html" target="_blank">大胜达</a></td><td>603687</td><td>轻工制造</td><td></td>
+        <td class="down">-0.29%</td><td>20.26</td><td>20.29</td>
+        <td>8.11%</td><td>2 (B,I)</td><td>35</td><td class="conf high">★★★</td>
+        <td class="entry">20.31</td><td>19.29</td><td>21.33</td><td>1.0</td><td><span class="no_data">⚪0/1</span></td></tr><tr class="strat_i"><td>33</td><td></td><td><span class="badge strat_i">I</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002126.html" target="_blank">银轮股份</a></td><td>002126</td><td>汽车</td><td></td>
+        <td class="up">+6.87%</td><td>46.33</td><td>49.80</td>
+        <td>10.97%</td><td>4 (F,H,I)</td><td>26</td><td class="conf high">★★★</td>
+        <td class="entry">50.16</td><td>47.65</td><td>52.67</td><td>1.0</td><td><span class="no_data">⚪0/2</span></td></tr><tr class="strat_j"><td>34</td><td></td><td><span class="badge strat_j">J</span></td>
+        <td><a href="https://quote.eastmoney.com/sh600888.html" target="_blank">新疆众和</a></td><td>600888</td><td>机械设备</td><td></td>
+        <td class="up">+6.22%</td><td>15.35</td><td>15.89</td>
+        <td>8.69%</td><td>1 (J)</td><td>30</td><td class="conf high">★★★</td>
+        <td class="entry">15.32</td><td>14.40</td><td>16.24</td><td>1.0</td><td></td></tr><tr class="strat_j"><td>35</td><td></td><td><span class="badge strat_j">J</span></td>
+        <td><a href="https://quote.eastmoney.com/sz000969.html" target="_blank">安泰科技</a></td><td>000969</td><td>有色金属</td><td></td>
+        <td class="up">+2.38%</td><td>24.01</td><td>24.54</td>
+        <td>6.30%</td><td>1 (J)</td><td>28</td><td class="conf high">★★★</td>
+        <td class="entry">23.84</td><td>22.41</td><td>25.27</td><td>1.0</td><td></td></tr><tr class="strat_j"><td>36</td><td></td><td><span class="badge strat_j">J</span></td>
+        <td><a href="https://quote.eastmoney.com/sz003018.html" target="_blank">金富科技</a></td><td>003018</td><td>食品饮料</td><td></td>
+        <td class="up">+3.71%</td><td>72.86</td><td>76.23</td>
+        <td>10.18%</td><td>1 (J)</td><td>28</td><td class="conf high">★★★</td>
+        <td class="entry">71.86</td><td>67.55</td><td>76.17</td><td>1.0</td><td></td></tr><tr class="strat_j"><td>37</td><td></td><td><span class="badge strat_j">J</span></td>
+        <td><a href="https://quote.eastmoney.com/sh601696.html" target="_blank">中银证券</a></td><td>601696</td><td>非银金融</td><td></td>
+        <td class="up">+1.77%</td><td>12.33</td><td>12.65</td>
+        <td>6.52%</td><td>3 (G,J)</td><td>26</td><td class="conf high">★★★</td>
+        <td class="entry">12.42</td><td>11.67</td><td>13.17</td><td>1.0</td><td><span class="no_data">⚪0/1</span></td></tr><tr class="strat_n"><td>38</td><td></td><td><span class="badge strat_n">N</span></td>
+        <td><a href="https://quote.eastmoney.com/sh603977.html" target="_blank">国泰集团</a></td><td>603977</td><td>商贸零售</td><td></td>
+        <td class="up">+2.87%</td><td>15.99</td><td>16.51</td>
+        <td>6.17%</td><td>2 (C,N)</td><td>34</td><td class="conf high">★★★</td>
+        <td class="entry">16.56</td><td>15.73</td><td>17.39</td><td>1.0</td><td></td></tr><tr class="strat_n"><td>39</td><td></td><td><span class="badge strat_n">N</span></td>
+        <td><a href="https://quote.eastmoney.com/sz000977.html" target="_blank">浪潮信息</a></td><td>000977</td><td>非银金融</td><td></td>
+        <td class="up">+6.35%</td><td>65.21</td><td>70.00</td>
+        <td>8.89%</td><td>3 (A,N)</td><td>32</td><td class="conf high">★★★</td>
+        <td class="entry">70.24</td><td>66.73</td><td>73.75</td><td>1.0</td><td><span class="no_data">⚪0/1</span></td></tr></tbody></table></div></section>
+<section><h2>策略说明</h2><table>
+<thead><tr><th style="width:18%">策略</th><th style="width:48%">条件</th><th style="width:16%">仓位(震荡)</th><th style="width:18%">仓位(弱市)</th></tr></thead>
+<tbody>
+<tr><td><span class="badge strat_a">A动量延续</span></td><td style="white-space:normal;word-break:break-all">涨3-7%+量比1.5-3.0+弱市/极端上涨关闭</td><td>12-17%</td><td>0%(关闭)</td></tr>
+<tr><td><span class="badge strat_b">B超跌反弹</span></td><td style="white-space:normal;word-break:break-all">跌2.5-9.5%+振幅>3%+反弹确认(close>low*1.01)+深度跌幅加分</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_c">C事件驱动</span></td><td style="white-space:normal;word-break:break-all">涨1-2%+量比≥1.0或财报季+弱市关闭</td><td>10-12%</td><td>0%(关闭)</td></tr>
+<tr><td><span class="badge strat_d">D回调企稳</span></td><td style="white-space:normal;word-break:break-all">涨3-6%(弱市上限7%)+振幅1.5-10%+阳线+弱市不折扣</td><td>12-15%</td><td>8-12%</td></tr>
+<tr><td><span class="badge strat_e">E资金埋伏</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>3000万(代理vr≥0.6+to≥0.5%)+弱市不折扣</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_f">F北向资金</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>5000万+近5日持续≥3日+弱市不折扣</td><td>3-5%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_g">G横盘突破</span></td><td style="white-space:normal;word-break:break-all">涨1.0-3.0%+振幅1.5-6%+量比≥1.0阳线+弱市不折扣低吸</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_h">H地量见底</span></td><td style="white-space:normal;word-break:break-all">涨-3~1.0%+量比<1.0+锤子线/十字星阳线+弱市放宽</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_i">I均线突破</span></td><td style="white-space:normal;word-break:break-all">MA5/10/20粘合<4%+放量vr≥1.0阳线+收盘≥均线×0.98+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_j">J龙回头</span></td><td style="white-space:normal;word-break:break-all">20日强势股+回调6-25%+缩量vr<1.0收阳+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_k">K缺口回补</span></td><td style="white-space:normal;word-break:break-all">前日跳空高开1-7%+回踩缺口上沿确认+收阳+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_l">L黄金坑</span></td><td style="white-space:normal;word-break:break-all">5日急跌≥5%+V型反弹≥2%+放量vr≥1.0收阳+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_m">M涨停回调</span></td><td style="white-space:normal;word-break:break-all">近5日涨停+回调4-25%+缩量vr<1.0收阳+弱市跳过</td><td>6-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_n">N新高突破</span></td><td style="white-space:normal;word-break:break-all">收盘≥20日新高×0.99+放量vr≥1.0阳线+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_o">O回踩均线</span></td><td style="white-space:normal;word-break:break-all">60日涨>15%+回踩MA20±3%+缩量vr<1.0收阳+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_p">P地量反弹</span></td><td style="white-space:normal;word-break:break-all">连续3日缩量至地量+当日放量vr≥1.2+涨1.0-5%阳线+弱市跳过</td><td>6-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_q">Q W底突破</span></td><td style="white-space:normal;word-break:break-all">20日内两底相差<5%+放量vr≥1.2突破颈线+阳线+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+</tbody></table></section>
+<section><h2>TOP10 板块热度精选推荐理由</h2>
+<div class="top10-cards"><div class="top10-card">
+<div class="top10-card-header"><span class="rank">#1</span><span class="name">泰坦股份</span><span class="code">003036</span><span class="badge strat_e">E 资金埋伏</span></div>
+<div class="top10-card-metrics">
+<div class="metric"><div class="val ratio-hl">1.15</div><div class="lbl">盈亏比</div></div>
+<div class="metric"><div class="val">90.14</div><div class="lbl">进场</div></div>
+<div class="metric"><div class="val">86.99</div><div class="lbl">止损</div></div>
+<div class="metric"><div class="val">93.75</div><div class="lbl">止盈</div></div>
+<div class="metric"><div class="val">22</div><div class="lbl">评分</div></div>
+<div class="metric"><div class="val">★</div><div class="lbl">置信</div></div>
+<div class="metric"><div class="val">6.1亿</div><div class="lbl">成交额</div></div>
+<div class="metric"><div class="val">3.1%</div><div class="lbl">换手率</div></div>
+</div>
+<div class="top10-card-reason"><strong>当日表现：</strong>涨幅+0.34%，振幅5.0%，成交额6.09亿，换手率3.09%，量比0.69，食品饮料行业<br><strong>基本面：</strong>ROE 1.4%，净利润同比 +8.1%<br><strong>进场区间：</strong>90.14元进场，止损86.99元（3.5%），止盈93.75元（+4.0%）<br><strong>7日推荐：</strong>已推荐1天（策略E），可持续关注</div></div>
+<div class="top10-card">
+<div class="top10-card-header"><span class="rank">#2</span><span class="name">科华数据</span><span class="code">002335</span><span class="badge strat_e">E 资金埋伏</span></div>
+<div class="top10-card-metrics">
+<div class="metric"><div class="val ratio-hl">1.14</div><div class="lbl">盈亏比</div></div>
+<div class="metric"><div class="val">42.05</div><div class="lbl">进场</div></div>
+<div class="metric"><div class="val">40.58</div><div class="lbl">止损</div></div>
+<div class="metric"><div class="val">43.73</div><div class="lbl">止盈</div></div>
+<div class="metric"><div class="val">28</div><div class="lbl">评分</div></div>
+<div class="metric"><div class="val">★</div><div class="lbl">置信</div></div>
+<div class="metric"><div class="val">22.0亿</div><div class="lbl">成交额</div></div>
+<div class="metric"><div class="val">7.8%</div><div class="lbl">换手率</div></div>
+</div>
+<div class="top10-card-reason"><strong>当日表现：</strong>涨幅+0.43%，振幅5.1%，成交额22.03亿，换手率7.83%，量比0.90，电力设备行业<br><strong>基本面：</strong>ROE 1.2%，净利润同比 +13.1%<br><strong>进场区间：</strong>42.05元进场，止损40.58元（3.5%），止盈43.73元（+4.0%）<br><strong>7日推荐：</strong>已推荐1天（策略E），可持续关注</div></div>
+<div class="top10-card">
+<div class="top10-card-header"><span class="rank">#3</span><span class="name">山东玻纤</span><span class="code">605006</span><span class="badge strat_b">B 超跌反弹</span></div>
+<div class="top10-card-metrics">
+<div class="metric"><div class="val ratio-hl">1.00</div><div class="lbl">盈亏比</div></div>
+<div class="metric"><div class="val">20.47</div><div class="lbl">进场</div></div>
+<div class="metric"><div class="val">19.04</div><div class="lbl">止损</div></div>
+<div class="metric"><div class="val">21.90</div><div class="lbl">止盈</div></div>
+<div class="metric"><div class="val">25</div><div class="lbl">评分</div></div>
+<div class="metric"><div class="val">★</div><div class="lbl">置信</div></div>
+<div class="metric"><div class="val">17.0亿</div><div class="lbl">成交额</div></div>
+<div class="metric"><div class="val">12.7%</div><div class="lbl">换手率</div></div>
+</div>
+<div class="top10-card-reason"><strong>当日表现：</strong>涨幅-6.06%，振幅9.3%，成交额17.00亿，换手率12.66%，量比1.15，机械设备行业<br><strong>基本面：</strong>ROE 0.4%，净利润同比 +15.4%<br><strong>进场区间：</strong>20.47元进场，止损19.04元（7.0%），止盈21.90元（+7.0%）<br><strong>7日推荐：</strong>已推荐3天（策略B），可持续关注</div></div>
+<div class="top10-card">
+<div class="top10-card-header"><span class="rank">#4</span><span class="name">云天化</span><span class="code">600096</span><span class="badge strat_b">B 超跌反弹</span></div>
+<div class="top10-card-metrics">
+<div class="metric"><div class="val ratio-hl">1.00</div><div class="lbl">盈亏比</div></div>
+<div class="metric"><div class="val">30.25</div><div class="lbl">进场</div></div>
+<div class="metric"><div class="val">28.13</div><div class="lbl">止损</div></div>
+<div class="metric"><div class="val">32.37</div><div class="lbl">止盈</div></div>
+<div class="metric"><div class="val">25</div><div class="lbl">评分</div></div>
+<div class="metric"><div class="val">★</div><div class="lbl">置信</div></div>
+<div class="metric"><div class="val">18.6亿</div><div class="lbl">成交额</div></div>
+<div class="metric"><div class="val">3.3%</div><div class="lbl">换手率</div></div>
+</div>
+<div class="top10-card-reason"><strong>当日表现：</strong>涨幅-4.88%，振幅4.9%，成交额18.60亿，换手率3.34%，量比0.83，银行行业<br><strong>基本面：</strong>ROE 5.6%，净利润同比 +10.4%<br><strong>进场区间：</strong>30.25元进场，止损28.13元（7.0%），止盈32.37元（+7.0%）<br><strong>7日推荐：</strong>已推荐1天（策略B），可持续关注<br><strong>📋 公司公告：</strong><br>  [06-09]其他:云天化关于全资子公司对外投资的公告<br>  [05-16]其他:云天化关于参股公司投资建设项目的公告</div></div>
+<div class="top10-card">
+<div class="top10-card-header"><span class="rank">#5</span><span class="name">中国化学</span><span class="code">601117</span><span class="badge strat_b">B 超跌反弹</span></div>
+<div class="top10-card-metrics">
+<div class="metric"><div class="val ratio-hl">1.00</div><div class="lbl">盈亏比</div></div>
+<div class="metric"><div class="val">7.28</div><div class="lbl">进场</div></div>
+<div class="metric"><div class="val">6.77</div><div class="lbl">止损</div></div>
+<div class="metric"><div class="val">7.79</div><div class="lbl">止盈</div></div>
+<div class="metric"><div class="val">21</div><div class="lbl">评分</div></div>
+<div class="metric"><div class="val">★</div><div class="lbl">置信</div></div>
+<div class="metric"><div class="val">10.7亿</div><div class="lbl">成交额</div></div>
+<div class="metric"><div class="val">2.4%</div><div class="lbl">换手率</div></div>
+</div>
+<div class="top10-card-reason"><strong>当日表现：</strong>涨幅-3.67%，振幅4.2%，成交额10.68亿，换手率2.40%，量比0.93，有色金属行业<br><strong>基本面：</strong>ROE 2.3%，净利润同比 +8.5%<br><strong>进场区间：</strong>7.28元进场，止损6.77元（7.0%），止盈7.79元（+7.0%）<br><strong>7日推荐：</strong>已推荐1天（策略B），可持续关注</div></div>
+<div class="top10-card">
+<div class="top10-card-header"><span class="rank">#6</span><span class="name">海亮股份</span><span class="code">002203</span><span class="badge strat_d">D 回调企稳</span></div>
+<div class="top10-card-metrics">
+<div class="metric"><div class="val ratio-hl">1.00</div><div class="lbl">盈亏比</div></div>
+<div class="metric"><div class="val">22.04</div><div class="lbl">进场</div></div>
+<div class="metric"><div class="val">20.94</div><div class="lbl">止损</div></div>
+<div class="metric"><div class="val">23.14</div><div class="lbl">止盈</div></div>
+<div class="metric"><div class="val">25</div><div class="lbl">评分</div></div>
+<div class="metric"><div class="val">★</div><div class="lbl">置信</div></div>
+<div class="metric"><div class="val">12.1亿</div><div class="lbl">成交额</div></div>
+<div class="metric"><div class="val">2.4%</div><div class="lbl">换手率</div></div>
+</div>
+<div class="top10-card-reason"><strong>当日表现：</strong>涨幅+5.15%，振幅8.9%，成交额12.10亿，换手率2.44%，量比0.81，建筑装饰行业<br><strong>基本面：</strong>ROE 2.6%，净利润同比 +26.4%<br><strong>进场区间：</strong>22.04元进场，止损20.94元（5.0%），止盈23.14元（+5.0%）<br><strong>7日推荐：</strong>已推荐1天（策略D），可持续关注<br><strong>📋 公司公告：</strong><br>  [05-28]提供/对外担保公告:关于为控股子公司提供担保的进展公告</div></div>
+<div class="top10-card">
+<div class="top10-card-header"><span class="rank">#7</span><span class="name">华钰矿业</span><span class="code">601020</span><span class="badge strat_h">H 地量见底</span></div>
+<div class="top10-card-metrics">
+<div class="metric"><div class="val ratio-hl">1.00</div><div class="lbl">盈亏比</div></div>
+<div class="metric"><div class="val">23.41</div><div class="lbl">进场</div></div>
+<div class="metric"><div class="val">22.01</div><div class="lbl">止损</div></div>
+<div class="metric"><div class="val">24.81</div><div class="lbl">止盈</div></div>
+<div class="metric"><div class="val">24</div><div class="lbl">评分</div></div>
+<div class="metric"><div class="val">★</div><div class="lbl">置信</div></div>
+<div class="metric"><div class="val">7.0亿</div><div class="lbl">成交额</div></div>
+<div class="metric"><div class="val">3.6%</div><div class="lbl">换手率</div></div>
+</div>
+<div class="top10-card-reason"><strong>当日表现：</strong>涨幅-0.66%，振幅4.4%，成交额7.00亿，换手率3.62%，量比0.61，煤炭行业<br><strong>基本面：</strong>ROE 0.7%，净利润同比 -33.1%<br><strong>进场区间：</strong>23.41元进场，止损22.01元（6.0%），止盈24.81元（+6.0%）<br><strong>7日推荐：</strong>已推荐3天（策略H,B），可持续关注</div></div>
+<div class="top10-card">
+<div class="top10-card-header"><span class="rank">#8</span><span class="name">蔚蓝锂芯</span><span class="code">002245</span><span class="badge strat_j">J 龙回头</span></div>
+<div class="top10-card-metrics">
+<div class="metric"><div class="val ratio-hl">1.00</div><div class="lbl">盈亏比</div></div>
+<div class="metric"><div class="val">18.37</div><div class="lbl">进场</div></div>
+<div class="metric"><div class="val">17.27</div><div class="lbl">止损</div></div>
+<div class="metric"><div class="val">19.47</div><div class="lbl">止盈</div></div>
+<div class="metric"><div class="val">24</div><div class="lbl">评分</div></div>
+<div class="metric"><div class="val">★</div><div class="lbl">置信</div></div>
+<div class="metric"><div class="val">16.1亿</div><div class="lbl">成交额</div></div>
+<div class="metric"><div class="val">5.4%</div><div class="lbl">换手率</div></div>
+</div>
+<div class="top10-card-reason"><strong>当日表现：</strong>涨幅+1.35%，振幅4.4%，成交额16.12亿，换手率5.38%，量比0.59，建筑装饰行业<br><strong>基本面：</strong>ROE 2.5%，净利润同比 +38.1%<br><strong>进场区间：</strong>18.37元进场，止损17.27元（6.0%），止盈19.47元（+6.0%）<br><strong>7日推荐：</strong>已推荐1天（策略J），可持续关注<br><strong>📋 公司公告：</strong><br>  [06-22]股权激励进展公告:关于2024年股票期权激励计划第二个行权期采用自主行权模式的提示性公告<br>  [06-12]股权激励进展公告:关于2024年及2026年股权激励计划部分股票期权注销完成的公告<br>  [06-09]法律意见书:关于江苏蔚蓝锂芯集团股份有限公司2024年股票期权激励计划注销部分股票期权及第二个行权期行权条件...</div></div>
+<div class="top10-card">
+<div class="top10-card-header"><span class="rank">#9</span><span class="name">铜陵有色</span><span class="code">000630</span><span class="badge strat_j">J 龙回头</span></div>
+<div class="top10-card-metrics">
+<div class="metric"><div class="val ratio-hl">1.00</div><div class="lbl">盈亏比</div></div>
+<div class="metric"><div class="val">6.22</div><div class="lbl">进场</div></div>
+<div class="metric"><div class="val">5.85</div><div class="lbl">止损</div></div>
+<div class="metric"><div class="val">6.59</div><div class="lbl">止盈</div></div>
+<div class="metric"><div class="val">24</div><div class="lbl">评分</div></div>
+<div class="metric"><div class="val">★</div><div class="lbl">置信</div></div>
+<div class="metric"><div class="val">21.1亿</div><div class="lbl">成交额</div></div>
+<div class="metric"><div class="val">3.0%</div><div class="lbl">换手率</div></div>
+</div>
+<div class="top10-card-reason"><strong>当日表现：</strong>涨幅-0.16%，振幅4.2%，成交额21.13亿，换手率3.03%，量比0.57，公用事业行业<br><strong>基本面：</strong>ROE 3.6%，净利润同比 +19.1%<br><strong>进场区间：</strong>6.22元进场，止损5.85元（5.9%），止盈6.59元（+5.9%）<br><strong>7日推荐：</strong>已推荐1天（策略J），可持续关注<br><strong>📋 公司公告：</strong><br>  [05-29]分配方案实施:2025年年度权益分派实施公告</div></div>
+<div class="top10-card">
+<div class="top10-card-header"><span class="rank">#10</span><span class="name">王子新材</span><span class="code">002735</span><span class="badge strat_l">L 黄金坑</span></div>
+<div class="top10-card-metrics">
+<div class="metric"><div class="val ratio-hl">1.00</div><div class="lbl">盈亏比</div></div>
+<div class="metric"><div class="val">16.30</div><div class="lbl">进场</div></div>
+<div class="metric"><div class="val">15.32</div><div class="lbl">止损</div></div>
+<div class="metric"><div class="val">17.28</div><div class="lbl">止盈</div></div>
+<div class="metric"><div class="val">26</div><div class="lbl">评分</div></div>
+<div class="metric"><div class="val">★</div><div class="lbl">置信</div></div>
+<div class="metric"><div class="val">8.5亿</div><div class="lbl">成交额</div></div>
+<div class="metric"><div class="val">19.2%</div><div class="lbl">换手率</div></div>
+</div>
+<div class="top10-card-reason"><strong>当日表现：</strong>涨幅+2.66%，振幅9.1%，成交额8.54亿，换手率19.16%，量比1.19，机械设备行业<br><strong>基本面：</strong>ROE 0.6%，净利润同比 +19.8%<br><strong>进场区间：</strong>16.30元进场，止损15.32元（6.0%），止盈17.28元（+6.0%）<br><strong>7日推荐：</strong>已推荐1天（策略L），可持续关注</div></div></div></section>
+<section><h2>AI 策略分析 — 市场全景</h2><div style="font-size:.85rem;color:#cbd5e1;line-height:1.7;white-space:pre-wrap">## 一、市场全景分析<br><br>### 1.1 大盘环境：震荡格局<br><br>- **上证指数**：4094.4（+0.50%），涨跌 +20.50点<br>- **深证成指**：16205.56（+2.48%），涨跌 +392.69点<br><br>### 1.2 市场情绪<br><br>- **市场情绪**：极度亢奋<br>- **涨停家数**：210家<br>- **研判**：涨停家数>80家，市场情绪极度亢奋，注意追高风险，仓位控制在50%以内<br><br>### 1.3 筛选漏斗全景<br><br>| 阶段 | 数量 | 过滤率 | 说明 |<br>|------|------|--------|------|<br>| 原始池 | 500 | - | 全市场满足基本条件的标的 |<br>| 硬排除 | 429 | 14.2% | 13项硬性排除 |<br>| 信号过滤 | 96 | 77.6% | 27项信号过滤 |<br>| 策略匹配 | 66 | 31.2% | 20策略匹配 |<br>| 微观结构 | 57 | 13.6% | 流动性+消息敏感度 |<br>| 行业限制 | 39 | 31.6% | 行业集中度控制 |<br>| **最终推荐** | **39** | **92.2%** | 精选标的 |<br><br>### 1.4 资金流向<br><br>- 推荐标的主力净流入合计：0万<br>- 推荐标的平均主力净流入：0万/只<br>- **研判**：主力资金整体偏空，注意风险控制</div></section><section><h2>AI 策略分析 — 板块深度研判</h2><div style="font-size:.85rem;color:#cbd5e1;line-height:1.7;white-space:pre-wrap">## 二、板块深度研判<br><br>### 2.1 涨停分布<br><br>| 板块 | 涨停家数 | 强度 |<br>|------|---------|------|<br>| 电子 | 54 | 🔥🔥🔥 极强 |<br>| 机械设备 | 36 | 🔥🔥🔥 极强 |<br>| 基础化工 | 36 | 🔥🔥🔥 极强 |<br>| 电力设备 | 13 | 🔥🔥🔥 极强 |<br>| 汽车 | 11 | 🔥🔥🔥 极强 |<br>| 建筑装饰 | 10 | 🔥🔥🔥 极强 |<br>| 计算机 | 10 | 🔥🔥🔥 极强 |<br>| 银行 | 5 | 🔥🔥🔥 极强 |<br>| 商贸零售 | 5 | 🔥🔥🔥 极强 |<br>| 轻工制造 | 4 | 🔥🔥 较强 |<br><br>### 2.2 推荐标的板块分布<br><br>- **机械设备**：4只推荐<br>- **有色金属**：3只推荐<br>- **建筑装饰**：3只推荐<br>- **食品饮料**：3只推荐<br>- **非银金融**：3只推荐<br>- **基础化工**：3只推荐<br>- **电力设备**：3只推荐<br>- **轻工制造**：3只推荐<br>- **电子**：3只推荐<br>- **医药生物**：3只推荐<br>- **银行**：1只推荐<br>- **煤炭**：1只推荐<br>- **公用事业**：1只推荐<br>- **传媒**：1只推荐<br>- **通信**：1只推荐<br>- **建筑材料**：1只推荐<br>- **汽车**：1只推荐<br>- **商贸零售**：1只推荐<br><br>### 2.3 板块持续性研判<br><br>**热点板块**：电子、机械设备、基础化工<br>- 龙头板块 **电子** 涨停54家，板块效应显著，关注龙头股持续性<br>- 板块轮动健康，热点板块具有持续性，短线可参与</div></section><section><h2>AI 策略分析 — 个股深度研判</h2><div class="top10-cards"><div class="top10-card">
+<div class="top10-card-header"><span class="rank">AI</span><span class="name">泰坦股份</span><span class="code">003036</span></div>
+<div class="top10-card-reason"><strong>综合研判：</strong>该股是资金埋伏策略标的，主力底部建仓，安全边际较高，评分22分，置信度★★★，综合质量优秀。</div>
+<div class="top10-card-reason" style="margin-top:6px">**E 资金埋伏** 策略匹配逻辑： 该股资金连续流入，主力底部建仓痕迹明显。当前涨幅+0.34%，处于主力成本区附近，安全边际较高。 该股在7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="top10-card-reason" style="margin-top:6px">**技术面**：
+- 均线系统：跌破MA5，站上MA20
+- MACD：空头排列（DIF=9.935，DEA=11.245），等待金叉确认
+- KDJ：空头排列（K=51.9，D=61.6），短线偏空
+- 距20日最高价：13.3%</div>
+<div class="top10-card-reason" style="margin-top:6px">**资金面**：
+- 主力资金数据不可得，需结合盘口观察
+- 成交额 6.1亿，换手率 3.1%，流动性良好</div>
+<div class="top10-card-reason" style="margin-top:6px">**基本面速览**：
+- ROE 1.4%（偏低），净利润同比 +8.1%
+- 行业：食品饮料</div>
+<div class="top10-card-reason" style="margin-top:6px">**风险提示**：
+- 短期风险可控，关注大盘系统性风险</div>
+<div class="top10-card-reason" style="margin-top:6px">**操作建议**：
+- 进场区间：90.14元
+- 止损位：86.99元（3.5%）
+- 止盈位：93.75元（+4.0%）
+- 盈亏比：1.15（一般）
+- 持仓周期：3-5天（低吸埋伏，耐心持有）
+- 消息敏感度：高（利好公告可加速上涨，利空需及时止损）</div>
+</div><div class="top10-card">
+<div class="top10-card-header"><span class="rank">AI</span><span class="name">科华数据</span><span class="code">002335</span></div>
+<div class="top10-card-reason"><strong>综合研判：</strong>该股是资金埋伏策略标的，主力底部建仓，安全边际较高，评分28分，置信度★★★，综合质量优秀。</div>
+<div class="top10-card-reason" style="margin-top:6px">**E 资金埋伏** 策略匹配逻辑： 该股资金连续流入，主力底部建仓痕迹明显。当前涨幅+0.43%，处于主力成本区附近，安全边际较高。 该股在7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="top10-card-reason" style="margin-top:6px">**技术面**：
+- 均线系统：站上MA5，站上MA10，MA5金叉MA10，站上MA20
+- MACD：零轴上方多头运行（DIF=0.147，DEA=-0.556），动能充足
+- KDJ：多头排列（K=73.2，D=72.5），短线偏多
+- 距20日最高价：5.7%</div>
+<div class="top10-card-reason" style="margin-top:6px">**资金面**：
+- 主力资金数据不可得，需结合盘口观察
+- 成交额 22.0亿，换手率 7.8%，流动性良好</div>
+<div class="top10-card-reason" style="margin-top:6px">**基本面速览**：
+- ROE 1.2%（偏低），净利润同比 +13.1%
+- 行业：电力设备</div>
+<div class="top10-card-reason" style="margin-top:6px">**风险提示**：
+- 接近前高压力位，突破失败可能导致回调</div>
+<div class="top10-card-reason" style="margin-top:6px">**操作建议**：
+- 进场区间：42.05元
+- 止损位：40.58元（3.5%）
+- 止盈位：43.73元（+4.0%）
+- 盈亏比：1.14（一般）
+- 持仓周期：3-5天（低吸埋伏，耐心持有）
+- 消息敏感度：高（利好公告可加速上涨，利空需及时止损）</div>
+</div><div class="top10-card">
+<div class="top10-card-header"><span class="rank">AI</span><span class="name">山东玻纤</span><span class="code">605006</span></div>
+<div class="top10-card-reason"><strong>综合研判：</strong>该股是超跌反弹策略标的，短期技术性修复需求强烈，评分25分，置信度★★★，综合质量优秀，7日内持续推荐，趋势延续性强。</div>
+<div class="top10-card-reason" style="margin-top:6px">**B 超跌反弹** 策略匹配逻辑： 该股跌幅-6.06%，振幅9.3%，属于典型的超跌反弹机会。恐慌性抛售后的技术性修复需求强烈，短期反弹概率较大。 该股在7日内已被推荐3天，系统持续看好，表明趋势延续性强。</div>
+<div class="top10-card-reason" style="margin-top:6px">**技术面**：
+- 均线系统：跌破MA5
+- MACD：空头排列（DIF=1.744，DEA=2.017），等待金叉确认
+- KDJ：空头排列（K=38.2，D=50.2），短线偏空
+- 距20日最高价：25.1%</div>
+<div class="top10-card-reason" style="margin-top:6px">**资金面**：
+- 主力资金数据不可得，需结合盘口观察
+- 成交额 17.0亿，换手率 12.7%，流动性良好</div>
+<div class="top10-card-reason" style="margin-top:6px">**基本面速览**：
+- ROE 0.4%（偏低），净利润同比 +15.4%
+- 行业：机械设备</div>
+<div class="top10-card-reason" style="margin-top:6px">**风险提示**：
+- 振幅 9.3%，波动剧烈，止损需严格执行</div>
+<div class="top10-card-reason" style="margin-top:6px">**操作建议**：
+- 进场区间：20.47元
+- 止损位：19.04元（7.0%）
+- 止盈位：21.90元（+7.0%）
+- 盈亏比：1.00（一般）
+- 持仓周期：2-5天（超跌反弹，等待修复）
+- 消息敏感度：高（利好公告可加速上涨，利空需及时止损）</div>
+</div><div class="top10-card">
+<div class="top10-card-header"><span class="rank">AI</span><span class="name">云天化</span><span class="code">600096</span></div>
+<div class="top10-card-reason"><strong>综合研判：</strong>该股是超跌反弹策略标的，短期技术性修复需求强烈，评分25分，置信度★★★，综合质量优秀。</div>
+<div class="top10-card-reason" style="margin-top:6px">**B 超跌反弹** 策略匹配逻辑： 该股跌幅-4.88%，振幅4.9%，属于典型的超跌反弹机会。恐慌性抛售后的技术性修复需求强烈，短期反弹概率较大。 该股在7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="top10-card-reason" style="margin-top:6px">**技术面**：
+- 均线系统：跌破MA5，MA5金叉MA10
+- MACD：零轴上方多头运行（DIF=0.141，DEA=-0.037），动能充足
+- KDJ：空头排列（K=52.4，D=63.8），短线偏空
+- 距20日最高价：13.3%</div>
+<div class="top10-card-reason" style="margin-top:6px">**资金面**：
+- 主力资金数据不可得，需结合盘口观察
+- 成交额 18.6亿，换手率 3.3%，流动性良好</div>
+<div class="top10-card-reason" style="margin-top:6px">**基本面速览**：
+- ROE 5.6%（一般），净利润同比 +10.4%
+- 行业：银行</div>
+<div class="top10-card-reason" style="margin-top:6px">**风险提示**：
+- 短期风险可控，关注大盘系统性风险</div>
+<div class="top10-card-reason" style="margin-top:6px">**操作建议**：
+- 进场区间：30.25元
+- 止损位：28.13元（7.0%）
+- 止盈位：32.37元（+7.0%）
+- 盈亏比：1.00（一般）
+- 持仓周期：2-5天（超跌反弹，等待修复）
+- 消息敏感度：高（利好公告可加速上涨，利空需及时止损）</div>
+</div><div class="top10-card">
+<div class="top10-card-header"><span class="rank">AI</span><span class="name">中国化学</span><span class="code">601117</span></div>
+<div class="top10-card-reason"><strong>综合研判：</strong>该股是超跌反弹策略标的，短期技术性修复需求强烈，评分21分，置信度★★★，综合质量优秀。</div>
+<div class="top10-card-reason" style="margin-top:6px">**B 超跌反弹** 策略匹配逻辑： 该股跌幅-3.67%，振幅4.2%，属于典型的超跌反弹机会。恐慌性抛售后的技术性修复需求强烈，短期反弹概率较大。 该股在7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="top10-card-reason" style="margin-top:6px">**技术面**：
+- 均线系统：跌破MA5
+- MACD：空头排列（DIF=-0.077，DEA=-0.075），等待金叉确认
+- KDJ：空头排列（K=30.9，D=47.6），短线偏空
+- 距20日最高价：14.8%</div>
+<div class="top10-card-reason" style="margin-top:6px">**资金面**：
+- 主力资金数据不可得，需结合盘口观察
+- 成交额 10.7亿，换手率 2.4%，流动性一般</div>
+<div class="top10-card-reason" style="margin-top:6px">**基本面速览**：
+- ROE 2.3%（偏低），净利润同比 +8.5%
+- 行业：有色金属</div>
+<div class="top10-card-reason" style="margin-top:6px">**风险提示**：
+- 短期风险可控，关注大盘系统性风险</div>
+<div class="top10-card-reason" style="margin-top:6px">**操作建议**：
+- 进场区间：7.28元
+- 止损位：6.77元（7.0%）
+- 止盈位：7.79元（+7.0%）
+- 盈亏比：1.00（一般）
+- 持仓周期：2-5天（超跌反弹，等待修复）
+- 消息敏感度：高（利好公告可加速上涨，利空需及时止损）</div>
+</div><div class="top10-card">
+<div class="top10-card-header"><span class="rank">AI</span><span class="name">海亮股份</span><span class="code">002203</span></div>
+<div class="top10-card-reason"><strong>综合研判：</strong>该股是回调企稳策略标的，低吸机会，盈亏比1.00，评分25分，置信度★★★，综合质量优秀。</div>
+<div class="top10-card-reason" style="margin-top:6px">**D 回调企稳** 策略匹配逻辑： 该股涨幅+5.15%，振幅8.9%，在回调中企稳。回调幅度适中，量能配合良好，属于低吸策略的理想标的。 该股在7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="top10-card-reason" style="margin-top:6px">**技术面**：
+- 均线系统：跌破MA5，站上MA20
+- MACD：空头排列（DIF=0.912，DEA=1.095），等待金叉确认
+- KDJ：空头排列（K=31.7，D=45.7），短线偏空
+- 距20日最高价：18.1%</div>
+<div class="top10-card-reason" style="margin-top:6px">**资金面**：
+- 主力资金数据不可得，需结合盘口观察
+- 成交额 12.1亿，换手率 2.4%，流动性良好</div>
+<div class="top10-card-reason" style="margin-top:6px">**基本面速览**：
+- ROE 2.6%（偏低），净利润同比 +26.4%（高增长）
+- 行业：建筑装饰</div>
+<div class="top10-card-reason" style="margin-top:6px">**风险提示**：
+- 振幅 8.9%，波动剧烈，止损需严格执行</div>
+<div class="top10-card-reason" style="margin-top:6px">**操作建议**：
+- 进场区间：22.04元
+- 止损位：20.94元（5.0%）
+- 止盈位：23.14元（+5.0%）
+- 盈亏比：1.00（一般）
+- 持仓周期：3-5天（低吸埋伏，耐心持有）
+- 消息敏感度：高（利好公告可加速上涨，利空需及时止损）</div>
+</div><div class="top10-card">
+<div class="top10-card-header"><span class="rank">AI</span><span class="name">华钰矿业</span><span class="code">601020</span></div>
+<div class="top10-card-reason"><strong>综合研判：</strong>该股是地量见底策略标的，技术形态完整，评分24分，置信度★★★，综合质量优秀，7日内持续推荐，趋势延续性强。</div>
+<div class="top10-card-reason" style="margin-top:6px">**H 地量见底** 策略匹配逻辑： 地量见底，卖压衰竭。该股经过充分调整后成交量极度萎缩，表明空方力量已耗尽，反弹一触即发。 该股在7日内已被推荐3天，系统持续看好，表明趋势延续性强。</div>
+<div class="top10-card-reason" style="margin-top:6px">**技术面**：
+- 均线系统：跌破MA5，站上MA20
+- MACD：零轴下方金叉（DIF=-0.539，DEA=-0.771），底部反弹信号
+- KDJ：空头排列（K=44.7，D=54.5），短线偏空
+- 距20日最高价：13.7%</div>
+<div class="top10-card-reason" style="margin-top:6px">**资金面**：
+- 主力资金数据不可得，需结合盘口观察
+- 成交额 7.0亿，换手率 3.6%，流动性良好</div>
+<div class="top10-card-reason" style="margin-top:6px">**基本面速览**：
+- ROE 0.7%（偏低），净利润同比 -33.1%（下滑）
+- 行业：煤炭</div>
+<div class="top10-card-reason" style="margin-top:6px">**风险提示**：
+- 短期风险可控，关注大盘系统性风险</div>
+<div class="top10-card-reason" style="margin-top:6px">**操作建议**：
+- 进场区间：23.41元
+- 止损位：22.01元（6.0%）
+- 止盈位：24.81元（+6.0%）
+- 盈亏比：1.00（一般）
+- 持仓周期：2-5天（超跌反弹，等待修复）
+- 消息敏感度：高（利好公告可加速上涨，利空需及时止损）</div>
+</div><div class="top10-card">
+<div class="top10-card-header"><span class="rank">AI</span><span class="name">蔚蓝锂芯</span><span class="code">002245</span></div>
+<div class="top10-card-reason"><strong>综合研判：</strong>该股是龙回头策略标的，技术形态完整，评分24分，置信度★★★，综合质量优秀。</div>
+<div class="top10-card-reason" style="margin-top:6px">**J 龙回头** 策略匹配逻辑： 该股符合龙回头形态特征，技术形态完整，量价配合良好。 该股在7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="top10-card-reason" style="margin-top:6px">**技术面**：
+- 均线系统：跌破MA5
+- MACD：空头排列（DIF=0.304，DEA=0.752），等待金叉确认
+- KDJ：空头排列（K=26.2，D=40.9），短线偏空
+- 距20日最高价：22.9%</div>
+<div class="top10-card-reason" style="margin-top:6px">**资金面**：
+- 主力资金数据不可得，需结合盘口观察
+- 成交额 16.1亿，换手率 5.4%，流动性良好</div>
+<div class="top10-card-reason" style="margin-top:6px">**基本面速览**：
+- ROE 2.5%（偏低），净利润同比 +38.1%（高增长）
+- 行业：建筑装饰</div>
+<div class="top10-card-reason" style="margin-top:6px">**风险提示**：
+- 短期风险可控，关注大盘系统性风险</div>
+<div class="top10-card-reason" style="margin-top:6px">**操作建议**：
+- 进场区间：18.37元
+- 止损位：17.27元（6.0%）
+- 止盈位：19.47元（+6.0%）
+- 盈亏比：1.00（一般）
+- 持仓周期：2-5天（短线操作）
+- 消息敏感度：高（利好公告可加速上涨，利空需及时止损）</div>
+</div><div class="top10-card">
+<div class="top10-card-header"><span class="rank">AI</span><span class="name">铜陵有色</span><span class="code">000630</span></div>
+<div class="top10-card-reason"><strong>综合研判：</strong>该股是龙回头策略标的，技术形态完整，评分24分，置信度★★★，综合质量优秀。</div>
+<div class="top10-card-reason" style="margin-top:6px">**J 龙回头** 策略匹配逻辑： 该股符合龙回头形态特征，技术形态完整，量价配合良好。 该股在7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="top10-card-reason" style="margin-top:6px">**技术面**：
+- 均线系统：跌破MA5
+- MACD：空头排列（DIF=0.019，DEA=0.142），等待金叉确认
+- KDJ：空头排列（K=19.5，D=35.0），短线偏空
+- 距20日最高价：26.1%</div>
+<div class="top10-card-reason" style="margin-top:6px">**资金面**：
+- 主力资金数据不可得，需结合盘口观察
+- 成交额 21.1亿，换手率 3.0%，流动性一般</div>
+<div class="top10-card-reason" style="margin-top:6px">**基本面速览**：
+- ROE 3.6%（偏低），净利润同比 +19.1%
+- 行业：公用事业</div>
+<div class="top10-card-reason" style="margin-top:6px">**风险提示**：
+- 短期风险可控，关注大盘系统性风险</div>
+<div class="top10-card-reason" style="margin-top:6px">**操作建议**：
+- 进场区间：6.22元
+- 止损位：5.85元（5.9%）
+- 止盈位：6.59元（+5.9%）
+- 盈亏比：1.00（一般）
+- 持仓周期：2-5天（短线操作）
+- 消息敏感度：高（利好公告可加速上涨，利空需及时止损）</div>
+</div><div class="top10-card">
+<div class="top10-card-header"><span class="rank">AI</span><span class="name">王子新材</span><span class="code">002735</span></div>
+<div class="top10-card-reason"><strong>综合研判：</strong>该股是黄金坑策略标的，技术形态完整，评分26分，置信度★★★，综合质量优秀。</div>
+<div class="top10-card-reason" style="margin-top:6px">**L 黄金坑** 策略匹配逻辑： 该股符合黄金坑形态特征，技术形态完整，量价配合良好。 该股在7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="top10-card-reason" style="margin-top:6px">**技术面**：
+- 均线系统：跌破MA5
+- MACD：空头排列（DIF=0.261，DEA=0.771），等待金叉确认
+- KDJ：空头排列（K=17.9，D=29.5），短线偏空
+- 距20日最高价：32.1%</div>
+<div class="top10-card-reason" style="margin-top:6px">**资金面**：
+- 主力资金数据不可得，需结合盘口观察
+- 成交额 8.5亿，换手率 19.2%，流动性良好</div>
+<div class="top10-card-reason" style="margin-top:6px">**基本面速览**：
+- ROE 0.6%（偏低），净利润同比 +19.8%
+- 行业：机械设备</div>
+<div class="top10-card-reason" style="margin-top:6px">**风险提示**：
+- 振幅 9.1%，波动剧烈，止损需严格执行</div>
+<div class="top10-card-reason" style="margin-top:6px">**操作建议**：
+- 进场区间：16.30元
+- 止损位：15.32元（6.0%）
+- 止盈位：17.28元（+6.0%）
+- 盈亏比：1.00（一般）
+- 持仓周期：2-5天（超跌反弹，等待修复）
+- 消息敏感度：高（利好公告可加速上涨，利空需及时止损）</div>
+</div></div></section>
+</div>
+<div class="footer"><p>版本: v6.12.17 | 生成时间: 2026-07-01</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>
