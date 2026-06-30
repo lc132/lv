@@ -3021,7 +3021,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKLMNOPQRST二十策略 |",
         f"| ⑤微观结构过滤 | {amicro} | {astr - amicro} | 流动性(换手率/Amihud)+消息敏感度(波动性) |",
         f"| ⑥行业+同策略限制 | {aind} | {amicro - aind} | 同行业≤4只(弱市)/3只(强/震荡)+同策略≤30% |",
-        f"| ⑦新闻筛查 | {aind - anew} | {anew} | Bing/东方财富双源利空检测 |",
+        f"| ⑦新闻筛查 | {aind - anew} | {anew} | 东方财富/Bing/巨潮资讯网/财联社四源并行利空检测 |",
         f"| ★最终推荐 | {len(candidates)} | {aind - anew - len(candidates)} | 评分门控+降级 |", "",
     ]
     if candidates:
@@ -3061,6 +3061,12 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                 emoji = '🟢' if bt['last_result'] == 'win' else ('🔴' if bt['last_result'] == 'loss' else '⚪')
                 bt_mark = f'{emoji}{bt["wins"]}/{bt["total"]}'
             lines.append(f"| {idx} | {top10_mark} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} | {pl_ratio} | {bt_mark} |\n")
+        lines.append("\n## 回测说明\n")
+        lines.append("- **回测列格式**：`图标 + 胜/样本`，例如 `🟢2/2` 表示历史同标的样本2笔、盈利2笔。")
+        lines.append("- **图标含义**：🟢 最近一次样本盈利；🔴 最近一次样本亏损；⚪ 后续K线不足或未形成有效胜负；空白表示无可匹配历史样本。")
+        lines.append("- **模拟口径**：使用最近90天推荐历史，按推荐表的进场、止损、止盈进行模拟，单笔最大持仓10个交易日。")
+        lines.append("- **交易规则**：遵循A股T+1，买入当日不检查止盈止损出场，从下一交易日起判断是否触及止损/止盈。")
+        lines.append("- **使用限制**：未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素；样本少时仅作参考，不能代表未来表现。\n")
         lines.append("\n## TOP10 板块热度精选（按板块涨停家数排序，同热度按盈亏比优先）\n")
         lines.append("| # | 标的 | 代码 | 策略 | 行业 | 板块热度 | 盈亏比 | 进场 | 止损 | 止盈 | 评分 |")
         lines.append("|---|---|---|---|---|---|---|---|---|---|---|")

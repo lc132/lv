@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.12.13
+# A股短线筛选 — 历史回测模块 v6.12.17
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # ============================================================
@@ -317,7 +317,7 @@ def generate_backtest_report(bt_result, output_path=None):
 
     if not trades:
         with open(output_path, 'w', encoding='utf-8') as f:
-            f.write('# 历史回测报告\n\n暂无回测数据。\n')
+            f.write('# 历史回测报告\n\n暂无回测数据。\n\n## 回测说明\n\n- 回测使用最近90天推荐历史。\n- 单笔最大持仓10个交易日。\n- 按推荐时的进场、止损、止盈价格进行模拟。\n- 遵循A股T+1规则，买入当日不检查止盈止损出场。\n- 回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。\n')
         return output_path
 
     today_str = datetime.now().strftime('%Y-%m-%d')
@@ -327,6 +327,15 @@ def generate_backtest_report(bt_result, output_path=None):
         f"- **生成日期**: {today_str}",
         f"- **回测周期**: 最近90天",
         f"- **最大持仓**: 10个交易日",
+        f"",
+        "## 回测说明",
+        f"",
+        "- **样本来源**：最近90天推荐历史，按当时推荐标的、策略、进场价、止损价、止盈价回放后续K线。",
+        "- **出场规则**：单笔最大持仓10个交易日；若盘中先触及止损或止盈，则按对应价格出场；若到期未触发，则按持仓期末收盘价计算。",
+        "- **T+1处理**：遵循A股T+1规则，买入当日不检查止盈止损出场，从下一交易日起判断。",
+        "- **结果含义**：`win`为盈利样本，`loss`为亏损样本，`no_data`为后续K线不足或无法形成有效模拟。",
+        "- **指标说明**：胜率为盈利样本占有效样本比例；盈亏比为总盈利绝对值/总亏损绝对值；夏普为单笔收益均值相对波动的简化指标。",
+        "- **局限性**：未计入滑点、手续费、涨跌停无法成交、真实排队成交、资金容量和盘中流动性冲击，回测结果不代表未来表现。",
         f"",
         "## 一、综合指标",
         f"",
@@ -379,7 +388,7 @@ def generate_backtest_report(bt_result, output_path=None):
     lines.extend([
         "",
         f"> \u26a0\ufe0f 免责声明：回测结果不代表未来表现，仅供参考。",
-        f"> 版本: v6.12.13 | 生成: {today_str}",
+        f"> 版本: v6.12.17 | 生成: {today_str}",
     ])
 
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -433,7 +442,7 @@ def generate_backtest_html(bt_result, output_path=None):
     if not trades:
         html = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>历史回测报告</title>
 <style>body{{font-family:"Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif;max-width:900px;margin:40px auto;padding:20px;background:#f8fafc;color:#1e293b}}h1{{color:#2563eb}}</style></head>
-<body><h1>历史回测报告</h1><p>暂无回测数据。</p><p style="color:#94a3b8">版本: v6.12.13 | 生成: {today_str}</p></body></html>'''
+<body><h1>历史回测报告</h1><p>暂无回测数据。</p><h2>回测说明</h2><ul><li>回测使用最近90天推荐历史。</li><li>单笔最大持仓10个交易日。</li><li>按推荐时的进场、止损、止盈价格进行模拟。</li><li>遵循A股T+1规则，买入当日不检查止盈止损出场。</li><li>回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。</li></ul><p style="color:#94a3b8">版本: v6.12.17 | 生成: {today_str}</p></body></html>'''
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(html)
         return output_path
@@ -505,6 +514,9 @@ body{{font-family:"Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif;background
 .metric-value{{color:#e2e8f0;font-size:22px;font-weight:700}}
 .section{{background:#1e293b;border-radius:12px;padding:24px;margin-bottom:20px;border:1px solid #334155}}
 .section h2{{color:#38bdf8;font-size:18px;margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid #334155}}
+.note-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}}
+.note-card{{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:14px;color:#cbd5e1;font-size:13px;line-height:1.65}}
+.note-card b{{color:#38bdf8}}
 table{{width:100%;border-collapse:collapse;font-size:13px}}
 th{{background:#0f172a;color:#94a3b8;padding:10px 8px;text-align:left;font-weight:600;white-space:nowrap}}
 td{{padding:8px;border-bottom:1px solid #1e293b}}
@@ -527,6 +539,18 @@ tr:hover td{{background:rgba(56,189,248,0.05)}}
 <div class="metrics-grid">{cards_html}</div>
 
 <div class="section">
+<h2>回测说明</h2>
+<div class="note-grid">
+<div class="note-card"><b>样本来源</b><br>最近90天推荐历史，按当时推荐标的、策略、进场价、止损价、止盈价回放后续K线。</div>
+<div class="note-card"><b>出场规则</b><br>单笔最大持仓10个交易日；若盘中触及止损或止盈，按对应价格出场；若到期未触发，按持仓期末收盘价计算。</div>
+<div class="note-card"><b>T+1处理</b><br>遵循A股T+1规则，买入当日不检查止盈止损出场，从下一交易日起判断。</div>
+<div class="note-card"><b>结果含义</b><br>win为盈利样本，loss为亏损样本，no_data为后续K线不足或无法形成有效模拟。</div>
+<div class="note-card"><b>指标说明</b><br>胜率为盈利样本占有效样本比例；盈亏比为总盈利绝对值/总亏损绝对值；夏普为单笔收益均值相对波动的简化指标。</div>
+<div class="note-card"><b>局限性</b><br>未计入滑点、手续费、涨跌停无法成交、真实排队成交、资金容量和盘中流动性冲击。</div>
+</div>
+</div>
+
+<div class="section">
 <h2>\u7b56\u7565\u7ef4\u5ea6</h2>
 <table><thead><tr><th>\u7b56\u7565</th><th>\u7b14\u6570</th><th>\u80dc\u7387</th><th>\u5747\u6536</th><th>\u76c8\u4e8f\u6bd4</th><th>\u590f\u666e</th></tr></thead>
 <tbody>{strategy_rows}</tbody></table>
@@ -546,7 +570,7 @@ tr:hover td{{background:rgba(56,189,248,0.05)}}
 
 <div class="footer">
 <p>\u26a0\ufe0f \u514d\u8d23\u58f0\u660e\uff1a\u56de\u6d4b\u7ed3\u679c\u4e0d\u4ee3\u8868\u672a\u6765\u8868\u73b0\uff0c\u4ec5\u4f9b\u53c2\u8003\u3002</p>
-<p>\u7248\u672c: v6.12.13 | \u751f\u6210: {today_str}</p>
+<p>\u7248\u672c: v6.12.17 | \u751f\u6210: {today_str}</p>
 </div>
 </div>
 </body>
