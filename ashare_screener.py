@@ -15,7 +15,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.12.18"
+BUILTIN_VERSION = "v6.12.17"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -381,23 +381,15 @@ def step0A_pull_holdings():
         if os.path.exists(repo_dir): shutil.rmtree(repo_dir, ignore_errors=True)
         repo_url = f"https://github.com/{GITHUB_REPO}.git"
         _git_with_token(["git", "clone", "--depth", "1", "--branch", "main", repo_url, repo_dir], timeout=30)
-        # 同步持仓跟踪
         xlsx_src = os.path.join(repo_dir, "持仓跟踪.xlsx")
         if os.path.exists(xlsx_src):
             shutil.copy(xlsx_src, "/workspace/持仓跟踪.xlsx")
             log_alert("INFO", "持仓拉取", "持仓跟踪.xlsx 已同步")
-        # 同步推荐历史
         for f in os.listdir(repo_dir):
             if f.startswith("推荐历史_") and f.endswith(".json"):
                 lp = os.path.join("/workspace", f); rp = os.path.join(repo_dir, f)
                 if not os.path.exists(lp) or os.path.getmtime(rp) > os.path.getmtime(lp):
                     shutil.copy(rp, lp); log_alert("INFO", "持仓拉取", f"{f} 已更新")
-        # v6.12.18: 同步行业缓存（避免行业缓存为空导致代码段映射分类错误）
-        for cache_file in ["行业缓存.json", "二级行业缓存.json"]:
-            cache_src = os.path.join(repo_dir, cache_file)
-            if os.path.exists(cache_src):
-                shutil.copy(cache_src, f"/workspace/{cache_file}")
-                log_alert("INFO", "持仓拉取", f"{cache_file} 已同步")
         shutil.rmtree(repo_dir, ignore_errors=True)
     except Exception as e: log_alert("WARNING", "持仓拉取", f"{str(e)[:80]}")
 
