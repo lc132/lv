@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.12.20
+A股每日盘前短线标的智能筛选 v6.12.21
 37步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线三级降级 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
@@ -15,7 +15,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.12.20"
+BUILTIN_VERSION = "v6.12.21"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -2986,6 +2986,26 @@ def calc_entry_price(c):
     
     return round(close, 2)
 
+def _calc_tier_label(c):
+    """基于60日区间位置计算入场档位
+    档位1(低位): 收盘价在60日区间下30% → 🟢 优质入场区
+    档位2(中位): 收盘价在60日区间30-70% → 🟡 中性区间
+    档位3(高位): 收盘价在60日区间上30% → 🔴 谨慎入场区
+    返回: (label, css_class) 如 ('档位1', 'tier1')
+    """
+    h60 = c.get('_high60', 0) or 0
+    l60 = c.get('_low60', 0) or 0
+    close = c.get('close', 0) or 0
+    if h60 > l60 > 0 and close > 0:
+        position = (close - l60) / (h60 - l60)  # 0~1，0=最低，1=最高
+        if position < 0.3:
+            return ('档位1', 'tier1')
+        elif position < 0.7:
+            return ('档位2', 'tier2')
+        else:
+            return ('档位3', 'tier3')
+    return ('-', 'tier_na')
+
 def _compute_pl_ratios(candidates, sector_limit_up=None):
     """预计算盈亏比TOP10，标注c['_entry']/c['_stop']/c['_target']/c['_pl_ratio']，返回_top10_codes集合
     v6.12.10: 板块热度排序——第一优先级板块涨停家数，第二优先级盈亏比"""
@@ -3034,8 +3054,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         _top10_codes = _compute_pl_ratios(candidates)
 
         lines.append("## 推荐标的\n")
-        lines.append("| # | TOP10 | 策略 | 标的 | 代码 | 行业 | 二级行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 60日高 | 60日低 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 | 盈亏比 | 回测 |\n")
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+        lines.append("| # | TOP10 | 策略 | 标的 | 代码 | 行业 | 二级行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 60日高 | 60日低 | 档位 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 | 盈亏比 | 回测 |\n")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
         for idx, c in enumerate(candidates, 1):
             code = c.get('code', ''); name = c.get('name', '')
             s = c.get('strategy', '?'); ind = _industry_str(c); biz = c.get('business', '')
@@ -3051,6 +3071,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                 l60_pct = (close - l60) / l60 * 100
                 l60_str = f"{l60:.2f} ({l60_pct:+.1f}%)"
             else: l60_str = "-"
+            tier_label = c.get('_tier_label', '-')
             chg_e = "🔴" if chg >= 0 else "🟢"
             entry = calc_entry_price(c)
             sl = round(entry * _STRATEGY_STOP_LOSS.get(s, 0.96), 2)
@@ -3075,7 +3096,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                 bt = bt_lookup[code]
                 emoji = '🟢' if bt['last_result'] == 'win' else ('🔴' if bt['last_result'] == 'loss' else '⚪')
                 bt_mark = f'{emoji}{bt["wins"]}/{bt["total"]}'
-            lines.append(f"| {idx} | {top10_mark} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {h60_str} | {l60_str} | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} | {pl_ratio} | {bt_mark} |\n")
+            lines.append(f"| {idx} | {top10_mark} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {h60_str} | {l60_str} | {tier_label} | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} | {pl_ratio} | {bt_mark} |\n")
         lines.append("\n## 回测说明\n")
         lines.append("- **回测列格式**：`图标 + 胜/样本`，例如 `🟢2/2` 表示历史同标的样本2笔、盈利2笔。")
         lines.append("- **图标含义**：🟢 最近一次样本盈利；🔴 最近一次样本亏损；⚪ 后续K线不足或未形成有效胜负；空白表示无可匹配历史样本。")
@@ -3186,6 +3207,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             l60_pct = (close - l60) / l60 * 100
             l60_str = f"{l60:.2f} ({l60_pct:+.1f}%)"
         else: l60_str = "-"
+        tier_label = c.get('_tier_label', '-'); tier_cls = c.get('_tier_cls', 'tier_na')
         top10_mark = "⭐" if code in _top10_codes else ""
         r7d_html = str(c.get('_recent_7d')) if c.get('_recent_7d') is not None else ""
         # v6.6.44: 7日列附带历史策略标注
@@ -3210,7 +3232,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         rows_html += f"""<tr class="{scl}"><td>{idx}</td><td>{top10_mark}</td><td><span class="badge {scl}">{s}</span></td>
         <td><a href="{url}" target="_blank">{html.escape(name)}</a></td><td>{code}</td><td>{ind}</td><td>{html.escape(biz)}</td>
         <td class="{chg_cls}">{chg:+.2f}%</td><td>{op:.2f}</td><td>{close:.2f}</td>
-        <td>{amp:.2f}%</td><td>{h60_str}</td><td>{l60_str}</td><td>{r7d_html}</td><td>{score}</td><td class="conf {conf_cls}">{conf}</td>
+        <td>{amp:.2f}%</td><td>{h60_str}</td><td>{l60_str}</td><td class="tier {tier_cls}">{tier_label}</td><td>{r7d_html}</td><td>{score}</td><td class="conf {conf_cls}">{conf}</td>
         <td class="entry">{entry:.2f}</td><td>{sl:.2f}</td><td>{tp:.2f}</td><td>{pl_ratio}</td><td>{bt_mark}</td></tr>"""
     seg_html = ""; legend_html = ""
     total_m = sum(sd.values())
@@ -3434,6 +3456,7 @@ tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72
 /* v6.9.51: TOP10蓝色背景+边框 / 7日橙色背景已移除 */
 .conf{{font-weight:bold}}.conf.high{{color:#22c55e}}.conf.mid{{color:#f59e0b}}.conf.low{{color:#ef4444}}
 .entry{{color:#38bdf8;font-weight:bold}}
+.tier{{font-weight:bold;text-align:center}}.tier1{{color:#22c55e;background:#064e3b;border-radius:3px;padding:1px 6px}}.tier2{{color:#f59e0b;background:#451a03;border-radius:3px;padding:1px 6px}}.tier3{{color:#ef4444;background:#451a03;border-radius:3px;padding:1px 6px}}.tier_na{{color:#94a3b8}}
 .alert-item{{display:flex;gap:.8rem;padding:.4rem 0;border-bottom:1px solid #334155;font-size:.8rem}}
 .alert-level{{padding:2px 10px;border-radius:4px;font-weight:bold;font-size:.7rem;white-space:nowrap}}
 .alert-level.warning{{background:#5c3d0e;color:#f59e0b}}.alert-level.info{{background:#1e3a5f;color:#3b82f6}}
@@ -3478,8 +3501,8 @@ a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
 </div></section>
 <section><h2>系统告警</h2><div class="alert-list">{alerts_html}</div></section>
 <section><h2>最终推荐标的</h2><div style="overflow-x:auto"><table>
-<thead><tr><th>#</th><th>TOP10</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>二级行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>60日高</th><th>60日低</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th><th>盈亏比</th><th>回测</th></tr></thead>
-<tbody>{rows_html if rows_html else '<tr><td colspan="21" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div></section>
+<thead><tr><th>#</th><th>TOP10</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>二级行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>60日高</th><th>60日低</th><th>档位</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th><th>盈亏比</th><th>回测</th></tr></thead>
+<tbody>{rows_html if rows_html else '<tr><td colspan="22" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div></section>
 <section><h2>策略说明</h2><table>
 <thead><tr><th style="width:18%">策略</th><th style="width:48%">条件</th><th style="width:16%">仓位(震荡)</th><th style="width:18%">仓位(弱市)</th></tr></thead>
 <tbody>
@@ -3743,6 +3766,11 @@ def main():
         kd = kline_data.get(c.get('code', ''), {})
         c['_high60'] = kd.get('high60', 0) or 0
         c['_low60'] = kd.get('low60', 0) or 0
+    # v6.12.21: 基于60日区间计算入场档位
+    for c in final:
+        tier_label, tier_cls = _calc_tier_label(c)
+        c['_tier_label'] = tier_label
+        c['_tier_cls'] = tier_cls
     
     # v6.12.4: 构建涨停板块分布（供AI板块深度研判使用）
     sector_limit_up = {}
