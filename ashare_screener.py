@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.12.19
+A股每日盘前短线标的智能筛选 v6.12.20
 37步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线三级降级 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
@@ -15,7 +15,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.12.19"
+BUILTIN_VERSION = "v6.12.20"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -3043,8 +3043,14 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
             close = c.get('close', 0) or 0; amp = c.get('amplitude', 0) or 0
             score = c.get('score', 0); conf = c.get('confidence', '★')
             h60 = c.get('_high60', 0) or 0; l60 = c.get('_low60', 0) or 0
-            h60_str = f"{h60:.2f}" if h60 > 0 else "-"
-            l60_str = f"{l60:.2f}" if l60 > 0 else "-"
+            if h60 > 0 and close > 0:
+                h60_pct = (h60 - close) / close * 100
+                h60_str = f"{h60:.2f} ({h60_pct:+.1f}%)"
+            else: h60_str = "-"
+            if l60 > 0 and close > 0:
+                l60_pct = (close - l60) / l60 * 100
+                l60_str = f"{l60:.2f} ({l60_pct:+.1f}%)"
+            else: l60_str = "-"
             chg_e = "🔴" if chg >= 0 else "🟢"
             entry = calc_entry_price(c)
             sl = round(entry * _STRATEGY_STOP_LOSS.get(s, 0.96), 2)
@@ -3172,8 +3178,14 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         entry = c.get('_entry', 0); sl = c.get('_stop', 0); tp = c.get('_target', 0)
         pl_ratio = c.get('_pl_ratio', 0)
         h60 = c.get('_high60', 0) or 0; l60 = c.get('_low60', 0) or 0
-        h60_str = f"{h60:.2f}" if h60 > 0 else "-"
-        l60_str = f"{l60:.2f}" if l60 > 0 else "-"
+        if h60 > 0 and close > 0:
+            h60_pct = (h60 - close) / close * 100
+            h60_str = f"{h60:.2f} ({h60_pct:+.1f}%)"
+        else: h60_str = "-"
+        if l60 > 0 and close > 0:
+            l60_pct = (close - l60) / l60 * 100
+            l60_str = f"{l60:.2f} ({l60_pct:+.1f}%)"
+        else: l60_str = "-"
         top10_mark = "⭐" if code in _top10_codes else ""
         r7d_html = str(c.get('_recent_7d')) if c.get('_recent_7d') is not None else ""
         # v6.6.44: 7日列附带历史策略标注
