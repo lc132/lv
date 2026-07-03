@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.12.21
+A股每日盘前短线标的智能筛选 v6.12.22
 37步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线三级降级 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
@@ -15,7 +15,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.12.21"
+BUILTIN_VERSION = "v6.12.22"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -3416,71 +3416,98 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
     html_content = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>A股短线标的筛选 — {prediction_date}</title>
 <style>
-*{{margin:0;padding:0;box-sizing:border-box}}body{{font-family:'Noto Sans CJK SC','WenQuanYi Micro Hei',sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.6}}
-.header{{background:linear-gradient(135deg,#1e3a5f 0%,#0f2744 100%);padding:2rem;text-align:center}}
-.header h1{{font-size:clamp(1.2rem,2.5vw,1.8rem);color:#f0f9ff}}.header .sub{{color:#94a3b8;font-size:.9rem;margin-top:.3rem}}
-.container{{max-width:1200px;margin:0 auto;padding:1rem}}
-.meta-row{{display:flex;flex-wrap:wrap;gap:.8rem;justify-content:center;margin:1rem 0}}
-.meta-card{{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:.6rem 1.2rem;text-align:center;min-width:100px}}
-.meta-card .label{{font-size:.7rem;color:#94a3b8}}.meta-card .value{{font-size:1.1rem;font-weight:bold;color:#38bdf8}}
-.index-row{{display:flex;flex-wrap:wrap;gap:1rem;justify-content:center;margin:1rem 0}}
-.index-card{{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:1rem 1.5rem;text-align:center;min-width:140px;flex:1}}
-.index-card .idx-name{{font-size:.85rem;color:#cbd5e1}}.index-card .idx-price{{font-size:1.5rem;font-weight:bold;color:#f8fafc}}
-.index-card .idx-chg{{font-size:.9rem;font-weight:bold}}
-.index-card .idx-amt{{font-size:1.1rem;display:block}} .index-card .idx-pct{{font-size:.75rem;color:#94a3b8;font-weight:normal}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:'Noto Sans CJK SC','WenQuanYi Micro Hei',sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.65;letter-spacing:.01em;-webkit-font-smoothing:antialiased}}
+/* scrollbar */
+::-webkit-scrollbar{{width:6px;height:6px}}::-webkit-scrollbar-track{{background:#0f172a}}::-webkit-scrollbar-thumb{{background:#334155;border-radius:3px}}::-webkit-scrollbar-thumb:hover{{background:#475569}}
+/* header */
+.header{{background:linear-gradient(135deg,#1e3a5f 0%,#0f2744 50%,#0c1f36 100%);padding:2.5rem 2rem;text-align:center;position:relative;overflow:hidden}}
+.header::before{{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 30% 50%,rgba(56,189,248,0.08) 0%,transparent 70%);pointer-events:none}}
+.header h1{{font-size:clamp(1.3rem,2.5vw,1.9rem);color:#f0f9ff;font-weight:800;letter-spacing:.04em;position:relative;z-index:1}}
+.header .sub{{color:#94a3b8;font-size:.85rem;margin-top:.4rem;position:relative;z-index:1}}
+/* container */
+.container{{max-width:1280px;margin:0 auto;padding:1.2rem 1rem}}
+/* meta cards */
+.meta-row{{display:flex;flex-wrap:wrap;gap:.8rem;justify-content:center;margin:1.2rem 0}}
+.meta-card{{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:.7rem 1.4rem;text-align:center;min-width:105px;box-shadow:0 2px 8px rgba(0,0,0,.2);transition:border-color .2s,transform .15s}}
+.meta-card:hover{{border-color:#475569;transform:translateY(-1px)}}
+.meta-card .label{{font-size:.7rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em}}.meta-card .value{{font-size:1.15rem;font-weight:700;color:#38bdf8}}
+/* index cards */
+.index-row{{display:flex;flex-wrap:wrap;gap:.9rem;justify-content:center;margin:1.2rem 0}}
+.index-card{{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:1.1rem 1.4rem;text-align:center;min-width:145px;flex:1;box-shadow:0 2px 10px rgba(0,0,0,.25);transition:border-color .2s,transform .15s}}
+.index-card:hover{{border-color:#475569;transform:translateY(-1px)}}
+.index-card .idx-name{{font-size:.85rem;color:#cbd5e1;font-weight:500}}.index-card .idx-price{{font-size:1.6rem;font-weight:800;color:#f8fafc;letter-spacing:.02em}}
+.index-card .idx-chg{{font-size:.9rem;font-weight:700}}
+.index-card .idx-amt{{font-size:1.1rem;display:block;font-weight:600}} .index-card .idx-pct{{font-size:.75rem;color:#94a3b8;font-weight:400}}
 .up{{color:#ef4444}}.down{{color:#22c55e}}
-section{{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:1.5rem;margin:1.2rem 0}}
-section h2{{font-size:1.2rem;color:#38bdf8;margin-bottom:1rem;border-bottom:2px solid #334155;padding-bottom:.5rem}}
-.funnel{{display:flex;flex-direction:column;align-items:center;gap:.3rem}}
-.funnel-step{{background:linear-gradient(90deg,#6366f1,#8b5cf6);color:#fff;text-align:center;padding:.5rem;border-radius:6px;font-size:.8rem}}
-.funnel-last{{background:linear-gradient(90deg,#3b82f6,#06b6d4);border:2px solid #38bdf8;font-weight:bold}}
-.seg-bar{{display:flex;height:32px;border-radius:6px;overflow:hidden;margin:.5rem 0}}
-.seg{{display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:.8rem}}
-.legend{{display:flex;flex-wrap:wrap;gap:1rem;margin:.5rem 0;font-size:.8rem}}
-.legend-item{{display:flex;align-items:center;gap:.3rem}}
-.legend-dot{{width:12px;height:12px;border-radius:3px;display:inline-block}}
-.bar-row{{display:flex;align-items:center;margin:.4rem 0;gap:.5rem}}
-.bar-label{{width:200px;font-size:.8rem;color:#cbd5e1;text-align:right;flex-shrink:0}}
-.bar-track{{flex:1;background:#334155;border-radius:4px;height:24px;overflow:hidden}}
-.bar-fill{{height:100%;border-radius:4px;display:flex;align-items:center;justify-content:flex-end;padding:0 .5rem;color:#fff;font-size:.75rem;font-weight:bold;min-width:30px}}
-.chart-grid{{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem}}
-table{{width:100%;border-collapse:collapse;font-size:.8rem}}
-th{{background:#334155;padding:.5rem;text-align:left;color:#38bdf8;position:sticky;top:0;white-space:nowrap}}
-td{{padding:.4rem .5rem;border-bottom:1px solid #334155;white-space:nowrap}}
-tr:hover{{background:#2d3b4f}}
-.badge{{padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:bold}}
+/* sections */
+section{{background:#1e293b;border:1px solid #334155;border-radius:14px;padding:1.6rem;margin:1.3rem 0;box-shadow:0 3px 12px rgba(0,0,0,.2)}}
+section h2{{font-size:1.15rem;color:#38bdf8;margin-bottom:1.1rem;border-bottom:2px solid #334155;padding-bottom:.6rem;font-weight:700;letter-spacing:.03em}}
+/* funnel */
+.funnel{{display:flex;flex-direction:column;align-items:center;gap:.35rem}}
+.funnel-step{{background:linear-gradient(90deg,#6366f1,#8b5cf6);color:#fff;text-align:center;padding:.5rem 1.2rem;border-radius:6px;font-size:.8rem;font-weight:600;min-width:260px;box-shadow:0 1px 4px rgba(99,102,241,.3)}}
+.funnel-last{{background:linear-gradient(90deg,#3b82f6,#06b6d4);border:2px solid #38bdf8;font-weight:700;box-shadow:0 2px 8px rgba(56,189,248,.35)}}
+/* seg bar */
+.seg-bar{{display:flex;height:36px;border-radius:8px;overflow:hidden;margin:.6rem 0;box-shadow:inset 0 1px 2px rgba(0,0,0,.3)}}
+.seg{{display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:.78rem;transition:filter .2s}}
+.seg:hover{{filter:brightness(1.2)}}
+.legend{{display:flex;flex-wrap:wrap;gap:1.1rem;margin:.6rem 0;font-size:.78rem}}
+.legend-item{{display:flex;align-items:center;gap:.35rem}}
+.legend-dot{{width:12px;height:12px;border-radius:3px;display:inline-block;box-shadow:0 0 4px currentColor}}
+/* bar charts */
+.bar-row{{display:flex;align-items:center;margin:.45rem 0;gap:.6rem}}
+.bar-label{{width:210px;font-size:.78rem;color:#cbd5e1;text-align:right;flex-shrink:0}}
+.bar-track{{flex:1;background:#334155;border-radius:5px;height:26px;overflow:hidden;box-shadow:inset 0 1px 3px rgba(0,0,0,.3)}}
+.bar-fill{{height:100%;border-radius:5px;display:flex;align-items:center;justify-content:flex-end;padding:0 .6rem;color:#fff;font-size:.75rem;font-weight:700;min-width:32px;transition:width .3s}}
+/* chart grid */
+.chart-grid{{display:grid;grid-template-columns:1fr 1fr;gap:1.6rem}}
+/* tables */
+table{{width:100%;border-collapse:collapse;font-size:.78rem}}
+th{{background:#334155;padding:.55rem .55rem;text-align:left;color:#38bdf8;position:sticky;top:0;white-space:nowrap;font-weight:700;font-size:.75rem;letter-spacing:.03em;z-index:1}}
+td{{padding:.45rem .55rem;border-bottom:1px solid #1e293b;white-space:nowrap}}
+tbody tr{{transition:background .15s}}
+tbody tr:hover{{background:#2d3b4f!important}}
+tbody tr:nth-child(even){{background:rgba(255,255,255,.01)}}
+/* badges */
+.badge{{padding:2px 9px;border-radius:4px;font-size:.68rem;font-weight:700;letter-spacing:.03em}}
 .strat_a{{background:#14532d;color:#22c55e}}.strat_b{{background:#1e3a5f;color:#3b82f6}}.strat_c{{background:#3b1f6e;color:#8b5cf6}}
 .strat_d{{background:#5c3d0e;color:#f59e0b}}.strat_e{{background:#5c1648;color:#ec4899}}.strat_f{{background:#0f4c5c;color:#06b6d4}}.strat_g{{background:#0e4c3d;color:#10b981}}.strat_h{{background:#4c1d0e;color:#f97316}}.strat_i{{background:#0e3d3d;color:#14b8a6}}.strat_j{{background:#5c1515;color:#ef4444}}.strat_k{{background:#3b1f3b;color:#a855f7}}.strat_l{{background:#4c3d0e;color:#eab308}}.strat_m{{background:#4c1d3b;color:#f472b6}}.strat_n{{background:#1e3d0e;color:#84cc16}}.strat_o{{background:#0e2e4c;color:#38bdf8}}.strat_p{{background:#4c2e0e;color:#fb923c}}.strat_q{{background:#0e3e4c;color:#22d3ee}}
 tr.strat_a{{background:rgba(34,197,94,0.05)}}tr.strat_b{{background:rgba(59,130,246,0.05)}}tr.strat_c{{background:rgba(139,92,246,0.05)}}
 tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72,153,0.05)}}tr.strat_f{{background:rgba(6,182,212,0.05)}}tr.strat_g{{background:rgba(16,185,129,0.05)}}tr.strat_h{{background:rgba(249,115,22,0.05)}}tr.strat_i{{background:rgba(20,184,166,0.05)}}tr.strat_j{{background:rgba(239,68,68,0.05)}}tr.strat_k{{background:rgba(168,85,247,0.05)}}tr.strat_l{{background:rgba(234,179,8,0.05)}}tr.strat_m{{background:rgba(244,114,182,0.05)}}tr.strat_n{{background:rgba(132,204,22,0.05)}}tr.strat_o{{background:rgba(56,189,248,0.05)}}tr.strat_p{{background:rgba(251,146,60,0.05)}}tr.strat_q{{background:rgba(34,211,238,0.05)}}
-/* v6.9.51: TOP10蓝色背景+边框 / 7日橙色背景已移除 */
-.conf{{font-weight:bold}}.conf.high{{color:#22c55e}}.conf.mid{{color:#f59e0b}}.conf.low{{color:#ef4444}}
-.entry{{color:#38bdf8;font-weight:bold}}
-.tier{{font-weight:bold;text-align:center}}.tier1{{color:#22c55e;background:#064e3b;border-radius:3px;padding:1px 6px}}.tier2{{color:#f59e0b;background:#451a03;border-radius:3px;padding:1px 6px}}.tier3{{color:#ef4444;background:#451a03;border-radius:3px;padding:1px 6px}}.tier_na{{color:#94a3b8}}
-.alert-item{{display:flex;gap:.8rem;padding:.4rem 0;border-bottom:1px solid #334155;font-size:.8rem}}
-.alert-level{{padding:2px 10px;border-radius:4px;font-weight:bold;font-size:.7rem;white-space:nowrap}}
+/* conf / entry */
+.conf{{font-weight:700}}.conf.high{{color:#22c55e}}.conf.mid{{color:#f59e0b}}.conf.low{{color:#ef4444}}
+.entry{{color:#38bdf8;font-weight:700}}
+/* tier badges */
+.tier{{font-weight:700;text-align:center;font-size:.72rem}}.tier1{{color:#22c55e;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);border-radius:12px;padding:2px 10px;display:inline-block}}.tier2{{color:#f59e0b;background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.3);border-radius:12px;padding:2px 10px;display:inline-block}}.tier3{{color:#ef4444;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);border-radius:12px;padding:2px 10px;display:inline-block}}.tier_na{{color:#64748b}}
+/* alerts */
+.alert-item{{display:flex;gap:.8rem;padding:.5rem 0;border-bottom:1px solid #1e293b;font-size:.78rem}}
+.alert-item:last-child{{border-bottom:none}}
+.alert-level{{padding:2px 12px;border-radius:4px;font-weight:700;font-size:.7rem;white-space:nowrap;letter-spacing:.03em}}
 .alert-level.warning{{background:#5c3d0e;color:#f59e0b}}.alert-level.info{{background:#1e3a5f;color:#3b82f6}}
-.footer{{text-align:center;padding:2rem;color:#64748b;font-size:.8rem}}
-.footer .disclaimer{{color:#ef4444;font-weight:bold;margin-top:.5rem}}
-a{{color:#38bdf8;text-decoration:none}}a:hover{{text-decoration:underline}}
-@media(max-width:768px){{.chart-grid{{grid-template-columns:1fr}}.container{{padding:.5rem}}th,td{{font-size:.7rem;padding:.3rem}}}}
-/* v6.9.50: TOP10盈亏比精选卡片 */
+/* footer */
+.footer{{text-align:center;padding:2.5rem 2rem 2rem;color:#64748b;font-size:.78rem}}
+.footer .disclaimer{{color:#ef4444;font-weight:700;margin-top:.6rem;font-size:.82rem}}
+/* links */
+a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decoration:underline;color:#7dd3fc}}
+/* responsive */
+@media(max-width:768px){{.chart-grid{{grid-template-columns:1fr}}.container{{padding:.6rem}}th,td{{font-size:.7rem;padding:.3rem}}.header{{padding:1.5rem 1rem}}.index-card{{min-width:120px;padding:.8rem 1rem}}.funnel-step{{min-width:200px}}}}
+/* TOP10 cards */
 .top10-cards{{display:grid;grid-template-columns:1fr;gap:14px;margin-top:1rem}}
-.top10-card{{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:16px 20px;transition:border-color .2s}}
-.top10-card:hover{{border-color:#38bdf8}}
-.top10-card-header{{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}}
-.top10-card-header .rank{{font-size:1.3rem;font-weight:800;color:#38bdf8;min-width:28px}}
+.top10-card{{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:18px 22px;transition:border-color .2s,box-shadow .2s,transform .15s;box-shadow:0 2px 8px rgba(0,0,0,.2)}}
+.top10-card:hover{{border-color:#38bdf8;box-shadow:0 4px 16px rgba(56,189,248,.12);transform:translateY(-1px)}}
+.top10-card-header{{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}}
+.top10-card-header .rank{{font-size:1.4rem;font-weight:800;color:#38bdf8;min-width:28px}}
 .top10-card-header .name{{font-size:1rem;font-weight:700;color:#f8fafc}}
 .top10-card-header .code{{font-size:.75rem;color:#94a3b8;margin-left:2px}}
-.top10-card-metrics{{display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:8px;margin-bottom:12px}}
+.top10-card-metrics{{display:grid;grid-template-columns:repeat(auto-fit,minmax(85px,1fr));gap:10px;margin-bottom:14px}}
 .top10-card-metrics .metric{{text-align:center}}
-.top10-card-metrics .metric .val{{font-size:1rem;font-weight:700;color:#f8fafc}}
+.top10-card-metrics .metric .val{{font-size:1.05rem;font-weight:700;color:#f8fafc}}
 .top10-card-metrics .metric .lbl{{font-size:.68rem;color:#94a3b8}}
-.top10-card-metrics .ratio-hl{{font-size:1.2rem!important}}
-.top10-card-reason{{font-size:.82rem;color:#94a3b8;line-height:1.6}}
+.top10-card-metrics .ratio-hl{{font-size:1.25rem!important}}
+.top10-card-reason{{font-size:.82rem;color:#94a3b8;line-height:1.65}}
 .top10-card-reason strong{{color:#e2e8f0}}
-.top10-conclusion{{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:16px 20px;margin-top:20px}}
-.top10-conclusion h3{{font-size:1rem;color:#38bdf8;margin-bottom:10px}}
+.top10-conclusion{{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:18px 22px;margin-top:20px;box-shadow:0 2px 8px rgba(0,0,0,.2)}}
+.top10-conclusion h3{{font-size:1rem;color:#38bdf8;margin-bottom:10px;font-weight:700}}
 .top10-conclusion p{{font-size:.82rem;color:#94a3b8;line-height:1.7;margin-top:8px}}
 </style></head><body>
 <div class="header"><h1>A股短线标的筛选报告</h1><div class="sub">{prediction_date} | 规则版本 {file_version}</div></div>
