@@ -3,7 +3,7 @@
 # 依赖外部函数：safe_read_json, read_all_history, log_alert, os, beijing_date
 import os
 
-BUILTIN_VERSION = "v6.12.17"  # 与 ashare_screener.py 保持一致
+BUILTIN_VERSION = "v6.13.4"  # 与 ashare_screener.py 保持一致
 adj_records = safe_read_json('/workspace/策略调整记录.json')
 if adj_records and len(adj_records) > 0:
     latest = adj_records[-1]

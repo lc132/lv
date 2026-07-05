@@ -276,7 +276,7 @@ def fetch_tencent_stocks(codes):
                         "volume_ratio": _parse_tencent_field(raw, 49, None),
                         "pe_ttm": _parse_tencent_field(raw, 39, None),
                         "total_cap": (_tc := _parse_tencent_field(raw, 44, None)) and _tc * 1e8,  # v6.12.10: fix dup call, 亿元→元
-                        "main_inflow": (_mi := _parse_tencent_field(raw, 62, None)) and _mi * 10000,  # v6.13.3: 腾讯API字段62主力净流入(万元→元)
+                        "main_inflow": (_mi := _parse_tencent_field(raw, 62, None)) and _mi * 10000,  # v6.13.4: 腾讯API字段62主力净流入(万元→元)
                     })
                 except (ValueError, TypeError, IndexError, AttributeError): pass
             time.sleep(0.05)
@@ -1655,7 +1655,7 @@ def step10C_fetch_klines_itick(candidates):
 # 腾讯基础API不提供主力资金流向，使用东方财富flow API获取
 # ============================================================
 def step10C_flow_fetch_main_inflow(candidates):
-    """v6.13.3: 优先腾讯API(字段62)，降级东方财富API批量获取主力净流入
+    """v6.13.4: 优先腾讯API(字段62)，降级东方财富API批量获取主力净流入
     返回: {code: main_inflow_yuan} 字典，值为 float（元）或 None"""
     flow_data = {}
     if not candidates: return flow_data
@@ -3662,7 +3662,7 @@ tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72
 .footer .disclaimer{{color:#ef4444;font-weight:700;margin-top:.6rem;font-size:.82rem}}
 /* links */
 a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decoration:underline;color:#7dd3fc}}
-/* responsive v6.13.3: 全面移动端适配 */
+/* responsive v6.13.4: 全面移动端适配 */
 @media(max-width:768px){{
   .container{{padding:.5rem}}
   .header{{padding:1.2rem .8rem}}
