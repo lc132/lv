@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.12.24
+A股每日盘前短线标的智能筛选 v6.13.0
 37步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线三级降级 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl
@@ -19,7 +19,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.12.24"
+BUILTIN_VERSION = "v6.13.0"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -3279,7 +3279,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
     else:
         alerts_html = '<div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">今日无异常告警</span></div>'
     
-    # ── v6.9.52: TOP10盈亏比精选推荐理由（含交易维度+基本面+信号+公告+7日历史）──
+    # ── v6.13.0: TOP10盈亏比精选推荐理由（含交易维度+60日区间+基本面+信号+公告+7日历史）──
     top10_cards_html = ""
     top10_sorted = sorted(candidates, key=lambda c: -c.get('_pl_ratio', 0))[:10]
     if top10_sorted:
@@ -3311,16 +3311,27 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             r7d = c.get('_recent_7d') or 0
             r7s = c.get('_recent_7d_strategies', {})
             sigs = c.get('_signal_reasons', [])
-            # 基本面（从F10数据合并）
             roe = c.get('_fd_roe') or 0
             np_yoy = c.get('_fd_net_profit_yoy') or 0
+            close = c.get('close', 0) or 0
             
-            # 策略名称
+            # v6.13.0: 获取K线数据用于60日区间/BOLL/KDJ
+            kd = kline_data.get(code, {}) if kline_data else {}
+            has_kline = bool(kd and kd.get('closes') and len(kd.get('closes', [])) >= 5)
+            k_val = kd.get('k', 0) if has_kline else 0
+            d_val = kd.get('d', 0) if has_kline else 0
+            j_val = kd.get('j', 0) if has_kline else 0
+            high60 = kd.get('high60', 0) if has_kline else 0
+            low60 = kd.get('low60', 0) if has_kline else 0
+            boll_upper = kd.get('boll_upper', 0) if has_kline else 0
+            boll_mid = kd.get('boll_mid', 0) if has_kline else 0
+            boll_lower = kd.get('boll_lower', 0) if has_kline else 0
+            
             sname = _STRATEGY_NAMES.get(strat, '')
             
             # 构建推荐理由
             reason_parts = []
-            # 1. 当日表现 + 交易维度
+            # 1. 当日表现 + 行业
             perf_parts = [f'涨幅{change_pct:+.2f}%', f'振幅{ampl:.1f}%']
             if amount > 0: perf_parts.append(f'成交额{amount/1e8:.2f}亿')
             if turnover > 0: perf_parts.append(f'换手率{turnover:.2f}%')
@@ -3328,7 +3339,31 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             reason_parts.append(f'<strong>当日表现：</strong>{"，".join(perf_parts)}，{industry}行业')
             if business: reason_parts.append(f'<strong>二级行业：</strong>{business}')
             
-            # 2. 基本面
+            # v6.13.0: 2. 60日区间位置 + 技术指标
+            tech_parts = []
+            if has_kline and high60 > 0 and low60 > 0 and close > 0:
+                pos_60 = (close - low60) / (high60 - low60) * 100 if high60 > low60 else 50
+                if pos_60 >= 80: pos_label = f'高位区({pos_60:.0f}%)'
+                elif pos_60 >= 50: pos_label = f'中位区({pos_60:.0f}%)'
+                elif pos_60 >= 20: pos_label = f'低位区({pos_60:.0f}%)'
+                else: pos_label = f'底部区({pos_60:.0f}%)'
+                tech_parts.append(f'60日{pos_label}')
+            if has_kline and k_val > 0 and d_val > 0:
+                if k_val > 80: kdj_label = '超买'
+                elif k_val < 20: kdj_label = '超卖'
+                elif k_val > d_val: kdj_label = '多头'
+                else: kdj_label = '空头'
+                tech_parts.append(f'KDJ{kdj_label}(K={k_val:.0f})')
+            if has_kline and boll_upper > 0 and close > 0:
+                if close >= boll_upper: boll_label = '突破上轨'
+                elif close > boll_mid: boll_label = '上轨区间'
+                elif close > boll_lower: boll_label = '下轨区间'
+                else: boll_label = '跌破下轨'
+                tech_parts.append(f'BOLL{boll_label}')
+            if tech_parts:
+                reason_parts.append(f'<strong>技术面：</strong>{"，".join(tech_parts)}')
+            
+            # 3. 基本面
             fin_parts = []
             try: roe_f = float(roe); fin_parts.append(f'ROE {roe_f:.1f}%') if roe_f != 0 else None
             except (ValueError, TypeError): pass
@@ -3339,10 +3374,31 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             if fin_parts:
                 reason_parts.append(f'<strong>基本面：</strong>{"，".join(fin_parts)}')
             
-            # 3. 进场区间
-            reason_parts.append(f'<strong>进场区间：</strong>{entry:.2f}元进场，止损{stop:.2f}元（{(1-stop/entry)*100:.1f}%），止盈{target:.2f}元（+{(target/entry-1)*100:.1f}%）')
+            # 4. 进场区间 + 操作建议
+            stop_pct = (1-stop/entry)*100 if entry > 0 else 0
+            target_pct = (target/entry-1)*100 if entry > 0 else 0
+            reason_parts.append(f'<strong>进场区间：</strong>{entry:.2f}元进场，止损{stop:.2f}元（-{stop_pct:.1f}%），止盈{target:.2f}元（+{target_pct:.1f}%），盈亏比{plr:.2f}')
             
-            # 4. 7日推荐历史
+            # 5. 操作建议
+            op_parts = []
+            if has_kline and high60 > 0 and low60 > 0 and close > 0:
+                pos_60 = (close - low60) / (high60 - low60) * 100 if high60 > low60 else 50
+                if pos_60 >= 80 and strat in ['A', 'G', 'I', 'N']:
+                    op_parts.append('⚠️ 高位追涨，仓位控制在30%以内，开盘观察竞价强度后分批进场')
+                elif pos_60 >= 80:
+                    op_parts.append('高位区域，建议等回调至中位再进场')
+                elif pos_60 <= 20:
+                    op_parts.append('底部区域，安全边际高，可逢低分批建仓')
+                elif strat in ['A', 'G']:
+                    op_parts.append('趋势良好，开盘回踩均线时进场，止损严格')
+                elif strat in ['B', 'D', 'L']:
+                    op_parts.append('低吸策略，开盘不急追，等盘中回调至支撑位进场')
+                else:
+                    op_parts.append('开盘观察5分钟，确认方向后进场')
+            if op_parts:
+                reason_parts.append(f'<strong>操作建议：</strong>{op_parts[0]}')
+            
+            # 6. 7日推荐历史
             if r7d > 0 and r7s:
                 r7_dates = sorted(r7s.keys())
                 r7_strats = [r7s[d] for d in r7_dates]
@@ -3351,19 +3407,17 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
                     if s_ not in seen: seen.add(s_); uniq_s.append(s_)
                 reason_parts.append(f'<strong>7日推荐：</strong>已推荐{r7d}天（策略{",".join(uniq_s)}），可持续关注')
             
-            # 5. 信号匹配
+            # 7. 信号匹配
             if sigs:
                 sig_str = '，'.join(sigs[:5])
                 if len(sigs) > 5: sig_str += f' 等{len(sigs)}项'
                 reason_parts.append(f'<strong>匹配信号：</strong>{sig_str}')
             
-            # 6. 龙虎榜
+            # 8. 龙虎榜/新闻/公告
             if lh:
                 reason_parts.append(f'<strong>🐉 龙虎榜：</strong>{lh}')
-            # 7. 正面新闻
             if news:
                 reason_parts.append(f'<strong>📰 正面新闻：</strong>{news}')
-            # 8. 公司公告
             if ann:
                 ann_display = ann.replace('; ', '<br>  ')
                 reason_parts.append(f'<strong>📋 公司公告：</strong><br>  {ann_display}')
