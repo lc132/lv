@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.12.17
+# A股短线筛选 — 历史回测模块 v6.12.24
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # ============================================================
@@ -7,10 +7,14 @@
 import urllib.request
 import urllib.error
 import json
+import ssl
 import time
 import os
 from collections import defaultdict, Counter
 from datetime import datetime, timedelta
+
+# v6.12.24: 独立SSL上下文，解除对主脚本全局opener的依赖
+_BT_SSL_CTX = ssl._create_unverified_context()
 
 # 策略止损/止盈比例（与主脚本 _STRATEGY_STOP_LOSS / _STRATEGY_TAKE_PROFIT 一致）
 _STRATEGY_STOP_LOSS = {
@@ -61,7 +65,7 @@ def _fetch_kline_range(code, start_date, lmt=15):
         req = urllib.request.Request(url, headers={
             'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://quote.eastmoney.com/'})
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=8, context=_BT_SSL_CTX) as resp:
             data = json.loads(resp.read().decode())
         klines = data.get('data', {}).get('klines', [])
         if klines:
@@ -88,7 +92,7 @@ def _fetch_kline_range(code, start_date, lmt=15):
                 'User-Agent': 'Mozilla/5.0',
                 'accept': 'application/json',
                 'token': itick_key})
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=10, context=_BT_SSL_CTX) as resp:
                 data = json.loads(resp.read().decode())
             bars = data.get('data', [])
             if bars:
@@ -641,7 +645,7 @@ def push_backtest_to_feishu(bt_result):
         }
         req = urllib.request.Request(webhook, data=json.dumps(card, ensure_ascii=False).encode('utf-8'),
                                      headers={'Content-Type': 'application/json'}, method='POST')
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10, context=_BT_SSL_CTX) as resp:
             result = json.loads(resp.read())
         if result.get('code') == 0:
             print(f"  回测飞书推送: \u2705")
