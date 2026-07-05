@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.0
+A股每日盘前短线标的智能筛选 v6.13.1
 37步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线三级降级 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl
@@ -19,7 +19,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.0"
+BUILTIN_VERSION = "v6.13.1"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -3443,33 +3443,112 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
 <div class="top10-card-reason">{reason}</div></div>''')
         top10_cards_html = '\n'.join(cards)
     
-    # ── v6.12.4: AI 策略分析 HTML ──
+    # ── v6.13.1: AI 策略分析 HTML（美化版）──
     ai_html = ""
     if ai_report:
-        ai_html += '<section><h2>AI 策略分析 — 市场全景</h2>'
-        ai_html += '<div style="font-size:.85rem;color:#cbd5e1;line-height:1.7;white-space:pre-wrap">'
-        ai_html += ai_report.get('market_overview', '').replace('\n', '<br>')
-        ai_html += '</div></section>'
+        # 将Markdown转换为结构化HTML
+        def _md_to_html(md_text, section_class=''):
+            """将AI分析Markdown转为结构化HTML"""
+            if not md_text: return ''
+            lines = md_text.split('\n')
+            result = []
+            i = 0
+            while i < len(lines):
+                line = lines[i].strip()
+                if not line:
+                    i += 1; continue
+                # h3 标题
+                if line.startswith('### ') and line[4:].strip():
+                    title = line[4:].strip()
+                    result.append(f'<h3>{title}</h3>')
+                    i += 1; continue
+                # h2 标题
+                if line.startswith('## '):
+                    i += 1; continue
+                # 表格行
+                if line.startswith('|') and '|' in line[1:]:
+                    # 收集连续表格行
+                    tbl_rows = []
+                    while i < len(lines) and lines[i].strip().startswith('|'):
+                        row = lines[i].strip()
+                        cells = [c.strip() for c in row.split('|')[1:-1]]
+                        tbl_rows.append(cells)
+                        i += 1
+                    if tbl_rows:
+                        # 跳过分隔行
+                        real_rows = [r for r in tbl_rows if not all(c.replace('-','').replace(':','').strip()=='' for c in r)]
+                        if real_rows:
+                            result.append('<table>')
+                            for ri, row in enumerate(real_rows):
+                                tag = 'th' if ri == 0 else 'td'
+                                result.append('<tr>' + ''.join(f'<{tag}>{c}</{tag}>' for c in row) + '</tr>')
+                            result.append('</table>')
+                    continue
+                # 列表项
+                if line.startswith('- '):
+                    item = line[2:].strip()
+                    # 加粗处理
+                    item = item.replace('**', '<strong>', 1).replace('**', '</strong>', 1) if '**' in item else item
+                    # 处理额外加粗
+                    while '<strong>' in item and item.count('**') >= 2:
+                        item = item.replace('**', '<strong>', 1).replace('**', '</strong>', 1)
+                    result.append(f'<div class="ai-dim">{item}</div>')
+                    i += 1; continue
+                # 普通段落
+                para = line
+                while '<strong>' in para and para.count('**') >= 2:
+                    para = para.replace('**', '<strong>', 1).replace('**', '</strong>', 1)
+                result.append(f'<p>{para}</p>')
+                i += 1
+            return '\n'.join(result)
         
-        ai_html += '<section><h2>AI 策略分析 — 板块深度研判</h2>'
-        ai_html += '<div style="font-size:.85rem;color:#cbd5e1;line-height:1.7;white-space:pre-wrap">'
-        ai_html += ai_report.get('sector_analysis', '').replace('\n', '<br>')
-        ai_html += '</div></section>'
-        
-        ai_html += '<section><h2>AI 策略分析 — 个股深度研判</h2>'
-        ai_html += '<div class="top10-cards">'
-        for ca in ai_report.get('candidate_analyses', []):
-            ai_html += f'''<div class="top10-card">
-<div class="top10-card-header"><span class="rank">AI</span><span class="name">{ca.get('name', '')}</span><span class="code">{ca.get('code', '')}</span></div>
-<div class="top10-card-reason"><strong>综合研判：</strong>{ca.get('summary', '')}</div>
-<div class="top10-card-reason" style="margin-top:6px">{ca.get('strategy_logic', '')}</div>
-<div class="top10-card-reason" style="margin-top:6px">{ca.get('technical', '')}</div>
-<div class="top10-card-reason" style="margin-top:6px">{ca.get('capital', '')}</div>
-<div class="top10-card-reason" style="margin-top:6px">{ca.get('fundamental', '')}</div>
-<div class="top10-card-reason" style="margin-top:6px">{ca.get('risk', '')}</div>
-<div class="top10-card-reason" style="margin-top:6px">{ca.get('suggestion', '')}</div>
+        # ── 市场全景 ──
+        market_md = ai_report.get('market_overview', '')
+        market_html = _md_to_html(market_md)
+        ai_html += f'''<div class="ai-section-wrap">
+<h2><span class="ai-icon">🌐</span>AI 策略分析 — 市场全景</h2>
+<div class="ai-markdown">{market_html}</div>
 </div>'''
-        ai_html += '</div></section>'
+        
+        # ── 板块深度研判 ──
+        sector_md = ai_report.get('sector_analysis', '')
+        sector_html = _md_to_html(sector_md)
+        ai_html += f'''<div class="ai-section-wrap">
+<h2><span class="ai-icon">📊</span>AI 策略分析 — 板块深度研判</h2>
+<div class="ai-markdown">{sector_html}</div>
+</div>'''
+        
+        # ── 个股深度研判 ──
+        ai_html += '<div class="ai-section-wrap"><h2><span class="ai-icon">🔍</span>AI 策略分析 — 个股深度研判</h2>'
+        ai_html += '<div class="ai-stock-grid">'
+        
+        dim_config = [
+            ('summary', '综合研判', 'overview'),
+            ('strategy_logic', '策略逻辑', 'capital'),
+            ('technical', '技术面分析', 'technical'),
+            ('capital', '资金面分析', 'capital'),
+            ('fundamental', '基本面分析', 'fundamental'),
+            ('risk', '风险提示', 'risk'),
+            ('suggestion', '操作建议', 'suggestion'),
+        ]
+        
+        for ci, ca in enumerate(ai_report.get('candidate_analyses', []), 1):
+            code = ca.get('code', '')
+            name = ca.get('name', '')
+            ai_html += f'''<div class="ai-stock-card">
+<div class="ai-stock-card-header">
+    <span class="ai-rank">#{ci}</span>
+    <span class="ai-name">{name}</span>
+    <span class="ai-code">{code}</span>
+</div>
+<div class="ai-stock-card-body">'''
+            for key, label, css_cls in dim_config:
+                val = ca.get(key, '')
+                if val:
+                    ai_html += f'<div class="ai-dim"><span class="ai-dim-label {css_cls}">{label}</span>{val}</div>\n'
+            ai_html += '</div></div>\n'
+        
+        ai_html += '</div></div>'
     
     html_content = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>A股短线标的筛选 — {prediction_date}</title>
@@ -3567,6 +3646,49 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 .top10-conclusion{{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:18px 22px;margin-top:20px;box-shadow:0 2px 8px rgba(0,0,0,.2)}}
 .top10-conclusion h3{{font-size:1rem;color:#38bdf8;margin-bottom:10px;font-weight:700}}
 .top10-conclusion p{{font-size:.82rem;color:#94a3b8;line-height:1.7;margin-top:8px}}
+/* v6.13.1: AI分析模块美化 */
+.ai-section-wrap{{background:linear-gradient(135deg, #1a2332 0%, #1e293b 50%, #172033 100%);border:1px solid #2d3a4f;border-radius:16px;padding:1.8rem;margin:1.5rem 0;box-shadow:0 4px 20px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.03);position:relative;overflow:hidden}}
+.ai-section-wrap::before{{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg, #38bdf8, #8b5cf6, #ec4899);opacity:.8}}
+.ai-section-wrap h2{{font-size:1.2rem;color:#f0f9ff;margin:0 0 1.2rem;padding:0 0 .8rem;border-bottom:1px solid #2d3a4f;font-weight:700;letter-spacing:.04em;display:flex;align-items:center;gap:10px}}
+.ai-section-wrap h2 .ai-icon{{font-size:1.4rem}}
+.ai-section-wrap h3{{font-size:.95rem;color:#38bdf8;margin:1.2rem 0 .6rem;font-weight:700;letter-spacing:.02em}}
+.ai-section-wrap h3:first-of-type{{margin-top:0}}
+.ai-markdown{{font-size:.85rem;color:#cbd5e1;line-height:1.8}}
+.ai-markdown strong{{color:#f0f9ff;font-weight:700}}
+.ai-markdown table{{width:100%;border-collapse:collapse;margin:.8rem 0;font-size:.8rem}}
+.ai-markdown th{{background:#1e3a5f;color:#e2e8f0;padding:.6rem .8rem;text-align:left;font-weight:700;border-bottom:1px solid #334155}}
+.ai-markdown td{{padding:.55rem .8rem;border-bottom:1px solid #1e293b;color:#cbd5e1}}
+.ai-markdown tr:hover td{{background:rgba(56,189,248,.03)}}
+/* 个股深度研判卡片 */
+.ai-stock-grid{{display:grid;grid-template-columns:1fr;gap:16px;margin-top:1rem}}
+.ai-stock-card{{background:#1a2332;border:1px solid #2d3a4f;border-radius:14px;overflow:hidden;transition:border-color .25s,box-shadow .25s,transform .2s;box-shadow:0 3px 12px rgba(0,0,0,.25)}}
+.ai-stock-card:hover{{border-color:#38bdf8;box-shadow:0 6px 24px rgba(56,189,248,.1);transform:translateY(-2px)}}
+.ai-stock-card-header{{display:flex;align-items:center;gap:12px;padding:16px 20px;background:linear-gradient(135deg, rgba(56,189,248,.06), rgba(139,92,246,.04));border-bottom:1px solid #2d3a4f;flex-wrap:wrap}}
+.ai-stock-card-header .ai-rank{{font-size:1.1rem;font-weight:800;color:#38bdf8;min-width:30px}}
+.ai-stock-card-header .ai-name{{font-size:1rem;font-weight:700;color:#f8fafc}}
+.ai-stock-card-header .ai-code{{font-size:.75rem;color:#94a3b8}}
+.ai-stock-card-body{{padding:16px 20px}}
+.ai-stock-card-body .ai-dim{{margin-bottom:10px;font-size:.82rem;line-height:1.7;color:#94a3b8}}
+.ai-stock-card-body .ai-dim:last-child{{margin-bottom:0}}
+.ai-stock-card-body .ai-dim-label{{display:inline-block;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:2px 10px;border-radius:4px;margin-right:8px;vertical-align:middle}}
+.ai-dim-label.overview{{background:rgba(56,189,248,.15);color:#38bdf8}}
+.ai-dim-label.technical{{background:rgba(139,92,246,.15);color:#8b5cf6}}
+.ai-dim-label.capital{{background:rgba(34,197,94,.15);color:#22c55e}}
+.ai-dim-label.fundamental{{background:rgba(245,158,11,.15);color:#f59e0b}}
+.ai-dim-label.risk{{background:rgba(239,68,68,.15);color:#ef4444}}
+.ai-dim-label.suggestion{{background:rgba(6,182,212,.15);color:#06b6d4}}
+.ai-dim strong{{color:#e2e8f0}}
+/* 市场全景/板块深度结构化卡片 */
+.ai-info-card{{background:rgba(56,189,248,.04);border:1px solid rgba(56,189,248,.12);border-radius:10px;padding:14px 18px;margin:.8rem 0}}
+.ai-info-card:first-child{{margin-top:0}}
+.ai-info-card .ai-card-title{{font-size:.8rem;font-weight:700;color:#38bdf8;letter-spacing:.04em;margin-bottom:8px;display:flex;align-items:center;gap:6px}}
+.ai-info-card .ai-card-title .dot{{width:6px;height:6px;border-radius:50%;background:#38bdf8;display:inline-block}}
+/* 增强TOP10卡片 */
+.top10-card{{border-left:3px solid transparent;transition:border-left-color .3s,box-shadow .3s,transform .2s}}
+.top10-card:hover{{border-left-color:#38bdf8}}
+.top10-card-header .badge{{margin-left:auto}}
+.top10-card-reason{{border-left:2px solid #2d3a4f;padding-left:12px;margin:8px 0;transition:border-color .2s}}
+.top10-card-reason:hover{{border-left-color:rgba(56,189,248,.3)}}
 </style></head><body>
 <div class="header"><h1>A股短线标的筛选报告</h1><div class="sub">{prediction_date} | 规则版本 {file_version}</div></div>
 <div class="container">
