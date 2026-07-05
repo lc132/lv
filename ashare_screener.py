@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.2
+A股每日盘前短线标的智能筛选 v6.13.3
 37步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线三级降级 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化
 """
-import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl
+import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
+
+# v6.12.23: 全局socket超时+SSL未验证上下文，解决沙箱网络限制
+socket.setdefaulttimeout(8)
 
 # v6.12.23: 全局SSL未验证上下文，解决沙箱SSL证书验证失败问题
 _SSL_CTX = ssl._create_unverified_context()
@@ -19,7 +22,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.2"
+BUILTIN_VERSION = "v6.13.3"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -261,7 +264,7 @@ def fetch_tencent_stocks(codes):
                     if close <= 0 or prev_close <= 0: continue
                     high = _parse_tencent_field(raw, 33, close)
                     low = _parse_tencent_field(raw, 34, close)
-                    # 腾讯API字段: [37]=amount(万元) [38]=turnover(%) [39]=pe_ttm [43]=amplitude(%) [44]=total_cap(亿元) [45]=high(冗余) [46]=low(冗余) [49]=volume_ratio
+                    # 腾讯API字段: [37]=amount(万元) [38]=turnover(%) [39]=pe_ttm [43]=amplitude(%) [44]=total_cap(亿元) [45]=high(冗余) [46]=low(冗余) [49]=volume_ratio [62]=主力净流入(万元)
                     result.append({
                         "code": code, "name": name,
                         "open": open_p, "close": close,
@@ -273,7 +276,7 @@ def fetch_tencent_stocks(codes):
                         "volume_ratio": _parse_tencent_field(raw, 49, None),
                         "pe_ttm": _parse_tencent_field(raw, 39, None),
                         "total_cap": (_tc := _parse_tencent_field(raw, 44, None)) and _tc * 1e8,  # v6.12.10: fix dup call, 亿元→元
-                        "main_inflow": None,  # 腾讯基础API不提供主力资金流向
+                        "main_inflow": (_mi := _parse_tencent_field(raw, 62, None)) and _mi * 10000,  # v6.13.3: 腾讯API字段62主力净流入(万元→元)
                     })
                 except (ValueError, TypeError, IndexError, AttributeError): pass
             time.sleep(0.05)
@@ -1652,11 +1655,44 @@ def step10C_fetch_klines_itick(candidates):
 # 腾讯基础API不提供主力资金流向，使用东方财富flow API获取
 # ============================================================
 def step10C_flow_fetch_main_inflow(candidates):
-    """v6.12.5: 东方财富资金流向API批量获取主力净流入
-    返回: {code: main_inflow_yuan} 字典，值为 float（元）"""
+    """v6.13.3: 优先腾讯API(字段62)，降级东方财富API批量获取主力净流入
+    返回: {code: main_inflow_yuan} 字典，值为 float（元）或 None"""
     flow_data = {}
     if not candidates: return flow_data
+    # 第一顺位：从候选标的已有的腾讯API数据中提取（已在上游fetch_tencent_stocks中获取）
+    missed = []
     for c in candidates:
+        code = c.get('code', '')
+        if not code: continue
+        mi = c.get('main_inflow')
+        if mi is not None:
+            flow_data[code] = mi
+        else:
+            missed.append(c)
+    if missed:
+        # 第二顺位：对腾讯API未获取到的，单独调用腾讯API
+        for c in missed[:]:
+            code = c.get('code', '')
+            if not code: continue
+            try:
+                prefix = 'sz' if code.startswith(('0','3')) else 'sh'
+                url = f"{TENCENT_API}{prefix}{code}"
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    text = resp.read().decode('gbk', errors='replace')
+                for line in text.strip().split('\n'):
+                    if not line or '="' not in line: continue
+                    raw = line.split('"')[1].split('~')
+                    if len(raw) < 63: continue
+                    mi_val = _parse_tencent_field(raw, 62, None)
+                    if mi_val is not None:
+                        flow_data[code] = mi_val * 10000  # 万元→元
+                        missed.remove(c)
+                    break
+            except Exception: pass
+    # 第三顺位：东方财富API降级(仅对仍未获取到的)
+    still_missed = [c for c in missed if c.get('code','') not in flow_data]
+    for c in still_missed:
         code = c.get('code', '')
         if not code: continue
         try:
@@ -3168,7 +3204,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
 # ============================================================
 # 步骤20B：HTML报告（v6.6.27 含指数行情）
 # ============================================================
-def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report=None, bt_lookup=None):
+def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report=None, bt_lookup=None, kline_data=None):
     hd = f"/workspace/ashare-screening-{pred_yyyymmdd}"
     os.makedirs(hd, exist_ok=True)
     hp = f"{hd}/ashare-screening-{pred_yyyymmdd}.html"
@@ -3626,8 +3662,128 @@ tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72
 .footer .disclaimer{{color:#ef4444;font-weight:700;margin-top:.6rem;font-size:.82rem}}
 /* links */
 a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decoration:underline;color:#7dd3fc}}
-/* responsive */
-@media(max-width:768px){{.chart-grid{{grid-template-columns:1fr}}.container{{padding:.6rem}}th,td{{font-size:.7rem;padding:.3rem}}.header{{padding:1.5rem 1rem}}.index-card{{min-width:120px;padding:.8rem 1rem}}.funnel-step{{min-width:200px}}}}
+/* responsive v6.13.3: 全面移动端适配 */
+@media(max-width:768px){{
+  .container{{padding:.5rem}}
+  .header{{padding:1.2rem .8rem}}
+  .header h1{{font-size:1.1rem}}
+  .header .sub{{font-size:.72rem}}
+  section{{padding:1rem;margin:1rem 0;border-radius:10px}}
+  section h2{{font-size:1rem;margin-bottom:.8rem}}
+  .chart-grid{{grid-template-columns:1fr;gap:1rem}}
+  .meta-row{{gap:.5rem}}
+  .meta-card{{min-width:80px;padding:.5rem .8rem}}
+  .meta-card .label{{font-size:.62rem}}
+  .meta-card .value{{font-size:.95rem}}
+  .index-row{{gap:.5rem}}
+  .index-card{{min-width:100px;padding:.7rem .9rem}}
+  .index-card .idx-name{{font-size:.72rem}}
+  .index-card .idx-price{{font-size:1.2rem}}
+  .index-card .idx-chg{{font-size:.75rem}}
+  .index-card .idx-amt{{font-size:.9rem}}
+  .funnel-step{{min-width:160px;font-size:.72rem;padding:.4rem .8rem}}
+  .bar-label{{width:120px;font-size:.7rem}}
+  .bar-track{{height:22px}}
+  .bar-fill{{font-size:.68rem}}
+  th,td{{font-size:.68rem;padding:.3rem .35rem}}
+  .seg-bar{{height:28px}}
+  .seg{{font-size:.7rem}}
+  .legend{{font-size:.7rem;gap:.7rem}}
+  .top10-card{{padding:12px 14px}}
+  .top10-card-header .name{{font-size:.85rem}}
+  .top10-card-header .rank{{font-size:1.1rem}}
+  .top10-card-metrics{{grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:6px}}
+  .top10-card-metrics .metric .val{{font-size:.9rem}}
+  .top10-card-metrics .metric .lbl{{font-size:.6rem}}
+  .top10-card-reason{{font-size:.75rem}}
+  .ai-section-wrap{{padding:1rem;margin:1rem 0}}
+  .ai-section-wrap h2{{font-size:1rem}}
+  .ai-section-wrap h3{{font-size:.82rem}}
+  .ai-markdown{{font-size:.78rem}}
+  .ai-stock-card-header{{padding:10px 14px;gap:8px}}
+  .ai-stock-card-body{{padding:10px 14px}}
+  .ai-stock-card-body .ai-dim{{font-size:.75rem}}
+  .ai-stock-card-body .ai-dim-label{{font-size:.62rem;padding:1px 7px}}
+  .alert-item{{font-size:.7rem}}
+  .footer{{padding:1.5rem 1rem;font-size:.7rem}}
+  .footer .disclaimer{{font-size:.72rem}}
+}}
+@media(max-width:480px){{
+  .container{{padding:.3rem}}
+  .header{{padding:1rem .5rem}}
+  .header h1{{font-size:.95rem;letter-spacing:.02em}}
+  .header .sub{{font-size:.65rem}}
+  section{{padding:.7rem;margin:.7rem 0;border-radius:8px}}
+  section h2{{font-size:.88rem;margin-bottom:.6rem;padding-bottom:.4rem}}
+  .meta-row{{gap:.3rem;margin:.8rem 0}}
+  .meta-card{{min-width:60px;padding:.4rem .45rem;border-radius:8px}}
+  .meta-card .label{{font-size:.55rem;letter-spacing:.02em}}
+  .meta-card .value{{font-size:.8rem}}
+  .index-row{{gap:.3rem;margin:.8rem 0}}
+  .index-card{{min-width:70px;padding:.5rem .55rem;border-radius:8px;flex:1 1 40%}}
+  .index-card .idx-name{{font-size:.62rem}}
+  .index-card .idx-price{{font-size:1rem}}
+  .index-card .idx-chg{{font-size:.65rem}}
+  .index-card .idx-amt{{font-size:.75rem}}
+  .index-card .idx-pct{{font-size:.6rem}}
+  .funnel-step{{min-width:100%;width:100%;font-size:.68rem;padding:.35rem .6rem;border-radius:4px}}
+  .bar-label{{width:80px;font-size:.62rem;text-align:left}}
+  .bar-row{{margin:.35rem 0;gap:.3rem}}
+  .bar-track{{height:18px}}
+  .bar-fill{{font-size:.6rem;padding:0 .3rem;min-width:24px}}
+  .chart-grid{{grid-template-columns:1fr;gap:.7rem}}
+  .seg-bar{{height:22px}}
+  .seg{{font-size:.6rem}}
+  .legend{{font-size:.62rem;gap:.4rem}}
+  .legend-dot{{width:8px;height:8px}}
+  th,td{{font-size:.6rem;padding:.2rem .25rem}}
+  .badge{{font-size:.6rem;padding:1px 6px}}
+  .top10-card{{padding:10px 12px;border-radius:8px}}
+  .top10-card-header{{gap:6px;margin-bottom:8px}}
+  .top10-card-header .name{{font-size:.78rem}}
+  .top10-card-header .code{{font-size:.65rem}}
+  .top10-card-header .rank{{font-size:1rem;min-width:22px}}
+  .top10-card-metrics{{grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:8px}}
+  .top10-card-metrics .metric .val{{font-size:.8rem}}
+  .top10-card-metrics .metric .lbl{{font-size:.55rem}}
+  .top10-card-reason{{font-size:.7rem;line-height:1.5}}
+  .ai-section-wrap{{padding:.7rem;margin:.7rem 0;border-radius:10px}}
+  .ai-section-wrap h2{{font-size:.88rem;margin-bottom:.8rem;padding-bottom:.5rem}}
+  .ai-section-wrap h3{{font-size:.75rem}}
+  .ai-markdown{{font-size:.72rem;line-height:1.6}}
+  .ai-markdown table{{font-size:.65rem}}
+  .ai-markdown th,.ai-markdown td{{padding:.3rem .4rem}}
+  .ai-stock-card-header{{padding:8px 10px;gap:6px}}
+  .ai-stock-card-header .ai-rank{{font-size:.9rem;min-width:22px}}
+  .ai-stock-card-header .ai-name{{font-size:.85rem}}
+  .ai-stock-card-header .ai-code{{font-size:.65rem}}
+  .ai-stock-card-body{{padding:8px 10px}}
+  .ai-stock-card-body .ai-dim{{font-size:.7rem;margin-bottom:6px;line-height:1.5}}
+  .ai-stock-card-body .ai-dim-label{{font-size:.58rem}}
+  .ai-info-card{{padding:10px 12px;margin:.5rem 0}}
+  .alert-item{{font-size:.65rem;gap:.4rem;flex-wrap:wrap}}
+  .alert-level{{font-size:.6rem;padding:1px 8px}}
+  .footer{{padding:1.2rem .8rem;font-size:.65rem}}
+  .footer .disclaimer{{font-size:.68rem}}
+}}
+@media(max-width:360px){{
+  .container{{padding:.2rem}}
+  .header{{padding:.8rem .4rem}}
+  .header h1{{font-size:.85rem}}
+  .meta-card{{min-width:50px;padding:.3rem .3rem}}
+  .meta-card .value{{font-size:.7rem}}
+  .index-card{{flex:1 1 100%;min-width:60px;padding:.4rem .4rem}}
+  .index-card .idx-price{{font-size:.9rem}}
+  .bar-label{{width:60px;font-size:.58rem}}
+  th,td{{font-size:.55rem;padding:.15rem .2rem}}
+  .top10-card-metrics{{grid-template-columns:repeat(2,1fr)}}
+  .top10-card-metrics .metric .val{{font-size:.72rem}}
+  .top10-card-reason{{font-size:.65rem}}
+  .funnel-step{{font-size:.62rem}}
+  .badge{{font-size:.55rem}}
+  .ai-markdown{{font-size:.68rem}}
+  .ai-stock-card-body .ai-dim{{font-size:.65rem}}
+}}
 /* TOP10 cards */
 .top10-cards{{display:grid;grid-template-columns:1fr;gap:14px;margin-top:1rem}}
 .top10-card{{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:18px 22px;transition:border-color .2s,box-shadow .2s,transform .15s;box-shadow:0 2px 8px rgba(0,0,0,.2)}}
@@ -4010,7 +4166,7 @@ def main():
             bt_lookup = _build_backtest_lookup(bt_result)
 
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup)
-    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report, bt_lookup); hd = os.path.dirname(hp)
+    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report, bt_lookup, kline_data); hd = os.path.dirname(hp)
     print("\n[步骤21] 验证..."); step21_final_verify(mp, fc)
     if beijing_weekday in (5, 6):
         print("\n[步骤22] 推荐历史... 周末跳过")
