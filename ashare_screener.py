@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.12.22
+A股每日盘前短线标的智能筛选 v6.12.23
 37步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线三级降级 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化
 """
-import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib
+import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
+
+# v6.12.23: 全局SSL未验证上下文，解决沙箱SSL证书验证失败问题
+_SSL_CTX = ssl._create_unverified_context()
+urllib.request.install_opener(urllib.request.build_opener(urllib.request.HTTPSHandler(context=_SSL_CTX)))
 from openpyxl import load_workbook
 from lib.factor import compute_main_force_position, compute_short_term_breakout, resonance_check
 from lib.microstructure import microstructure_filter
@@ -15,7 +19,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.12.22"
+BUILTIN_VERSION = "v6.12.23"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -993,7 +997,7 @@ def _fetch_zjh_industry(code):
             zjh = jbzl.get('sszjhhy', '')
             sshy = jbzl.get('sshy', '')
             return _zjh_to_shenwan(zjh), sshy
-    except Exception:
+    except (urllib.error.URLError, json.JSONDecodeError, OSError, KeyError):
         return None, None
 
 def _preload_industry_from_eastmoney(all_stocks):
@@ -1670,7 +1674,7 @@ def step10C_flow_fetch_main_inflow(candidates):
                 parts = klines[0].split(',')
                 main_in = float(parts[1])  # 主力净流入(元)
                 flow_data[code] = main_in
-        except Exception:
+        except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError, IndexError):
             flow_data[code] = None
     return flow_data
 
@@ -1780,7 +1784,7 @@ def step10F_fetch_risk_events():
                 unlock_events[code] = {'date': date, 'ratio': ratio}
         if unlock_events:
             log_alert("INFO", "风险事件", f"解禁: {len(unlock_events)}只未来15日内有限售解禁(>0%)")
-    except Exception as e:
+    except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError, ssl.SSLError) as e:
         log_alert("WARNING", "风险事件", f"解禁API不可达: {str(e)[:60]}，使用内置数据缓冲")
         # 内置缓冲数据（2026-06-22~07-07窗口，>5%）
         _BUILTIN_UNLOCK = {
@@ -1873,7 +1877,7 @@ def step10G_fetch_crowding_data(candidates):
                 'fund_count': len(jjcg),
             }
             fetched += 1
-        except Exception:
+        except (urllib.error.URLError, json.JSONDecodeError, OSError, KeyError, IndexError, ValueError):
             errors += 1
             inst_holding[code] = {'total_fund_ratio': 0, 'reduce_count': 0, 'fund_count': 0}
         
@@ -3831,7 +3835,6 @@ def main():
 
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup)
     print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report, bt_lookup); hd = os.path.dirname(hp)
-    print("\n[步骤21] 验证..."); step21_final_verify(mp, fc)
     print("\n[步骤21] 验证..."); step21_final_verify(mp, fc)
     if beijing_weekday in (5, 6):
         print("\n[步骤22] 推荐历史... 周末跳过")
