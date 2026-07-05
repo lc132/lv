@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.12.24
+# A股短线筛选 — 历史回测模块 v6.13.4
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # ============================================================
@@ -16,25 +16,25 @@ from datetime import datetime, timedelta
 # v6.12.24: 独立SSL上下文，解除对主脚本全局opener的依赖
 _BT_SSL_CTX = ssl._create_unverified_context()
 
-# 策略止损/止盈比例（与主脚本 _STRATEGY_STOP_LOSS / _STRATEGY_TAKE_PROFIT 一致）
+# 策略止损/止盈比例（与主脚本 _STRATEGY_STOP_LOSS / _STRATEGY_TAKE_PROFIT 一致）v6.13.4: 同步主脚本
 _STRATEGY_STOP_LOSS = {
-    'A': 0.97, 'B': 0.93, 'C': 0.96, 'D': 0.95, 'E': 0.965,
-    'F': 0.96, 'G': 0.95, 'H': 0.97, 'I': 0.96, 'J': 0.95,
-    'K': 0.96, 'L': 0.95, 'M': 0.96, 'N': 0.96, 'O': 0.95,
-    'P': 0.96, 'Q': 0.96, 'R': 0.95, 'S': 0.96, 'T': 0.95,
+    'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965,
+    'F': 0.965, 'G': 0.95, 'H': 0.94, 'I': 0.95, 'J': 0.94,
+    'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95,
+    'P': 0.945, 'Q': 0.95, 'R': 0.95, 'S': 0.95, 'T': 0.94,
 }
 _STRATEGY_TAKE_PROFIT = {
-    'A': 1.06, 'B': 1.07, 'C': 1.05, 'D': 1.06, 'E': 1.04,
-    'F': 1.04, 'G': 1.05, 'H': 1.05, 'I': 1.05, 'J': 1.06,
-    'K': 1.05, 'L': 1.05, 'M': 1.05, 'N': 1.05, 'O': 1.05,
-    'P': 1.05, 'Q': 1.05, 'R': 1.05, 'S': 1.05, 'T': 1.05,
+    'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04,
+    'F': 1.04, 'G': 1.05, 'H': 1.06, 'I': 1.05, 'J': 1.06,
+    'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05,
+    'P': 1.05, 'Q': 1.05, 'R': 1.05, 'S': 1.04, 'T': 1.04,
 }
 _STRATEGY_NAMES = {
-    'A': '动量延续', 'B': '超跌反弹', 'C': '财报驱动', 'D': '回调企稳',
+    'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳',
     'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底',
-    'I': '事件驱动', 'J': '箱体突破', 'K': '均线金叉', 'L': '龙虎榜跟随',
-    'M': '板块联动', 'N': '新高突破', 'O': '估值修复', 'P': '政策催化',
-    'Q': '机构调研', 'R': '次新博弈', 'S': '高股息防守', 'T': '底部放量',
+    'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑',
+    'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹',
+    'Q': 'W底突破', 'R': '主力共振(强)', 'S': '主力共振(弱)', 'T': '主力观察',
 }
 
 DATA_DIR = os.environ.get('LV_DATA_DIR', '/workspace')
@@ -186,16 +186,18 @@ def _compute_metrics(trades):
 
     profit_factor = abs(avg_win / avg_loss) if avg_loss != 0 and wins and losses else 0
 
-    max_dd = 0.0; cum = 0.0
+    # v6.13.4: 最大回撤从峰值计算（而非累计重置），更准确反映风险
+    max_dd = 0.0; peak = 0.0; cum = 0.0
     for t in trades:
         cum += t['return_pct']
-        max_dd = min(max_dd, cum)
-        cum = max(cum, 0)
+        peak = max(peak, cum)
+        dd = peak - cum
+        max_dd = max(max_dd, dd)
 
     returns = [t['return_pct'] for t in trades]
     if len(returns) > 1:
         avg_r = sum(returns) / len(returns)
-        variance = sum((r - avg_r) ** 2 for r in returns) / len(returns)
+        variance = sum((r - avg_r) ** 2 for r in returns) / (len(returns) - 1)  # v6.13.4: 样本方差N-1
         std = variance ** 0.5
         sharpe = avg_r / std if std > 0 else 0
     else:
@@ -227,7 +229,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         print("  无推荐历史记录，跳过回测")
         return {'all_trades': [], 'metrics': {}, 'strategy_metrics': {}, 'industry_metrics': {}}
 
-    today = datetime.now()
+    today = datetime.now() + timedelta(hours=8)  # v6.13.4: 北京时间（与主脚本一致）
     cutoff = today - timedelta(days=max_days_lookback)
     history = [h for h in history
                if h.get('prediction_date') and h['prediction_date'] >= cutoff.strftime('%Y-%m-%d')
@@ -245,19 +247,20 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     print(f"  推荐历史: {len(history)} 条")
 
     code_kline_cache = {}
-    codes_to_fetch = set(h.get('code', '') for h in history)
-    print(f"  获取后续K线: {len(codes_to_fetch)} 只股票...")
+    # v6.13.4: 按 (code, prediction_date) 分别拉取K线，而非仅取最新pred_date
+    # 避免同一code多次推荐时，早期交易使用错误K线区间
+    codes_to_fetch = set((h.get('code', ''), h.get('prediction_date', '')) for h in history)
+    print(f"  获取后续K线: {len(codes_to_fetch)} 个(代码,日期)组合...")
 
-    for code in codes_to_fetch:
-        if not code:
+    for code, pred_date in codes_to_fetch:
+        if not code or not pred_date:
             continue
-        related = [h for h in history if h.get('code') == code]
-        latest_pred = max(h.get('prediction_date', '') for h in related)
-        if not latest_pred:
+        cache_key = (code, pred_date)
+        if cache_key in code_kline_cache:
             continue
-        klines = _fetch_kline_range(code, latest_pred, lmt=hold_days + 5)
+        klines = _fetch_kline_range(code, pred_date, lmt=hold_days + 5)
         if klines:
-            code_kline_cache[code] = {k['date']: k for k in klines}
+            code_kline_cache[cache_key] = {k['date']: k for k in klines}
         time.sleep(0.02)
 
     print(f"  K线获取: {len(code_kline_cache)} 只有效")
@@ -274,7 +277,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         sl = round(entry * _STRATEGY_STOP_LOSS.get(strategy, 0.96), 2)
         tp = round(entry * _STRATEGY_TAKE_PROFIT.get(strategy, 1.05), 2)
 
-        klines = code_kline_cache.get(code, {})
+        klines = code_kline_cache.get((code, pred_date), {})
         post_klines = [k for d, k in sorted(klines.items()) if d > pred_date]
         trade = _simulate_trade(entry, sl, tp, post_klines, hold_days)
         trade['code'] = code
@@ -324,7 +327,7 @@ def generate_backtest_report(bt_result, output_path=None):
             f.write('# 历史回测报告\n\n暂无回测数据。\n\n## 回测说明\n\n- 回测使用最近90天推荐历史。\n- 单笔最大持仓10个交易日。\n- 按推荐时的进场、止损、止盈价格进行模拟。\n- 遵循A股T+1规则，买入当日不检查止盈止损出场。\n- 回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。\n')
         return output_path
 
-    today_str = datetime.now().strftime('%Y-%m-%d')
+    today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.4: 北京时间
     lines = [
         f"# A股短线筛选 — 历史回测报告",
         f"",
@@ -441,7 +444,7 @@ def generate_backtest_html(bt_result, output_path=None):
     strategy_metrics = bt_result.get('strategy_metrics', {})
     industry_metrics = bt_result.get('industry_metrics', {})
     trades = bt_result.get('all_trades', [])
-    today_str = datetime.now().strftime('%Y-%m-%d')
+    today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.4: 北京时间
 
     if not trades:
         html = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>历史回测报告</title>
@@ -606,7 +609,7 @@ def push_backtest_to_feishu(bt_result):
             print("  无回测数据，跳过飞书推送")
             return False
 
-        today_str = datetime.now().strftime('%Y-%m-%d')
+        today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.4: 北京时间
         pb = "https://lc132.github.io/lv"
         bt_url = f"{pb}/回测报告.html"
 
