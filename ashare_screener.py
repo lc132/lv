@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.6
+A股每日盘前短线标的智能筛选 v6.13.7
 37步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线三级降级 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -22,7 +22,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.6"
+BUILTIN_VERSION = "v6.13.7"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -3912,15 +3912,27 @@ def step21_final_verify(mp, fc):
         log_alert("ERROR", "数量校验", "MD文件不存在")
 
 def step22_write_history(candidates):
+    """v6.13.7: 去重写入——按(code,strategy,entry)去重，避免多次运行重复追加"""
     hf = f"/workspace/推荐历史_{data_date.replace('-', '')}.json"
+    existing = safe_read_json(hf)
+    existing_keys = set()
+    for r in existing:
+        if r.get('type') == 'recommendation':
+            existing_keys.add((r.get('code'), r.get('strategy'), round(r.get('entry', 0), 2)))
+    written = 0
     for c in candidates:
         entry = calc_entry_price(c)
+        key = (c.get('code'), c.get('strategy'), round(entry, 2) if entry else 0)
+        if key in existing_keys:
+            continue
+        existing_keys.add(key)
         safe_append_json(hf, {"type": "recommendation", "code": c.get('code'), "name": c.get('name'),
             "strategy": c.get('strategy'), "industry": _industry_str(c), "business": c.get('business', ''),
             "score": c.get('score'), "confidence": c.get('confidence'),
             "entry": entry, "change_pct": c.get('change_pct'),
             "date": data_date, "prediction_date": prediction_date})
-    log_alert("INFO", "推荐历史", f"已追加{len(candidates)}条")
+        written += 1
+    log_alert("INFO", "推荐历史", f"已追加{written}条(跳过{len(candidates)-written}条重复)")
 
 # ============================================================
 # 步骤26：GitHub同步
