@@ -22,7 +22,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.4"
+BUILTIN_VERSION = "v6.13.5"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -549,7 +549,7 @@ def step4B_sync_holdings_xlsx(holdings):
     finally:
         if wb:
             try: wb.close()
-            except Exception: pass
+            except Exception: log_alert("DEBUG", "持仓跟踪", "wb.close()失败")
 
 def step4C_crisis_check(holdings):
     alerts = []
@@ -659,7 +659,7 @@ def step8_market_environment():
                         break
         finally:
             try: api.disconnect()
-            except Exception: pass
+            except Exception: log_alert("DEBUG", "大盘环境", "api.disconnect()失败")
     except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError): pass
     # 降级：根据涨跌判断（仅在pytdx未设置时生效）
     if not idx:
@@ -781,7 +781,7 @@ def step10A_fetch_all_stocks():
     finally:
         if api is not None:
             try: api.disconnect()
-            except Exception: pass
+            except Exception: log_alert("DEBUG", "行情采集", "api.disconnect()失败")
 
 # ==========================================================
 # 步骤10B：行业查表 v6.6.29 （全代码段覆盖，零未知）
@@ -1423,7 +1423,7 @@ def step10C_fetch_klines(candidates):
                 except (ValueError, TypeError, ZeroDivisionError, IndexError): kline_data[code] = {}
         finally:
             try: api.disconnect()
-            except Exception: pass
+            except Exception: log_alert("DEBUG", "K线iTick", "api.disconnect()失败")
         log_alert("INFO", "K线拉取", f"获取{len(kline_data)}只历史K线(KDJ迭代+BOLL)")
     except Exception as e:
         log_alert("WARNING", "K线拉取", f"pytdx不可用: {str(e)[:60]}")
@@ -1449,7 +1449,7 @@ def step10C_fetch_klines_http(candidates):
                     code = futures[f].get('code', '')
                     try:
                         kline_data[code] = f.result()
-                    except Exception:
+                    except Exception: log_alert("DEBUG", "K线HTTP", f"{code} 并发任务异常");
                         kline_data[code] = {}
             time.sleep(0.3)  # 批次间间隔，避免频率限制
         valid_count = sum(1 for v in kline_data.values() if v and v.get('closes'))
@@ -1540,7 +1540,7 @@ def _fetch_single_kline_tencent(c):
 # 步骤10C-三级备选：iTick HTTP K线拉取（v6.12.15新增）
 # pytdx和东方财富HTTP均不可达时，使用iTick API作为第三级降级
 # ============================================================
-_ITICK_API_KEY = os.environ.get("ITICK_API_KEY", "6a6dba133463414c838fe9811f0f354d87e9711a2ef9457aa05f58ccc468d510")
+_ITICK_API_KEY = os.environ.get("ITICK_API_KEY", "")  # v6.13.5: 移除硬编码默认值
 _ITICK_BASE_URL = "https://api-free.itick.org"  # 生产环境；免费版可用 https://api-free.itick.org
 
 def step10C_fetch_klines_itick(candidates):
@@ -1689,7 +1689,7 @@ def step10C_flow_fetch_main_inflow(candidates):
                         flow_data[code] = mi_val * 10000  # 万元→元
                         missed.remove(c)
                     break
-            except Exception: pass
+            except Exception: log_alert("DEBUG", "主力资金", f"{code} 解析失败")
     # 第三顺位：东方财富API降级(仅对仍未获取到的)
     still_missed = [c for c in missed if c.get('code','') not in flow_data]
     for c in still_missed:
@@ -2551,7 +2551,7 @@ def step18_news_screening(candidates):
                         if kw not in title: continue
                         if not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
                             return ('eastmoney', kw)
-        except Exception: pass
+        except Exception: log_alert("DEBUG", "新闻筛查", "东方财富源异常")
         return None
     
     def _check_bing(code, name):
@@ -2571,7 +2571,7 @@ def step18_news_screening(candidates):
                     if name not in ctx and code not in ctx: continue
                     if not any(neg in ctx for neg in FALSE_POSITIVE_NEGATORS):
                         return ('bing', kw)
-        except Exception: pass
+        except Exception: log_alert("DEBUG", "新闻筛查", "Bing源异常")
         return None
     
     def _check_cninfo(code, name):
@@ -2618,7 +2618,7 @@ def step18_news_screening(candidates):
                         for kw in NEGATIVE_KW:
                             if kw in title and not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
                                 return ('cninfo', kw)
-        except Exception: pass
+        except Exception: log_alert("DEBUG", "新闻筛查", "巨潮资讯源异常")
         return None
     
     def _check_cls(code, name):
@@ -2644,7 +2644,7 @@ def step18_news_screening(candidates):
                     for kw in NEGATIVE_KW:
                         if kw in content and not any(neg in content for neg in FALSE_POSITIVE_NEGATORS):
                             return ('cls', kw)
-        except Exception: pass
+        except Exception: log_alert("DEBUG", "新闻筛查", "财联社源异常")
         return None
     
     excluded = []

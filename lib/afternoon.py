@@ -43,7 +43,7 @@ def fetch_intraday_minute(code):
                         'amount': float(parts[6]),
                     })
             return minutes
-    except Exception:
+    except Exception: log_alert("DEBUG", "尾盘决策", "分时数据解析失败");
         return None
 
 
@@ -86,7 +86,7 @@ def detect_lock_time(intraday_minutes, prev_close):
     try:
         h, mi = lock_time.split(':')
         return int(h) * 60 + int(mi) - 570  # 570 = 9*60+30 (开盘分钟)
-    except:
+    except (ValueError, AttributeError):  # v6.13.5: 窄化裸except
         return None
 
 
