@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.13.8
+# A股短线筛选 — 历史回测模块 v6.13.10
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # ============================================================
@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 # v6.12.24: 独立SSL上下文，解除对主脚本全局opener的依赖
 _BT_SSL_CTX = ssl._create_unverified_context()
 
-# 策略止损/止盈比例（与主脚本 _STRATEGY_STOP_LOSS / _STRATEGY_TAKE_PROFIT 一致）v6.13.8: 同步主脚本
+# 策略止损/止盈比例（与主脚本 _STRATEGY_STOP_LOSS / _STRATEGY_TAKE_PROFIT 一致）v6.13.10: 同步主脚本
 _STRATEGY_STOP_LOSS = {
     'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965,
     'F': 0.965, 'G': 0.95, 'H': 0.94, 'I': 0.95, 'J': 0.94,
@@ -81,7 +81,7 @@ def _fetch_kline_range(code, start_date, lmt=15):
             print(f"  [回测K线] 腾讯HTTP失败 {code}: {str(e)[:60]}")
 
     # 二级降级: iTick API
-    itick_key = os.environ.get("ITICK_API_KEY", "")  # v6.13.8: 移除硬编码默认值
+    itick_key = os.environ.get("ITICK_API_KEY", "")  # v6.13.10: 移除硬编码默认值
     if itick_key:
         try:
             region = 'SH' if code.startswith('6') else 'SZ'
@@ -185,7 +185,7 @@ def _compute_metrics(trades):
 
     profit_factor = abs(avg_win / avg_loss) if avg_loss != 0 and wins and losses else 0
 
-    # v6.13.8: 最大回撤从峰值计算（而非累计重置），更准确反映风险
+    # v6.13.10: 最大回撤从峰值计算（而非累计重置），更准确反映风险
     max_dd = 0.0; peak = 0.0; cum = 0.0
     for t in trades:
         cum += t['return_pct']
@@ -196,7 +196,7 @@ def _compute_metrics(trades):
     returns = [t['return_pct'] for t in trades]
     if len(returns) > 1:
         avg_r = sum(returns) / len(returns)
-        variance = sum((r - avg_r) ** 2 for r in returns) / (len(returns) - 1)  # v6.13.8: 样本方差N-1
+        variance = sum((r - avg_r) ** 2 for r in returns) / (len(returns) - 1)  # v6.13.10: 样本方差N-1
         std = variance ** 0.5
         sharpe = avg_r / std if std > 0 else 0
     else:
@@ -228,14 +228,14 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         print("  无推荐历史记录，跳过回测")
         return {'all_trades': [], 'metrics': {}, 'strategy_metrics': {}, 'industry_metrics': {}}
 
-    today = datetime.now() + timedelta(hours=8)  # v6.13.8: 北京时间（与主脚本一致）
+    today = datetime.now() + timedelta(hours=8)  # v6.13.10: 北京时间（与主脚本一致）
     cutoff = today - timedelta(days=max_days_lookback)
     # v6.13.10: 预测日=买入日(盘前预测当日买入)，仅排除当天(尚无收盘K线)
     history = [h for h in history
                if h.get('prediction_date') and h['prediction_date'] >= cutoff.strftime('%Y-%m-%d')
                and h['prediction_date'] < today.strftime('%Y-%m-%d')]
 
-    # v6.13.8: 去重key改为(code,date,strategy,entry)，保留同股票不同策略的推荐
+    # v6.13.10: 去重key改为(code,date,strategy,entry)，保留同股票不同策略的推荐
     seen = set()
     unique_history = []
     for h in history:
@@ -248,7 +248,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     print(f"  推荐历史: {len(history)} 条")
 
     code_kline_cache = {}
-    # v6.13.8: 按 (code, prediction_date) 分别拉取K线，而非仅取最新pred_date
+    # v6.13.10: 按 (code, prediction_date) 分别拉取K线，而非仅取最新pred_date
     # 避免同一code多次推荐时，早期交易使用错误K线区间
     codes_to_fetch = set((h.get('code', ''), h.get('prediction_date', '')) for h in history)
     print(f"  获取后续K线: {len(codes_to_fetch)} 个(代码,日期)组合...")
@@ -328,7 +328,7 @@ def generate_backtest_report(bt_result, output_path=None):
             f.write('# 历史回测报告\n\n暂无回测数据。\n\n## 回测说明\n\n- 回测使用最近90天推荐历史。\n- 单笔最大持仓10个交易日。\n- 按推荐时的进场、止损、止盈价格进行模拟。\n- 遵循A股T+1规则，买入当日不检查止盈止损出场。\n- 回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。\n')
         return output_path
 
-    today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.8: 北京时间
+    today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.10: 北京时间
     lines = [
         f"# A股短线筛选 — 历史回测报告",
         f"",
@@ -396,7 +396,7 @@ def generate_backtest_report(bt_result, output_path=None):
     lines.extend([
         "",
         f"> \u26a0\ufe0f 免责声明：回测结果不代表未来表现，仅供参考。",
-        f"> 版本: v6.13.8 | 生成: {today_str}",
+        f"> 版本: v6.13.10 | 生成: {today_str}",
     ])
 
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -445,12 +445,12 @@ def generate_backtest_html(bt_result, output_path=None):
     strategy_metrics = bt_result.get('strategy_metrics', {})
     industry_metrics = bt_result.get('industry_metrics', {})
     trades = bt_result.get('all_trades', [])
-    today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.8: 北京时间
+    today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.10: 北京时间
 
     if not trades:
         html = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>历史回测报告</title>
 <style>body{{font-family:"Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif;max-width:900px;margin:40px auto;padding:20px;background:#f8fafc;color:#1e293b}}h1{{color:#2563eb}}</style></head>
-<body><h1>历史回测报告</h1><p>暂无回测数据。</p><h2>回测说明</h2><ul><li>回测使用最近90天推荐历史。</li><li>单笔最大持仓10个交易日。</li><li>按推荐时的进场、止损、止盈价格进行模拟。</li><li>遵循A股T+1规则，买入当日不检查止盈止损出场。</li><li>回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。</li></ul><p style="color:#94a3b8">版本: v6.13.8 | 生成: {today_str}</p></body></html>'''
+<body><h1>历史回测报告</h1><p>暂无回测数据。</p><h2>回测说明</h2><ul><li>回测使用最近90天推荐历史。</li><li>单笔最大持仓10个交易日。</li><li>按推荐时的进场、止损、止盈价格进行模拟。</li><li>遵循A股T+1规则，买入当日不检查止盈止损出场。</li><li>回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。</li></ul><p style="color:#94a3b8">版本: v6.13.10 | 生成: {today_str}</p></body></html>'''
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(html)
         return output_path
@@ -578,7 +578,7 @@ tr:hover td{{background:rgba(56,189,248,0.05)}}
 
 <div class="footer">
 <p>\u26a0\ufe0f \u514d\u8d23\u58f0\u660e\uff1a\u56de\u6d4b\u7ed3\u679c\u4e0d\u4ee3\u8868\u672a\u6765\u8868\u73b0\uff0c\u4ec5\u4f9b\u53c2\u8003\u3002</p>
-<p>\u7248\u672c: v6.13.8 | \u751f\u6210: {today_str}</p>
+<p>\u7248\u672c: v6.13.10 | \u751f\u6210: {today_str}</p>
 </div>
 </div>
 </body>
@@ -610,7 +610,7 @@ def push_backtest_to_feishu(bt_result):
             print("  无回测数据，跳过飞书推送")
             return False
 
-        today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.8: 北京时间
+        today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.10: 北京时间
         pb = "https://lc132.github.io/lv"
         bt_url = f"{pb}/回测报告.html"
 
