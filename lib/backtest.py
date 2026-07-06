@@ -51,37 +51,34 @@ def _safe_read_json(path, default=None):
 
 
 def _fetch_kline_range(code, start_date, lmt=15):
-    """获取指定日期之后N根日K线（东方财富HTTP → iTick降级）"""
+    """v6.13.9: 获取指定日期之后N根日K线（腾讯HTTP → iTick降级）
+    沙箱内东方财富API被阻断，切换为腾讯HTTP作为一级数据源"""
     try:
-        # 一级: 东方财富HTTP
-        mc = '1' if code.startswith('6') else '0'
-        secid = f'{mc}.{code}'
+        # 一级: 腾讯HTTP日K线（与主脚本一致，沙箱可达）
+        mc = 'sh' if code.startswith('6') else 'sz'
         end_dt = datetime.strptime(start_date, '%Y-%m-%d') + timedelta(days=30)
-        end_date = end_dt.strftime('%Y%m%d')
-        url = (f'https://push2his.eastmoney.com/api/qt/stock/kline/get?'
-               f'secid={secid}&fields1=f1,f2,f3,f4,f5,f6&'
-               f'fields2=f51,f52,f53,f54,f55,f56,f57&klt=101&fqt=1&'
-               f'end={end_date}&lmt={lmt}')
-        req = urllib.request.Request(url, headers={
-            'User-Agent': 'Mozilla/5.0',
-            'Referer': 'https://quote.eastmoney.com/'})
+        url = (f'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?'
+               f'param={mc}{code},day,,,{lmt + 15},qfq')
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=8, context=_BT_SSL_CTX) as resp:
             data = json.loads(resp.read().decode())
-        klines = data.get('data', {}).get('klines', [])
-        if klines:
+        days = (data.get('data', {}).get(f'{mc}{code}', {}).get('day', None) or
+                data.get('data', {}).get(f'{mc}{code}', {}).get('qfqday', []))
+        if days:
             result = []
-            for k in klines:
-                parts = k.split(',')
-                result.append({
-                    'date': parts[0], 'open': float(parts[1]),
-                    'close': float(parts[2]), 'high': float(parts[3]),
-                    'low': float(parts[4]), 'volume': float(parts[5]),
-                })
+            for d in days:
+                if isinstance(d, list) and len(d) >= 6:
+                    result.append({
+                        'date': d[0], 'open': float(d[1]),
+                        'close': float(d[2]), 'high': float(d[3]),
+                        'low': float(d[4]), 'volume': float(d[5]),
+                    })
             result = [r for r in result if r['date'] > start_date]
-            return result
+            if result:
+                return result
     except Exception as e:
         if os.environ.get('LV_DEBUG'):
-            print(f"  [回测K线] 东方财富失败 {code}: {str(e)[:60]}")
+            print(f"  [回测K线] 腾讯HTTP失败 {code}: {str(e)[:60]}")
 
     # 二级降级: iTick API
     itick_key = os.environ.get("ITICK_API_KEY", "")  # v6.13.8: 移除硬编码默认值
@@ -233,11 +230,10 @@ def run_backtest(hold_days=10, max_days_lookback=90):
 
     today = datetime.now() + timedelta(hours=8)  # v6.13.8: 北京时间（与主脚本一致）
     cutoff = today - timedelta(days=max_days_lookback)
-    # v6.13.8: T+2规则 — 预测日至少2天前，确保T+1买入后有≥1个完整交易日数据
-    t2_boundary = (today - timedelta(days=2)).strftime('%Y-%m-%d')
+    # v6.13.9: 预测日=买入日(盘前预测当日买入)，仅排除当天(尚无收盘K线)
     history = [h for h in history
                if h.get('prediction_date') and h['prediction_date'] >= cutoff.strftime('%Y-%m-%d')
-               and h['prediction_date'] < t2_boundary]
+               and h['prediction_date'] < today.strftime('%Y-%m-%d')]
 
     # v6.13.8: 去重key改为(code,date,strategy,entry)，保留同股票不同策略的推荐
     seen = set()
