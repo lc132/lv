@@ -51,7 +51,7 @@ def _safe_read_json(path, default=None):
 
 
 def _fetch_kline_range(code, start_date, lmt=15):
-    """v6.13.9: 获取指定日期之后N根日K线（腾讯HTTP → iTick降级）
+    """v6.13.10: 获取指定日期之后N根日K线（腾讯HTTP → iTick降级）
     沙箱内东方财富API被阻断，切换为腾讯HTTP作为一级数据源"""
     try:
         # 一级: 腾讯HTTP日K线（与主脚本一致，沙箱可达）
@@ -230,7 +230,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
 
     today = datetime.now() + timedelta(hours=8)  # v6.13.8: 北京时间（与主脚本一致）
     cutoff = today - timedelta(days=max_days_lookback)
-    # v6.13.9: 预测日=买入日(盘前预测当日买入)，仅排除当天(尚无收盘K线)
+    # v6.13.10: 预测日=买入日(盘前预测当日买入)，仅排除当天(尚无收盘K线)
     history = [h for h in history
                if h.get('prediction_date') and h['prediction_date'] >= cutoff.strftime('%Y-%m-%d')
                and h['prediction_date'] < today.strftime('%Y-%m-%d')]

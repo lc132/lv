@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.9
-37步完整执行流程 | 腾讯一级 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 空K线三级降级 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化
+A股每日盘前短线标的智能筛选 v6.13.10
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,7 +22,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.9"
+BUILTIN_VERSION = "v6.13.10"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -1538,7 +1538,7 @@ def _fetch_single_kline_tencent(c):
 
 # ============================================================
 # 步骤10C-三级备选：iTick HTTP K线拉取（v6.12.15新增）
-# pytdx和东方财富HTTP均不可达时，使用iTick API作为第三级降级
+# v6.13.10: 腾讯HTTP不可达时，iTick作为二级降级
 # ============================================================
 _ITICK_API_KEY = os.environ.get("ITICK_API_KEY", "")  # v6.13.5: 移除硬编码默认值
 _ITICK_BASE_URL = "https://api-free.itick.org"  # 生产环境；免费版可用 https://api-free.itick.org
@@ -3912,7 +3912,7 @@ def step21_final_verify(mp, fc):
         log_alert("ERROR", "数量校验", "MD文件不存在")
 
 def step22_write_history(candidates):
-    """v6.13.9: 去重写入——按(code,strategy,entry)去重，避免多次运行重复追加"""
+    """v6.13.10: 去重写入——按(code,strategy,entry)去重，避免多次运行重复追加"""
     hf = f"/workspace/推荐历史_{data_date.replace('-', '')}.json"
     existing = safe_read_json(hf)
     existing_keys = set()
@@ -4097,17 +4097,13 @@ def main():
     total_raw = len(raw_pool)
     print(f"  原始池: {total_raw}只")
     
-    print("\n[步骤10C] 历史K线..."); kline_data = step10C_fetch_klines(raw_pool)  # v6.9.43: 传入raw_pool而非all_stocks[:500]
-    # v6.12.5: pytdx失败时自动降级到东方财富HTTP K线API
+    # v6.13.10: 跳过pytdx(沙箱内始终不可达)，腾讯HTTP一级 → iTick二级
+    print("\n[步骤10C] 历史K线..."); kline_data = step10C_fetch_klines_http(raw_pool)
     valid_kline = sum(1 for v in kline_data.values() if v and v.get('closes'))
-    if valid_kline < len(raw_pool) * 0.5:
-        log_alert("WARNING", "K线降级", f"pytdx仅{valid_kline}只有效({valid_kline}/{len(raw_pool)})，切换到东方财富HTTP")
-        kline_data = step10C_fetch_klines_http(raw_pool)  # v6.12.5: HTTP备选方案
-    # v6.12.15: 东方财富HTTP也失败时，三级降级到iTick API
-    valid_kline2 = sum(1 for v in kline_data.values() if v and v.get('closes'))
-    if valid_kline2 < len(raw_pool) * 0.5:
-        log_alert("WARNING", "K线降级", f"东方财富HTTP仅{valid_kline2}只有效({valid_kline2}/{len(raw_pool)})，切换到iTick API")
-        kline_data = step10C_fetch_klines_itick(raw_pool)  # v6.12.15: iTick三级备选
+    if valid_kline < len(raw_pool) * 0.3:
+        kline_data = step10C_fetch_klines_itick(raw_pool)
+        valid_kline = sum(1 for v in kline_data.values() if v and v.get('closes'))
+        log_alert("WARNING", "K线降级", f"腾讯HTTP仅{valid_kline}只有效，已切换iTick")
     
     print("\n[步骤11] 硬排除..."); ael, _, er = step11_hard_exclude(raw_pool, ahc, kline_data, pledge_data, goodwill_data, unlock_data, {}); ae = len(ael)
     print("\n[步骤10E] F10基本面..."); fundamental_data = step10E_fetch_fundamentals(ael)
