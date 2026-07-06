@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.10
+A股每日盘前短线标的智能筛选 v6.13.11
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -22,9 +22,10 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.10"
+BUILTIN_VERSION = "v6.13.11"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
+_beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
 data_date = None; prediction_date = None; pred_yyyymmdd = None
 # 2026年中国A股节假日（非交易日）— 需年初更新
 _CN_HOLIDAYS_2026 = [
@@ -37,6 +38,7 @@ _pl_sorted = []  # v6.12.10: 模块级初始化，防止 NameError
 market_condition = "震荡"; position_pct = 55
 index_data = {}  # 三大指数行情(供HTML使用)
 MIN_POSITION_PCT = 20  # v6.8.7: 全局仓位下限
+_step_status = []  # v6.13.11: 步骤执行状态追踪
 
 def _load_credential(env_key, file_path, fallback=""):
     if env_key in os.environ: return os.environ[env_key]
@@ -47,6 +49,28 @@ def _load_credential(env_key, file_path, fallback=""):
 
 GITHUB_TOKEN = _load_credential("GITHUB_TOKEN", "/workspace/.github_token")
 FEISHU_WEBHOOK = _load_credential("FEISHU_WEBHOOK", "/workspace/.feishu_webhook")
+
+# v6.13.11: 步骤执行状态追踪
+def record_step_status(step_name, status, detail=""):
+    """记录步骤执行状态: status='OK'|'SKIP'|'WARN'|'FAIL'"""
+    _step_status.append({"step": step_name, "status": status, "detail": detail})
+
+def print_step_status_summary():
+    """打印步骤执行状态摘要"""
+    if not _step_status: return
+    print("\n" + "="*60)
+    print("📋 步骤执行状态报告")
+    print("="*60)
+    for s in _step_status:
+        icon = {"OK": "✅", "SKIP": "⏭️", "WARN": "⚠️", "FAIL": "❌"}.get(s["status"], "❓")
+        detail = f" — {s['detail']}" if s['detail'] else ""
+        print(f"  {icon} {s['step']}{detail}")
+    ok_count = sum(1 for s in _step_status if s['status'] == 'OK')
+    warn_count = sum(1 for s in _step_status if s['status'] == 'WARN')
+    fail_count = sum(1 for s in _step_status if s['status'] == 'FAIL')
+    skip_count = sum(1 for s in _step_status if s['status'] == 'SKIP')
+    print(f"  合计: 通过{ok_count} 警告{warn_count} 跳过{skip_count} 失败{fail_count}")
+    print("="*60)
 
 # v6.9.34: 东方财富HTTP行业分类（替代Baostock TCP，解决沙箱网络限制）
 INDUSTRY_CACHE_FILE = "/workspace/行业缓存.json"
@@ -293,7 +317,7 @@ def fetch_tencent_single(code):
 # 步骤0：北京时间
 # ============================================================
 def step0_get_beijing_time():
-    global beijing_now, beijing_date, beijing_weekday, data_date, prediction_date, pred_yyyymmdd
+    global beijing_now, beijing_date, beijing_weekday, data_date, prediction_date, pred_yyyymmdd, _beijing_api_ok
     for api_url in ['https://timeapi.io/api/time/current/zone?timeZone=Asia/Shanghai',
                      'https://worldtimeapi.org/api/timezone/Asia/Shanghai',
                      'http://worldclockapi.com/api/json/cst/now']:
@@ -310,6 +334,7 @@ def step0_get_beijing_time():
                 date_part, frac = dt_str.split('.')
                 dt_str = date_part + '.' + frac[:6]
             beijing_now = datetime.fromisoformat(dt_str)
+            _beijing_api_ok = True
             break
         except (urllib.error.URLError, json.JSONDecodeError, ValueError, OSError): continue
     if beijing_now is None:
@@ -451,7 +476,7 @@ def step3_external_markets():
             log_alert("WARNING", "外围市场", f"新浪API {api_failures}/3 不可达，跳过美股检测")
             all_down = False  # 数据不可达时不触发弱市
         if all_down: position_pct = min(position_pct, 30); market_condition = "弱市(美股暴跌)"
-    except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError): pass
+    except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError, ModuleNotFoundError, ImportError): pass
 
 def step3A_domestic_index_check():
     """v6.8.7: 原名step3A_premarket_futures，实际使用深证成指作为大盘强弱代理指标"""
@@ -660,7 +685,7 @@ def step8_market_environment():
         finally:
             try: api.disconnect()
             except Exception: log_alert("DEBUG", "大盘环境", "api.disconnect()失败")
-    except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError): pass
+    except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError, ModuleNotFoundError, ImportError): pass
     # 降级：根据涨跌判断（仅在pytdx未设置时生效）
     if not idx:
         market_condition = "震荡"; position_pct = 55
@@ -1449,7 +1474,8 @@ def step10C_fetch_klines_http(candidates):
                     code = futures[f].get('code', '')
                     try:
                         kline_data[code] = f.result()
-                    except Exception: log_alert("DEBUG", "K线HTTP", f"{code} 并发任务异常");
+                    except Exception:
+                        log_alert("DEBUG", "K线HTTP", f"{code} 并发任务异常")
                         kline_data[code] = {}
             time.sleep(0.3)  # 批次间间隔，避免频率限制
         valid_count = sum(1 for v in kline_data.values() if v and v.get('closes'))
@@ -1538,7 +1564,7 @@ def _fetch_single_kline_tencent(c):
 
 # ============================================================
 # 步骤10C-三级备选：iTick HTTP K线拉取（v6.12.15新增）
-# v6.13.10: 腾讯HTTP不可达时，iTick作为二级降级
+# v6.13.11: 腾讯HTTP不可达时，iTick作为二级降级
 # ============================================================
 _ITICK_API_KEY = os.environ.get("ITICK_API_KEY", "")  # v6.13.5: 移除硬编码默认值
 _ITICK_BASE_URL = "https://api-free.itick.org"  # 生产环境；免费版可用 https://api-free.itick.org
@@ -2512,7 +2538,7 @@ def step17_industry_limit(candidates):
     return final
 
 def step18_news_screening(candidates):
-    """步骤18：新闻筛查 — 四源并行（东方财富+Bing+巨潮资讯网+财联社），v6.9.56"""
+    """步骤18：新闻筛查 — 四源并行（东方财富+Bing+巨潮资讯网+财联社）+ 逐源状态追踪，v6.13.11"""
     if not candidates:
         return candidates, 0
     
@@ -2534,6 +2560,10 @@ def step18_news_screening(candidates):
         '减持完毕', '解除异常', '无违规'
     ]
     
+    # v6.13.11: 源级别状态追踪
+    _src_status = {'eastmoney': {'ok': 0, 'fail': 0}, 'bing': {'ok': 0, 'fail': 0},
+                   'cninfo': {'ok': 0, 'fail': 0}, 'cls': {'ok': 0, 'fail': 0}}
+    
     def _check_eastmoney(code, name):
         try:
             market = '1' if code.startswith('6') else '0'
@@ -2551,7 +2581,29 @@ def step18_news_screening(candidates):
                         if kw not in title: continue
                         if not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
                             return ('eastmoney', kw)
-        except Exception: log_alert("DEBUG", "新闻筛查", "东方财富源异常")
+        except Exception:
+            _src_status['eastmoney']['fail'] += 1
+        return None
+    
+    def _check_eastmoney_jsonp(code, name):
+        """v6.13.11: 东方财富JSONP备选接口（替代push2 API）"""
+        try:
+            market = '1' if code.startswith('6') else '0'
+            url = f'https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&page_size=5&page_index=1&ann_type=A&client_source=web&stock_list={market},{code}'
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0',
+                'Referer': 'https://data.eastmoney.com/'
+            })
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                items = data.get('data', {}).get('list', [])
+                for item in items:
+                    title = (item.get('title', '') or '') + (item.get('summary', '') or '')
+                    for kw in NEGATIVE_KW:
+                        if kw in title and not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
+                            return ('eastmoney_v2', kw)
+        except Exception:
+            pass
         return None
     
     def _check_bing(code, name):
@@ -2571,7 +2623,30 @@ def step18_news_screening(candidates):
                     if name not in ctx and code not in ctx: continue
                     if not any(neg in ctx for neg in FALSE_POSITIVE_NEGATORS):
                         return ('bing', kw)
-        except Exception: log_alert("DEBUG", "新闻筛查", "Bing源异常")
+        except Exception:
+            _src_status['bing']['fail'] += 1
+        return None
+    
+    def _check_baidu(code, name):
+        """v6.13.11: 百度搜索备选（Bing不可达时降级）"""
+        try:
+            query = f'{name} {code} 利空 公告'
+            url = f'https://www.baidu.com/s?wd={urllib.parse.quote(query)}'
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept-Language': 'zh-CN,zh;q=0.9'
+            })
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                html_text = resp.read().decode('utf-8', errors='ignore')
+                for kw in NEGATIVE_KW:
+                    if kw not in html_text: continue
+                    kw_pos = html_text.find(kw)
+                    ctx = html_text[max(0,kw_pos-300):min(len(html_text),kw_pos+300)]
+                    if name not in ctx and code not in ctx: continue
+                    if not any(neg in ctx for neg in FALSE_POSITIVE_NEGATORS):
+                        return ('baidu', kw)
+        except Exception:
+            pass
         return None
     
     def _check_cninfo(code, name):
@@ -2618,7 +2693,8 @@ def step18_news_screening(candidates):
                         for kw in NEGATIVE_KW:
                             if kw in title and not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
                                 return ('cninfo', kw)
-        except Exception: log_alert("DEBUG", "新闻筛查", "巨潮资讯源异常")
+        except Exception:
+            _src_status['cninfo']['fail'] += 1
         return None
     
     def _check_cls(code, name):
@@ -2644,7 +2720,8 @@ def step18_news_screening(candidates):
                     for kw in NEGATIVE_KW:
                         if kw in content and not any(neg in content for neg in FALSE_POSITIVE_NEGATORS):
                             return ('cls', kw)
-        except Exception: log_alert("DEBUG", "新闻筛查", "财联社源异常")
+        except Exception:
+            _src_status['cls']['fail'] += 1
         return None
     
     excluded = []
@@ -2654,35 +2731,62 @@ def step18_news_screening(candidates):
     
     to_check = [c for c in candidates if c.get('code', '') in top_codes]
     skip = [c for c in candidates if c.get('code', '') not in top_codes]
+    for c in skip:
+        c['_news_checked'] = False
+        c['_news_skip_reason'] = '评分不足前30'
     passed.extend(skip)
+    
+    # v6.13.11: 主源不可用时自动降级备选源
+    _checkers = [
+        _check_eastmoney,   # 主: 东方财富push2
+        _check_eastmoney_jsonp,  # 备: 东方财富公告API
+        _check_bing,        # 主: Bing搜索
+        _check_baidu,       # 备: 百度搜索
+        _check_cninfo,      # 主: 巨潮资讯
+        _check_cls,         # 主: 财联社
+    ]
     
     for c in to_check:
         code = c.get('code', '')
         name = c.get('name', '')
         has_neg = False
         neg_reason = ''
+        any_source_ok = False
         
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = {
-                executor.submit(_check_eastmoney, code, name): 'eastmoney',
-                executor.submit(_check_bing, code, name): 'bing',
-                executor.submit(_check_cninfo, code, name): 'cninfo',
-                executor.submit(_check_cls, code, name): 'cls',
-            }
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures = {executor.submit(checker, code, name): checker.__name__ for checker in _checkers}
             for future in as_completed(futures):
                 result = future.result()
                 if result is not None:
                     source, kw = result
+                    any_source_ok = True
                     has_neg = True
-                    neg_reason = f"{source}:{kw}" if source != 'eastmoney' else kw
+                    neg_reason = f"{source}:{kw}" if source not in ('eastmoney', 'eastmoney_v2') else kw
                     for f in futures: f.cancel()
                     break
+        
+        c['_news_checked'] = any_source_ok or (not has_neg)  # 至少有一个源返回了结果
         
         if has_neg:
             c['_news_reason'] = neg_reason
             excluded.append(c)
         else:
             passed.append(c)
+    
+    # v6.13.11: 源状态汇总报告
+    src_report = []
+    for src, status in _src_status.items():
+        if status['fail'] > 0:
+            src_report.append(f"{src}: {status['fail']}次失败")
+    if src_report:
+        log_alert("WARNING", "新闻筛查", f"源异常: {'; '.join(src_report)}")
+    
+    # v6.13.11: 统计未检查标的
+    unchecked = [c for c in passed if c.get('code', '') in top_codes and not c.get('_news_checked', True)]
+    if unchecked:
+        unchecked_names = ', '.join(f"{c.get('name','?')}({c.get('code','?')})" for c in unchecked[:5])
+        if len(unchecked) > 5: unchecked_names += f" 等{len(unchecked)}只"
+        log_alert("WARNING", "新闻筛查", f"⚠️ {len(unchecked)}只标的未通过任何新闻源检查: {unchecked_names}")
     
     nex = len(excluded)
     if nex > 0:
@@ -2691,6 +2795,12 @@ def step18_news_screening(candidates):
         log_alert("WARNING", "新闻筛查", f"排除{nex}只: {details}")
     else:
         log_alert("INFO", "新闻筛查", "全部通过，未发现利空")
+    
+    # v6.13.11: 添加步骤执行摘要
+    checked_count = sum(1 for c in passed if c.get('_news_checked', False))
+    skipped_count = len(skip)
+    print(f"  新闻筛查: 检查{len(to_check)}只 → 排除{nex}只, 评分不足跳过{skipped_count}只, 源可用{checked_count}只")
+    
     return passed, nex
 # ============================================================
 def step18B_top10_enrichment(candidates):
@@ -3912,7 +4022,7 @@ def step21_final_verify(mp, fc):
         log_alert("ERROR", "数量校验", "MD文件不存在")
 
 def step22_write_history(candidates):
-    """v6.13.10: 去重写入——按(code,strategy,entry)去重，避免多次运行重复追加"""
+    """v6.13.11: 去重写入——按(code,strategy,entry)去重，避免多次运行重复追加"""
     hf = f"/workspace/推荐历史_{data_date.replace('-', '')}.json"
     existing = safe_read_json(hf)
     existing_keys = set()
@@ -4049,31 +4159,40 @@ def main():
     
     print("\n[步骤0] 北京时间..."); step0_get_beijing_time()
     print(f"  Beijing={beijing_date} Data={data_date} Pred={prediction_date}")
-    
+    record_step_status("步骤0: 北京时间", "OK" if beijing_date else "WARN", "API降级为系统时间" if not _beijing_api_ok else "")
+
     print("\n[步骤0A] 拉取持仓..."); step0A_pull_holdings()
-    
+    record_step_status("步骤0A: 持仓拉取", "OK")
+
     print("\n[步骤1] 节假日...")
-    if step1_holiday_check(): print("  节假日跳过"); return
-    
+    if step1_holiday_check(): print("  节假日跳过"); record_step_status("步骤1: 节假日", "SKIP", "今日为节假日"); return
+    record_step_status("步骤1: 节假日", "OK")
+
     print("\n[步骤2] 极端行情...")
-    if step2_extreme_market(): print("  极端行情跳过"); return
-    
+    if step2_extreme_market(): print("  极端行情跳过"); record_step_status("步骤2: 极端行情", "SKIP", "触发极端行情保护"); return
+    record_step_status("步骤2: 极端行情", "OK")
+
     print("\n[步骤3] 外围市场..."); step3_external_markets()
+    record_step_status("步骤3: 外围市场", "OK")
+
     print("\n[步骤3A] 大盘代理..."); step3A_domestic_index_check()
+    record_step_status("步骤3A: 大盘代理", "OK")
     
     print("\n[步骤4] 持仓行情..."); holdings = step4_holdings_sync()
     ahc = set(h.get('code') for h in holdings if h.get('code'))
     print(f"  持仓: {len(holdings)}只")
-    
+    record_step_status("步骤4: 持仓行情", "OK" if holdings else "SKIP", "无持仓" if not holdings else "")
+
     print("\n[步骤4A] 做T评估..."); step4A_doT_eval(holdings)
     print("\n[步骤4B] 持仓跟踪..."); step4B_sync_holdings_xlsx(holdings)
     print("\n[步骤4C] 持仓危机..."); crisis_alerts = step4C_crisis_check(holdings)
-    
+
     print("\n[步骤5] 清理..."); step5_history_clean()
     print("\n[步骤6] 初始化..."); step6_file_init()
     print("\n[步骤7] 财报季..."); step7_earnings_season()
     print("\n[步骤8] 大盘环境..."); step8_market_environment()
     print(f"  环境: {market_condition} | 仓位: {position_pct}%")
+    record_step_status("步骤8: 大盘环境", "OK", f"{market_condition} {position_pct}%")
     
     print("\n[步骤10A] 全市场拉取..."); all_stocks, ds = step10A_fetch_all_stocks()
     update_data_source_monitor(ds)
@@ -4096,14 +4215,16 @@ def main():
     raw_pool = raw_pool[:500]
     total_raw = len(raw_pool)
     print(f"  原始池: {total_raw}只")
-    
-    # v6.13.10: 跳过pytdx(沙箱内始终不可达)，腾讯HTTP一级 → iTick二级
+    record_step_status("步骤10A: 全市场拉取", "OK", f"{total_raw}只")
+
+    # v6.13.11: 跳过pytdx(沙箱内始终不可达)，腾讯HTTP一级 → iTick二级
     print("\n[步骤10C] 历史K线..."); kline_data = step10C_fetch_klines_http(raw_pool)
     valid_kline = sum(1 for v in kline_data.values() if v and v.get('closes'))
     if valid_kline < len(raw_pool) * 0.3:
         kline_data = step10C_fetch_klines_itick(raw_pool)
         valid_kline = sum(1 for v in kline_data.values() if v and v.get('closes'))
         log_alert("WARNING", "K线降级", f"腾讯HTTP仅{valid_kline}只有效，已切换iTick")
+    record_step_status("步骤10C: 历史K线", "OK", f"{valid_kline}有效")
     
     print("\n[步骤11] 硬排除..."); ael, _, er = step11_hard_exclude(raw_pool, ahc, kline_data, pledge_data, goodwill_data, unlock_data, {}); ae = len(ael)
     print("\n[步骤10E] F10基本面..."); fundamental_data = step10E_fetch_fundamentals(ael)
@@ -4124,6 +4245,7 @@ def main():
     print("\n[步骤18B] TOP10龙虎榜+正面新闻..."); step18B_top10_enrichment(ail)
     print("\n[步骤19] 降级..."); final = step19_shortfall_handling(ail); fc = len(final)
     sd = Counter(c.get('strategy') for c in final)
+    record_step_status("步骤19: 降级", "OK", f"最终{fc}只")
     
     # 注入二级行业到候选
     for c in final: c['business'] = sub_industry_data.get(c.get('code', ''), '')
@@ -4172,14 +4294,22 @@ def main():
             generate_backtest_html(bt_result, "/workspace/回测报告.html")
             push_backtest_to_feishu(bt_result)
             bt_lookup = _build_backtest_lookup(bt_result)
+        record_step_status("步骤25: 历史回测", "OK", f"{len(bt_result.get('all_trades',[]))}笔交易")
+    else:
+        record_step_status("步骤25: 历史回测", "SKIP", "无推荐历史记录")
 
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup)
+    record_step_status("步骤20: Markdown", "OK", mp)
     print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report, bt_lookup, kline_data); hd = os.path.dirname(hp)
+    record_step_status("步骤20B: HTML报告", "OK", hp)
     print("\n[步骤21] 验证..."); step21_final_verify(mp, fc)
+    record_step_status("步骤21: 最终验证", "OK", f"{fc}只通过")
     if beijing_weekday in (5, 6):
         print("\n[步骤22] 推荐历史... 周末跳过")
+        record_step_status("步骤22: 推荐历史", "SKIP", "周末")
     else:
         print("\n[步骤22] 推荐历史..."); step22_write_history(final)
+        record_step_status("步骤22: 推荐历史", "OK", f"{fc}条")
     print("\n" + "=" * 60)
     print("📊 筛选概况")
     print("=" * 60)
@@ -4195,7 +4325,13 @@ def main():
         for a in crisis_alerts: print(f"  {a}")
     
     print("\n[步骤26] GitHub同步..."); step26_github_sync(mp, hd, final)
+    record_step_status("步骤26: GitHub同步", "OK")
     print("\n[步骤27] 飞书推送..."); step27_feishu_push(final, total_raw, ae, asig, astr, aind, anew, sd)
+    record_step_status("步骤27: 飞书推送", "OK")
+    
+    # v6.13.11: 步骤执行状态报告
+    print_step_status_summary()
+    
     print(f"\n✅ 完成！ {mp}")
     return final, mp
 
