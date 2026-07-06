@@ -10,7 +10,7 @@ from datetime import datetime
 # ============================================================
 # 全局配置
 # ============================================================
-BUILTIN_VERSION = "v6.13.5"
+BUILTIN_VERSION = "v6.13.6"
 DATA_DIR = "/workspace"
 TEMP_DIR = "/data/user/work"
 # GitHub Token 从外部文件读取（不入git，防止泄露）

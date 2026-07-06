@@ -22,7 +22,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.5"
+BUILTIN_VERSION = "v6.13.6"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -3300,7 +3300,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         funnel_html += f'<div class="funnel-step {cls}" style="width:{w}%">{name}: {count}只</div>'
     
     strat_bars = ""
-    for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']:
+    for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T']:
         cnt = sd.get(s, 0)
         if cnt > 0:
             bp = cnt / max(max(sd.values()), 1) * 100

@@ -79,7 +79,13 @@ def step20_output_markdown(ctx):
         )
     
     lines.append("")
-    lines.append(f"📊 共筛选出 **{len(candidates)}** 只标的（A动量:{strategy_counts.get('A',0)} B超跌:{strategy_counts.get('B',0)} C事件:{strategy_counts.get('C',0)} D回调:{strategy_counts.get('D',0)} E资金:{strategy_counts.get('E',0)}）")
+    strategy_labels_short = {'A': '动量', 'B': '超跌', 'C': '事件', 'D': '回调', 'E': '资金', 'F': '北向', 'G': '横盘', 'H': '地量', 'I': '均线', 'J': '龙回头', 'K': '缺口', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底', 'R': '主力共振(强)', 'S': '主力共振(弱)', 'T': '主力观察'}
+    strategy_parts = []
+    for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T']:
+        cnt = strategy_counts.get(s, 0)
+        if cnt > 0:
+            strategy_parts.append(f"{s}{strategy_labels_short.get(s, '')}:{cnt}")
+    lines.append(f"📊 共筛选出 **{len(candidates)}** 只标的（{' '.join(strategy_parts)}）")
     lines.append("")
     
     # 策略说明
@@ -181,7 +187,7 @@ def step20B_html_report(ctx):
     # 策略分布条形图
     total = len(candidates) or 1
     seg_bars = ""
-    for s in ['A', 'B', 'C', 'D', 'E']:
+    for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T']:
         cnt = strategy_counts.get(s, 0)
         pct = cnt / total * 100
         if pct > 0:
@@ -200,7 +206,7 @@ def step20B_html_report(ctx):
     strategy_count_bars = ""
     if strategy_counts:
         max_s = max(strategy_counts.values()) or 1
-        for s in ['A', 'B', 'C', 'D', 'E']:
+        for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T']:
             cnt = strategy_counts.get(s, 0)
             if cnt > 0:
                 pct = cnt / max_s * 100
@@ -344,7 +350,7 @@ td {{ padding:8px; text-align:center; border-bottom:1px solid #e0e0e0; white-spa
             <h3>策略分布</h3>
             <div class="seg-bar">{seg_bars}</div>
             <div class="legend">
-                {''.join(f'<div class="legend-item"><span class="legend-dot" style="background:{strategy_colors[s]}"></span>{s}: {strategy_counts.get(s,0)}只 ({strategy_counts.get(s,0)/total*100:.0f}%)</div>' for s in ['A','B','C','D','E'] if strategy_counts.get(s,0) > 0)}
+                {''.join(f'<div class="legend-item"><span class="legend-dot" style="background:{strategy_colors[s]}"></span>{s}: {strategy_counts.get(s,0)}只 ({strategy_counts.get(s,0)/total*100:.0f}%)</div>' for s in ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T'] if strategy_counts.get(s,0) > 0)}
             </div>
         </div>
         <div class="chart-card">
