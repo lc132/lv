@@ -613,7 +613,7 @@ def push_backtest_to_feishu(bt_result):
 
         today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.10: 北京时间
         pb = "https://lc132.github.io/lv"
-        bt_url = f"{pb}/回测报告.html"
+        bt_url = f"{pb}/backtest/"
 
         # 策略TOP3（按胜率）
         strategy_metrics = bt_result.get('strategy_metrics', {})
