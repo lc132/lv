@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.12
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化
+A股每日盘前短线标的智能筛选 v6.13.13
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测no_entry警告
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,7 +22,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.12"
+BUILTIN_VERSION = "v6.13.13"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -2569,7 +2569,8 @@ def step18_news_screening(candidates):
     
     # v6.13.11: 源级别状态追踪
     _src_status = {'eastmoney': {'ok': 0, 'fail': 0}, 'bing': {'ok': 0, 'fail': 0},
-                   'cninfo': {'ok': 0, 'fail': 0}, 'cls': {'ok': 0, 'fail': 0}}
+                   'cninfo': {'ok': 0, 'fail': 0}, 'cls': {'ok': 0, 'fail': 0},
+                   'xueqiu': {'ok': 0, 'fail': 0}}
     
     def _check_eastmoney(code, name):
         try:
@@ -2731,6 +2732,39 @@ def step18_news_screening(candidates):
             _src_status['cls']['fail'] += 1
         return None
     
+    def _check_xueqiu(code, name):
+        """v6.13.13: 雪球个股讨论 — 搜索近期讨论中的利空关键词"""
+        try:
+            # 雪球页面通过WebFetch预缓存 — 读取缓存文件
+            cache_path = os.path.join('/workspace', 'xueqiu_news_cache.json')
+            if not os.path.exists(cache_path):
+                _src_status['xueqiu'] = _src_status.get('xueqiu', {'ok': 0, 'fail': 0})
+                _src_status['xueqiu']['fail'] += 1
+                return None
+            
+            with open(cache_path, 'r') as f:
+                cache = json.loads(f.read())
+            
+            if code not in cache:
+                _src_status['xueqiu'] = _src_status.get('xueqiu', {'ok': 0, 'fail': 0})
+                _src_status['xueqiu']['fail'] += 1
+                return None
+            
+            posts = cache.get(code, [])
+            _src_status['xueqiu'] = _src_status.get('xueqiu', {'ok': 0, 'fail': 0})
+            _src_status['xueqiu']['ok'] += 1
+            
+            for post in posts:
+                text = post.get('title', '') + ' ' + post.get('text', '')
+                for kw in NEGATIVE_KW:
+                    if kw in text and not any(neg in text for neg in FALSE_POSITIVE_NEGATORS):
+                        return ('xueqiu', kw)
+            return None
+        except Exception:
+            _src_status['xueqiu'] = _src_status.get('xueqiu', {'ok': 0, 'fail': 0})
+            _src_status['xueqiu']['fail'] += 1
+        return None
+    
     excluded = []
     passed = []
     search_limit = min(30, len(candidates))
@@ -2751,6 +2785,7 @@ def step18_news_screening(candidates):
         _check_baidu,       # 备: 百度搜索
         _check_cninfo,      # 主: 巨潮资讯
         _check_cls,         # 主: 财联社
+        _check_xueqiu,      # 备: 雪球讨论
     ]
     
     for c in to_check:
