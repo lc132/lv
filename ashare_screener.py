@@ -4086,8 +4086,13 @@ def step26_github_sync(mp, hd, candidates):
         for f in os.listdir('/workspace'):
             if f.startswith('推荐历史_') and f.endswith('.json'):
                 shutil.copy(os.path.join('/workspace', f), os.path.join(rd, f))
-        # v6.12.15: 同步回测报告
-        for f in ['回测报告.md', '回测报告.html']:
+        # v6.13.13: 同步回测报告到backtest/子目录(GitHub Pages不支持中文文件名)
+        bt_html = os.path.join('/workspace', '回测报告.html')
+        if os.path.exists(bt_html):
+            bt_dir = os.path.join(rd, 'backtest')
+            os.makedirs(bt_dir, exist_ok=True)
+            shutil.copy(bt_html, os.path.join(bt_dir, 'index.html'))
+        for f in ['回测报告.md']:
             fp = os.path.join('/workspace', f)
             if os.path.exists(fp):
                 shutil.copy(fp, os.path.join(rd, f))
