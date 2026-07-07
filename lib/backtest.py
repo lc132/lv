@@ -123,6 +123,13 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
     max_profit = 0.0
     kl = klines[:hold_days]
 
+    # v6.13.13: 限价单可成交性检查 — 当日最低价必须≤进场价
+    if kl[0]['low'] > entry:
+        return {'result': 'no_entry', 'exit_price': entry, 'exit_date': kl[0]['date'],
+                'exit_reason': 'no_entry', 'return_pct': 0, 'hold_days': 0,
+                'max_drawdown_pct': 0, 'max_profit_pct': 0,
+                'day_low': round(kl[0]['low'], 2)}
+
     for i, k in enumerate(kl):
         high_pct = (k['high'] - entry) / entry * 100
         low_pct = (k['low'] - entry) / entry * 100
@@ -423,12 +430,14 @@ def _build_backtest_lookup(bt_result):
         total = len(ts)
         wins = sum(1 for t in ts if t['result'] == 'win')
         losses = sum(1 for t in ts if t['result'] == 'loss')
-        no_data = sum(1 for t in ts if t['result'] == 'no_data')
+        no_data = sum(1 for t in ts if t['result'] in ('no_data', 'no_entry'))
         avg_ret = sum(t['return_pct'] for t in ts) / total if total > 0 else 0
-        valid = [t for t in ts if t['result'] != 'no_data']
+        valid = [t for t in ts if t['result'] not in ('no_data', 'no_entry')]
         last = valid[-1] if valid else ts[-1]
+        no_entry_count = sum(1 for t in ts if t['result'] == 'no_entry')
         lookup[code] = {
             'total': total, 'wins': wins, 'losses': losses, 'no_data': no_data,
+            'no_entry': no_entry_count,
             'avg_return': round(avg_ret, 2),
             'last_result': last['result'], 'last_return': last['return_pct'],
             'last_date': last.get('prediction_date', ''),

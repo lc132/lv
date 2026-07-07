@@ -3247,16 +3247,17 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                     if s_ not in seen: seen.add(s_); uniq_s.append(s_)
                 r7d_str = f"{r7d} ({','.join(uniq_s)})"
             url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
-            # v6.12.15: 回测标记列
+            # v6.13.13: 回测标记列 — 新增no_entry警告
             bt_mark = ''
             if bt_lookup and code in bt_lookup:
                 bt = bt_lookup[code]
                 emoji = '🟢' if bt['last_result'] == 'win' else ('🔴' if bt['last_result'] == 'loss' else '⚪')
-                bt_mark = f'{emoji}{bt["wins"]}/{bt["total"]}'
+                suffix = '⚠️' if bt.get('no_entry', 0) > 0 else ''
+                bt_mark = f'{emoji}{bt["wins"]}/{bt["total"]}{suffix}'
             lines.append(f"| {idx} | {top10_mark} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {h60_str} | {l60_str} | {tier_label} | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} | {pl_ratio} | {bt_mark} |\n")
         lines.append("\n## 回测说明\n")
         lines.append("- **回测列格式**：`图标 + 胜/样本`，例如 `🟢2/2` 表示历史同标的样本2笔、盈利2笔。")
-        lines.append("- **图标含义**：🟢 最近一次样本盈利；🔴 最近一次样本亏损；⚪ 后续K线不足或未形成有效胜负；空白表示无可匹配历史样本。")
+        lines.append("- **图标含义**：🟢 最近一次样本盈利；🔴 最近一次样本亏损；⚪ 后续K线不足或未形成有效胜负；⚠️ 历史有限价单未成交（当日最低价>进场价）；空白表示无可匹配历史样本。")
         lines.append("- **模拟口径**：使用最近90天推荐历史，按推荐表的进场、止损、止盈进行模拟，单笔最大持仓10个交易日。")
         lines.append("- **交易规则**：遵循A股T+1，买入当日不检查止盈止损出场，从下一交易日起判断是否触及止损/止盈。")
         lines.append("- **使用限制**：未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素；样本少时仅作参考，不能代表未来表现。\n")
@@ -3380,12 +3381,13 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
         scl = f"strat_{s.lower()}"
         url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
-        # v6.12.15: 回测标记列 — 修复 no_data 映射为🔴的bug
+        # v6.13.13: 回测标记列 — 新增no_entry警告
         bt_mark = ''
         if bt_lookup and code in bt_lookup:
             bt = bt_lookup[code]
             bt_emoji = "🟢" if bt["last_result"]=="win" else ("🔴" if bt["last_result"]=="loss" else "⚪")
-            bt_mark = f'<span class="{bt["last_result"]}">{bt_emoji}{bt["wins"]}/{bt["total"]}</span>'
+            bt_suffix = ' ⚠️' if bt.get('no_entry', 0) > 0 else ''
+            bt_mark = f'<span class="{bt["last_result"]}">{bt_emoji}{bt["wins"]}/{bt["total"]}{bt_suffix}</span>'
         rows_html += f"""<tr class="{scl}"><td>{idx}</td><td>{top10_mark}</td><td><span class="badge {scl}">{s}</span></td>
         <td><a href="{url}" target="_blank">{html.escape(name)}</a></td><td>{code}</td><td>{ind}</td><td>{html.escape(biz)}</td>
         <td class="{chg_cls}">{chg:+.2f}%</td><td>{op:.2f}</td><td>{close:.2f}</td>
