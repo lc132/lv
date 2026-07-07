@@ -113,7 +113,8 @@ def _fetch_kline_range(code, start_date, lmt=15):
 
 
 def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
-    """模拟单笔交易：盘中触及止损/止盈则出场，否则持有到期"""
+    """模拟单笔交易：盘中触及止损/止盈则出场，否则持有到期
+    v6.13.14: 新增移动止损(盈利达TP50%时保本) + 时间止损(持仓3天仍亏损则离场)"""
     if not klines:
         return {'result': 'no_data', 'exit_price': entry, 'exit_date': '',
                 'exit_reason': 'no_data', 'return_pct': 0, 'hold_days': 0,
@@ -130,6 +131,10 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
                 'max_drawdown_pct': 0, 'max_profit_pct': 0,
                 'day_low': round(kl[0]['low'], 2)}
 
+    # v6.13.14: 移动止损 — 盈利达止盈目标50%时，将止损上移至保本价
+    trailing_active = False
+    trailing_stop = entry  # 保本价
+
     for i, k in enumerate(kl):
         high_pct = (k['high'] - entry) / entry * 100
         low_pct = (k['low'] - entry) / entry * 100
@@ -140,20 +145,50 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
         if i == 0:
             continue
 
-        if k['low'] <= stop_loss:
-            return {
-                'result': 'loss', 'exit_price': stop_loss,
-                'exit_date': k['date'], 'exit_reason': 'stop_loss',
-                'return_pct': round((stop_loss - entry) / entry * 100, 2),
-                'hold_days': i + 1,
-                'max_drawdown_pct': round(max_drawdown, 2),
-                'max_profit_pct': round(max_profit, 2),
-            }
+        # v6.13.14: 移动止损激活 — 当日最高价达到止盈目标的50%
+        if not trailing_active:
+            tp_mid = (entry + take_profit) / 2
+            if k['high'] >= tp_mid:
+                trailing_active = True
+
+        # v6.13.14: 时间止损 — 持仓第3天收盘仍亏损则离场
+        if i >= 3:
+            if k['close'] < entry:
+                return {
+                    'result': 'loss', 'exit_price': round(k['close'], 2),
+                    'exit_date': k['date'], 'exit_reason': 'time_stop',
+                    'return_pct': round((k['close'] - entry) / entry * 100, 2),
+                    'hold_days': i + 1,
+                    'max_drawdown_pct': round(max_drawdown, 2),
+                    'max_profit_pct': round(max_profit, 2),
+                }
+
+        # 出场优先级: 止盈 > 移动止损 > 固定止损
         if k['high'] >= take_profit:
             return {
                 'result': 'win', 'exit_price': take_profit,
                 'exit_date': k['date'], 'exit_reason': 'take_profit',
                 'return_pct': round((take_profit - entry) / entry * 100, 2),
+                'hold_days': i + 1,
+                'max_drawdown_pct': round(max_drawdown, 2),
+                'max_profit_pct': round(max_profit, 2),
+            }
+
+        # 移动止损: 激活后若跌破保本价则离场
+        if trailing_active and k['low'] <= trailing_stop:
+            return {
+                'result': 'win', 'exit_price': trailing_stop,
+                'exit_date': k['date'], 'exit_reason': 'trailing_stop',
+                'return_pct': 0.0, 'hold_days': i + 1,
+                'max_drawdown_pct': round(max_drawdown, 2),
+                'max_profit_pct': round(max_profit, 2),
+            }
+
+        if k['low'] <= stop_loss:
+            return {
+                'result': 'loss', 'exit_price': stop_loss,
+                'exit_date': k['date'], 'exit_reason': 'stop_loss',
+                'return_pct': round((stop_loss - entry) / entry * 100, 2),
                 'hold_days': i + 1,
                 'max_drawdown_pct': round(max_drawdown, 2),
                 'max_profit_pct': round(max_profit, 2),
@@ -182,7 +217,8 @@ def _compute_metrics(trades):
     total = len(trades)
     wins = [t for t in trades if t['result'] == 'win']
     losses = [t for t in trades if t['result'] == 'loss']
-    no_data = [t for t in trades if t['result'] == 'no_data']
+    # v6.13.14: no_entry 与 no_data 同等对待，不计入有效样本
+    no_data = [t for t in trades if t['result'] in ('no_data', 'no_entry')]
 
     win_rate = len(wins) / max(total - len(no_data), 1) * 100 if total > len(no_data) else 0
     avg_return = sum(t['return_pct'] for t in trades) / total if total > 0 else 0
@@ -332,7 +368,7 @@ def generate_backtest_report(bt_result, output_path=None):
 
     if not trades:
         with open(output_path, 'w', encoding='utf-8') as f:
-            f.write('# 历史回测报告\n\n暂无回测数据。\n\n## 回测说明\n\n- 回测使用最近90天推荐历史。\n- 单笔最大持仓10个交易日。\n- 按推荐时的进场、止损、止盈价格进行模拟。\n- 遵循A股T+1规则，买入当日不检查止盈止损出场。\n- 回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。\n')
+            f.write('# 历史回测报告\n\n暂无回测数据。\n\n## 回测说明\n\n- 回测使用最近90天推荐历史。\n- 单笔最大持仓10个交易日。\n- 按推荐时的进场、止损、止盈价格进行模拟。\n- 遵循A股T+1规则，买入当日不检查止盈止损出场。\n- 出场优先级：止盈 > 移动止损(保本) > 固定止损。移动止损盈利达TP50%激活。\n- 持仓3天收盘仍亏损按时间止损离场。\n- 回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。\n')
         return output_path
 
     today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.10: 北京时间
@@ -346,7 +382,7 @@ def generate_backtest_report(bt_result, output_path=None):
         "## 回测说明",
         f"",
         "- **样本来源**：最近90天推荐历史，按当时推荐标的、策略、进场价、止损价、止盈价回放后续K线。",
-        "- **出场规则**：单笔最大持仓10个交易日；若盘中先触及止损或止盈，则按对应价格出场；若到期未触发，则按持仓期末收盘价计算。",
+        "- **出场规则**：单笔最大持仓10个交易日；出场优先级为 止盈 > 移动止损(保本) > 固定止损。移动止损在盈利达止盈目标50%时激活，将止损上移至保本价；持仓第3天收盘仍亏损则按时间止损离场。",
         "- **T+1处理**：遵循A股T+1规则，买入当日不检查止盈止损出场，从下一交易日起判断。",
         "- **结果含义**：`win`为盈利样本，`loss`为亏损样本，`no_data`为后续K线不足或无法形成有效模拟。",
         "- **指标说明**：胜率为盈利样本占有效样本比例；盈亏比为总盈利绝对值/总亏损绝对值；夏普为单笔收益均值相对波动的简化指标。",
@@ -403,7 +439,7 @@ def generate_backtest_report(bt_result, output_path=None):
     lines.extend([
         "",
         f"> \u26a0\ufe0f 免责声明：回测结果不代表未来表现，仅供参考。",
-        f"> 版本: v6.13.10 | 生成: {today_str}",
+        f"> 版本: v6.13.14 | 生成: {today_str}",
     ])
 
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -459,7 +495,7 @@ def generate_backtest_html(bt_result, output_path=None):
     if not trades:
         html = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>历史回测报告</title>
 <style>body{{font-family:"Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif;max-width:900px;margin:40px auto;padding:20px;background:#f8fafc;color:#1e293b}}h1{{color:#2563eb}}</style></head>
-<body><h1>历史回测报告</h1><p>暂无回测数据。</p><h2>回测说明</h2><ul><li>回测使用最近90天推荐历史。</li><li>单笔最大持仓10个交易日。</li><li>按推荐时的进场、止损、止盈价格进行模拟。</li><li>遵循A股T+1规则，买入当日不检查止盈止损出场。</li><li>回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。</li></ul><p style="color:#94a3b8">版本: v6.13.10 | 生成: {today_str}</p></body></html>'''
+<body><h1>历史回测报告</h1><p>暂无回测数据。</p><h2>回测说明</h2><ul><li>回测使用最近90天推荐历史。</li><li>单笔最大持仓10个交易日。</li><li>按推荐时的进场、止损、止盈价格进行模拟。</li><li>遵循A股T+1规则，买入当日不检查止盈止损出场。</li><li>回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。</li><li>v6.13.14新增：移动止损(盈利达TP50%保本)、时间止损(持仓3天仍亏损离场)。</li></ul><p style="color:#94a3b8">版本: v6.13.14 | 生成: {today_str}</p></body></html>'''
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(html)
         return output_path
