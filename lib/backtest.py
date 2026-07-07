@@ -233,7 +233,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     # v6.13.10: 预测日=买入日(盘前预测当日买入)，仅排除当天(尚无收盘K线)
     history = [h for h in history
                if h.get('prediction_date') and h['prediction_date'] >= cutoff.strftime('%Y-%m-%d')
-               and h['prediction_date'] < today.strftime('%Y-%m-%d')]
+               and h['prediction_date'] <= today.strftime('%Y-%m-%d')]
 
     # v6.13.10: 去重key改为(code,date,strategy,entry)，保留同股票不同策略的推荐
     seen = set()
@@ -609,6 +609,7 @@ def push_backtest_to_feishu(bt_result):
         if not metrics or metrics.get('total', 0) == 0:
             print("  无回测数据，跳过飞书推送")
             return False
+        # v6.13.13: 全部no_data时也推送概要（修复回测0笔时飞书无推送问题）
 
         today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.10: 北京时间
         pb = "https://lc132.github.io/lv"
