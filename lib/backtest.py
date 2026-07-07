@@ -73,7 +73,7 @@ def _fetch_kline_range(code, start_date, lmt=15):
                         'close': float(d[2]), 'high': float(d[3]),
                         'low': float(d[4]), 'volume': float(d[5]),
                     })
-            result = [r for r in result if r['date'] > start_date]
+            result = [r for r in result if r['date'] >= start_date]
             if result:
                 return result
     except Exception as e:
@@ -103,7 +103,7 @@ def _fetch_kline_range(code, start_date, lmt=15):
                         'close': b['c'], 'high': b['h'],
                         'low': b['l'], 'volume': b['v'],
                     })
-                result = [r for r in result if r['date'] > start_date]
+                result = [r for r in result if r['date'] >= start_date]
                 return result
         except Exception as e:
             if os.environ.get('LV_DEBUG'):
@@ -279,7 +279,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         tp = round(entry * _STRATEGY_TAKE_PROFIT.get(strategy, 1.05), 2)
 
         klines = code_kline_cache.get((code, pred_date), {})
-        post_klines = [k for d, k in sorted(klines.items()) if d > pred_date]
+        post_klines = [k for d, k in sorted(klines.items()) if d >= pred_date]
         trade = _simulate_trade(entry, sl, tp, post_klines, hold_days)
         trade['code'] = code
         trade['name'] = h.get('name', '')
@@ -613,7 +613,7 @@ def push_backtest_to_feishu(bt_result):
 
         today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.10: 北京时间
         pb = "https://lc132.github.io/lv"
-        bt_url = f"{pb}/backtest/"
+        bt_url = f"{pb}/回测报告.html"
 
         # 策略TOP3（按胜率）
         strategy_metrics = bt_result.get('strategy_metrics', {})
