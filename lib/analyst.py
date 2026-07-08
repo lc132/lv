@@ -315,7 +315,7 @@ def generate_candidate_analysis(c, kline_data, idx, total):
     risk = _build_risk_analysis(code, pledge, goodwill, sigs, change_pct, ampl, close, closes)
 
     # ========== 操作建议 ==========
-    suggestion = _build_suggestion(strat, entry, stop, target, plr, score, conf, news_sens)
+    suggestion = _build_suggestion(strat, entry, stop, target, plr, score, conf, news_sens, ann)
 
     # ========== 综合研判 ==========
     summary = _build_summary(strat, sname, score, conf, plr, change_pct, industry, main_in, r7d, close, high60, low60, has_kline)
@@ -614,7 +614,7 @@ def _build_risk_analysis(code, pledge, goodwill, sigs, change_pct, ampl, close, 
     return "\n".join(lines)
 
 
-def _build_suggestion(strat, entry, stop, target, plr, score, conf, news_sens):
+def _build_suggestion(strat, entry, stop, target, plr, score, conf, news_sens, ann=""):
     """构建操作建议"""
     lines = []
     lines.append("**操作建议**：")
@@ -635,11 +635,27 @@ def _build_suggestion(strat, entry, stop, target, plr, score, conf, news_sens):
     else:
         lines.append(f"- 持仓周期：2-5天（短线操作）")
 
-    # 消息敏感度
-    if news_sens >= 2:
-        lines.append(f"- 消息敏感度：高（利好公告可加速上涨，利空需及时止损）")
+    # 近期公告（v6.13.16: 替换通用消息敏感度为实际公告内容）
+    if ann:
+        # 解析公告摘要（取前3条，每条截取前30字符）
+        ann_items = []
+        for item in ann.split('; '):
+            # 提取 [MM-DD] 和标题
+            m = re.match(r'\[(\d{2}-\d{2})\]([^:]+):(.+)', item.strip())
+            if m:
+                date, cat, title = m.groups()
+                title = title.strip()[:30] + ('…' if len(title.strip()) > 30 else '')
+                ann_items.append(f"{date} {title}")
+            if len(ann_items) >= 3:
+                break
+        if ann_items:
+            lines.append(f"- 近期公告：{'；'.join(ann_items)}")
+        else:
+            lines.append(f"- 近期公告：无重大利好/利空，关注后续披露")
+    elif news_sens >= 2:
+        lines.append(f"- 近期公告：无重大公告数据，该股消息敏感度高，关注盘中异动")
     elif news_sens >= 1:
-        lines.append(f"- 消息敏感度：中（消息面有一定影响，关注公告）")
+        lines.append(f"- 近期公告：无重大公告数据，关注后续披露")
 
     return "\n".join(lines)
 
