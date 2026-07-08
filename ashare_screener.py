@@ -4094,11 +4094,11 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 {backtest_html}
 </section>
 <div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p><style>
-.metric-card-bt{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:13px 10px;text-align:center;transition:border-color .2s,transform .15s}
-.metric-card-bt:hover{border-color:#475569;transform:translateY(-1px)}
-.metric-label-bt{color:#94a3b8;font-size:.68rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}
-.metric-value-bt{color:#e2e8f0;font-size:1.1rem;font-weight:700}
-.metric-value-bt.win{color:#22c55e}.metric-value-bt.loss{color:#ef4444}
+.metric-card-bt{{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:13px 10px;text-align:center;transition:border-color .2s,transform .15s}}
+.metric-card-bt:hover{{border-color:#475569;transform:translateY(-1px)}}
+.metric-label-bt{{color:#94a3b8;font-size:.68rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}}
+.metric-value-bt{{color:#e2e8f0;font-size:1.1rem;font-weight:700}}
+.metric-value-bt.win{{color:#22c55e}}.metric-value-bt.loss{{color:#ef4444}}
 </style>
 </div></body></html>"""
     
@@ -4202,7 +4202,7 @@ def step26_github_sync(mp, hd, candidates):
 # ============================================================
 # 步骤27：飞书推送
 # ============================================================
-def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, anew, sd):
+def step27_feishu_push(candidates, total_raw, ae, asig, astr, amicro, aind, anew, sd):
     if not FEISHU_WEBHOOK: log_alert("WARNING", "飞书推送", "无Webhook"); return
     try:
         fc = len(candidates)
@@ -4430,7 +4430,7 @@ def main():
     
     print("\n[步骤26] GitHub同步..."); step26_github_sync(mp, hd, final)
     record_step_status("步骤26: GitHub同步", "OK")
-    print("\n[步骤27] 飞书推送..."); step27_feishu_push(final, total_raw, ae, asig, astr, aind, anew, sd)
+    print("\n[步骤27] 飞书推送..."); step27_feishu_push(final, total_raw, ae, asig, astr, amicro, aind, anew, sd)
     record_step_status("步骤27: 飞书推送", "OK")
     
     # v6.13.11: 步骤执行状态报告
