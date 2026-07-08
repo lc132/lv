@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.13
+A股每日盘前短线标的智能筛选 v6.13.15
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测no_entry警告
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -22,7 +22,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.14"
+BUILTIN_VERSION = "v6.13.15"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -3357,7 +3357,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
 # ============================================================
 # 步骤20B：HTML报告（v6.6.27 含指数行情）
 # ============================================================
-def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report=None, bt_lookup=None, kline_data=None):
+def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report=None, bt_lookup=None, kline_data=None, bt_result=None):
     hd = f"/workspace/ashare-screening-{pred_yyyymmdd}"
     os.makedirs(hd, exist_ok=True)
     hp = f"{hd}/ashare-screening-{pred_yyyymmdd}.html"
@@ -3740,6 +3740,50 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         
         ai_html += '</div></div>'
     
+    # v6.13.15: 生成回测HTML片段
+    backtest_html = ''
+    if bt_result and bt_result.get('all_trades'):
+        bt = bt_result
+        total_trades = len(bt.get('all_trades', []))
+        win_rate = bt.get('win_rate', 0) * 100
+        avg_return = bt.get('avg_return', 0) * 100
+        profit_loss_ratio = bt.get('profit_loss_ratio', 0)
+        sharpe = bt.get('sharpe', 0)
+        max_drawdown = bt.get('max_drawdown', 0) * 100
+        avg_win = bt.get('avg_win', 0) * 100
+        avg_loss = bt.get('avg_loss', 0) * 100
+        avg_hold = bt.get('avg_hold_days', 0)
+        wr_cls = 'win' if win_rate >= 50 else 'loss'
+        ar_cls = 'win' if avg_return >= 0 else 'loss'
+        sr_cls = 'win' if sharpe >= 0 else 'loss'
+        dd_cls = 'loss' if max_drawdown > 20 else 'win'
+        backtest_html += '<div class="metrics-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:1.2rem">'
+        backtest_html += f'<div class="metric-card-bt"><div class="metric-label-bt">总交易</div><div class="metric-value-bt">{total_trades}笔</div></div>'
+        backtest_html += f'<div class="metric-card-bt"><div class="metric-label-bt">胜率</div><div class="metric-value-bt {wr_cls}">{win_rate:.1f}%</div></div>'
+        backtest_html += f'<div class="metric-card-bt"><div class="metric-label-bt">平均收益</div><div class="metric-value-bt {ar_cls}">{avg_return:+.2f}%</div></div>'
+        backtest_html += f'<div class="metric-card-bt"><div class="metric-label-bt">盈亏比</div><div class="metric-value-bt">{profit_loss_ratio:.2f}</div></div>'
+        backtest_html += f'<div class="metric-card-bt"><div class="metric-label-bt">夏普</div><div class="metric-value-bt {sr_cls}">{sharpe:.2f}</div></div>'
+        backtest_html += f'<div class="metric-card-bt"><div class="metric-label-bt">最大回撤</div><div class="metric-value-bt {dd_cls}">{max_drawdown:.2f}%</div></div>'
+        backtest_html += f'<div class="metric-card-bt"><div class="metric-label-bt">平均盈利</div><div class="metric-value-bt win">{avg_win:+.2f}%</div></div>'
+        backtest_html += f'<div class="metric-card-bt"><div class="metric-label-bt">平均亏损</div><div class="metric-value-bt loss">{avg_loss:+.2f}%</div></div>'
+        backtest_html += f'<div class="metric-card-bt"><div class="metric-label-bt">平均持仓</div><div class="metric-value-bt">{avg_hold:.1f}天</div></div>'
+        backtest_html += '</div><table><thead><tr><th>策略</th><th>笔数</th><th>胜率</th><th>均收</th><th>盈亏比</th><th>夏普</th></tr></thead><tbody>'
+        for s in bt.get('strategy_stats', []):
+            s_wr = s.get('win_rate', 0) * 100
+            s_ar = s.get('avg_return', 0) * 100
+            s_cls = 'win' if s_wr >= 50 else 'loss'
+            s_ar_cls = 'win' if s_ar >= 0 else 'loss'
+            s_sr = s.get('sharpe', 0)
+            s_sr_cls = 'win' if s_sr >= 0 else 'loss'
+            sn = s.get('strategy', '?')
+            badge_cls = 'strat_' + sn.lower() if sn else 'strat_b'
+            sname = _STRATEGY_NAMES.get(sn, sn)
+            backtest_html += f'<tr><td><span class="badge {badge_cls}">{sn}</span> {sname}</td><td>{s.get("trades", 0)}</td><td class="{s_cls}">{s_wr:.1f}%</td><td class="{s_ar_cls}">{s_ar:+.2f}%</td><td>{s.get("profit_loss_ratio", 0):.2f}</td><td class="{s_sr_cls}">{s_sr:.2f}</td></tr>'
+        backtest_html += '</tbody></table><div style="text-align:center;margin-top:1.2rem;padding-top:.8rem;border-top:1px solid #334155"><a href="/workspace/回测报告.html" target="_blank" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:.6rem 1.8rem;border-radius:8px;font-weight:700;font-size:.82rem;text-decoration:none">📋 查看完整回测报告（含交易明细） →</a></div>'
+    else:
+        backtest_html = '<div style="color:#94a3b8;padding:1rem;text-align:center">暂无回测数据</div>'
+    
+
     html_content = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>A股短线标的筛选 — {prediction_date}</title>
 <style>
@@ -4045,7 +4089,17 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 <div class="top10-cards">{top10_cards_html if top10_cards_html else '<div style="color:#94a3b8;padding:1rem">暂无TOP10数据</div>'}</div></section>
 {ai_html}
 </div>
-<div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
+<section><h2 style="display:flex;align-items:center;gap:.5rem">📊 历史回测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">最近90天 | 最大持仓10交易日</span></h2>
+{backtest_html}
+</section>
+<div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p><style>
+.metric-card-bt{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:13px 10px;text-align:center;transition:border-color .2s,transform .15s}
+.metric-card-bt:hover{border-color:#475569;transform:translateY(-1px)}
+.metric-label-bt{color:#94a3b8;font-size:.68rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}
+.metric-value-bt{color:#e2e8f0;font-size:1.1rem;font-weight:700}
+.metric-value-bt.win{color:#22c55e}.metric-value-bt.loss{color:#ef4444}
+</style>
+</div></body></html>"""
     
     with open(hp, 'w', encoding='utf-8') as f: f.write(html_content)
     log_alert("INFO", "HTML报告", f"已生成至 {hp}")
@@ -4349,7 +4403,7 @@ def main():
 
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup)
     record_step_status("步骤20: Markdown", "OK", mp)
-    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report, bt_lookup, kline_data); hd = os.path.dirname(hp)
+    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report, bt_lookup, kline_data, bt_result); hd = os.path.dirname(hp)
     record_step_status("步骤20B: HTML报告", "OK", hp)
     print("\n[步骤21] 验证..."); step21_final_verify(mp, fc)
     record_step_status("步骤21: 最终验证", "OK", f"{fc}只通过")
