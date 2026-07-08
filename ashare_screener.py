@@ -22,7 +22,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.16"
+BUILTIN_VERSION = "v6.13.17"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -2916,7 +2916,7 @@ def step18B_top10_enrichment(candidates):
                 pos_titles = []
                 for news in news_list:
                     title = news.get('title', '')
-                    if any(kw in title for kw in POSITIVE_KW[:15]):
+                    if any(kw in title for kw in POSITIVE_KW):  # v6.13.17: 使用全部28个关键词
                         short = title[:20] + ('...' if len(title) > 20 else '')
                         pos_titles.append(short)
                     if len(pos_titles) >= 2: break
@@ -3357,7 +3357,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
 # ============================================================
 # 步骤20B：HTML报告（v6.6.27 含指数行情）
 # ============================================================
-def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report=None, bt_lookup=None, kline_data=None, bt_result=None):
+def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report=None, bt_lookup=None, kline_data=None, bt_result=None):
     hd = f"/workspace/ashare-screening-{pred_yyyymmdd}"
     os.makedirs(hd, exist_ok=True)
     hp = f"{hd}/ashare-screening-{pred_yyyymmdd}.html"
@@ -3383,7 +3383,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             index_cards += f'<div class="index-card"><div class="idx-name">{name}</div><div class="idx-price">-</div><div class="idx-chg">数据不可得</div></div>'
     
     rows_html = ""
-    _top10_codes = _compute_pl_ratios(candidates)
+    # v6.13.17: 基于已计算的_pl_ratio排序TOP10，移除重复调用
+    _top10_codes = set(c['code'] for c in sorted(candidates, key=lambda x: -(x.get('_pl_ratio', 0) or 0))[:10])
     for idx, c in enumerate(candidates, 1):
         code = c.get('code', ''); name = c.get('name', ''); s = c.get('strategy', '?')
         ind = _industry_str(c); biz = c.get('business', ''); chg = c.get('change_pct', 0)
@@ -3445,7 +3446,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
         bar_html += f'<div class="bar-row"><div class="bar-label">{r}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%">{cnt}</div></div></div>'
     
     stages = [("原始标的池", total_raw), ("硬排除(13项)", ae), ("信号过滤(27项)", asig),
-              ("策略匹配(17策略)", astr), ("行业+同策略限制", aind), ("新闻筛查", aind - anew), ("最终推荐", fc)]
+              ("策略匹配(17策略)", astr), ("微观结构过滤", amicro), ("行业+同策略限制", aind), ("新闻筛查", aind - anew), ("最终推荐", fc)]
     max_f = max(s[1] for s in stages)
     funnel_html = ""
     for i, (name, count) in enumerate(stages):
@@ -3779,7 +3780,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, aind, anew, er,
             badge_cls = 'strat_' + sn.lower() if sn else 'strat_b'
             sname = _STRATEGY_NAMES.get(sn, sn)
             backtest_html += f'<tr><td><span class="badge {badge_cls}">{sn}</span> {sname}</td><td>{s.get("trades", 0)}</td><td class="{s_cls}">{s_wr:.1f}%</td><td class="{s_ar_cls}">{s_ar:+.2f}%</td><td>{s.get("profit_loss_ratio", 0):.2f}</td><td class="{s_sr_cls}">{s_sr:.2f}</td></tr>'
-        backtest_html += '</tbody></table><div style="text-align:center;margin-top:1.2rem;padding-top:.8rem;border-top:1px solid #334155"><a href="/回测报告.html" target="_blank" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:.6rem 1.8rem;border-radius:8px;font-weight:700;font-size:.82rem;text-decoration:none">📋 查看完整回测报告（含交易明细） →</a></div>'
+        backtest_html += '</tbody></table><div style="text-align:center;margin-top:1.2rem;padding-top:.8rem;border-top:1px solid #334155"><a href="/backtest/" target="_blank" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:.6rem 1.8rem;border-radius:8px;font-weight:700;font-size:.82rem;text-decoration:none">📋 查看完整回测报告（含交易明细） →</a></div>'
     else:
         backtest_html = '<div style="color:#94a3b8;padding:1rem;text-align:center">暂无回测数据</div>'
     
@@ -4058,7 +4059,7 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 <div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">策略分布</h3><div class="seg-bar">{seg_html if seg_html else '<div style="color:#94a3b8;text-align:center;padding:1rem">无推荐标的</div>'}</div><div class="legend">{legend_html}</div></div>
 <div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">硬排除TOP5</h3>{bar_html if bar_html else '<div style="color:#94a3b8">无排除记录</div>'}</div>
 <div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">各策略数量</h3>{strat_bars if strat_bars else '<div style="color:#94a3b8">无匹配</div>'}</div>
-<div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">概述</h3><div style="font-size:.8rem;color:#cbd5e1">全市场→{total_raw}只入围→{ae}只通过硬排除→{asig}只通过信号过滤→{astr}只匹配策略→{aind}只通过行业限制→{aind - anew}只通过新闻筛查→<strong style="color:#38bdf8">最终{fc}只</strong></div></div>
+<div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">概述</h3><div style="font-size:.8rem;color:#cbd5e1">全市场→{total_raw}只入围→{ae}只通过硬排除→{asig}只通过信号过滤→{astr}只匹配策略→{amicro}只通过微观结构→{aind}只通过行业限制→{aind - anew}只通过新闻筛查→<strong style="color:#38bdf8">最终{fc}只</strong></div></div>
 </div></section>
 <section><h2>系统告警</h2><div class="alert-list">{alerts_html}</div></section>
 <section><h2>最终推荐标的</h2><div style="overflow-x:auto"><table>
@@ -4214,7 +4215,7 @@ def step27_feishu_push(candidates, total_raw, ae, asig, astr, aind, anew, sd):
             "elements": [
                 {"tag": "div", "text": {"tag": "lark_md", "content": f"**数据来源**: {data_date}  |  **市场环境**: {market_condition}  |  **建议仓位**: {position_pct}%"}},
                 {"tag": "hr"},
-                {"tag": "div", "text": {"tag": "lark_md", "content": f"原始: **{total_raw}**只 → 硬排: **{ae}**只 → 信号: **{asig}**只 → 策略: **{astr}**只 → 行业: **{aind}**只 → 新闻: **{aind - anew}**只 → ★ 最终: **{fc}**只"}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": f"原始: **{total_raw}**只 → 硬排: **{ae}**只 → 信号: **{asig}**只 → 策略: **{astr}**只 → 微观: **{amicro}**只 → 行业: **{aind}**只 → 新闻: **{aind - anew}**只 → ★ 最终: **{fc}**只"}},
                 {"tag": "hr"},
                 {"tag": "div", "text": {"tag": "lark_md", "content": f"**策略分布**: {ss}"}},
                 {"tag": "hr"},
@@ -4392,7 +4393,7 @@ def main():
     bt_result = None; bt_lookup = {}
     if any(f.startswith("推荐历史_") and f.endswith(".json") for f in os.listdir(DATA_DIR)):
         bt_result = run_backtest(hold_days=10, max_days_lookback=90)
-        if bt_result['all_trades']:
+        if bt_result.get('all_trades'):
             generate_backtest_report(bt_result, "/workspace/回测报告.md")
             generate_backtest_html(bt_result, "/workspace/回测报告.html")
             push_backtest_to_feishu(bt_result)
@@ -4403,7 +4404,7 @@ def main():
 
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup)
     record_step_status("步骤20: Markdown", "OK", mp)
-    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, aind, anew, er, crisis_alerts, ai_report, bt_lookup, kline_data, bt_result); hd = os.path.dirname(hp)
+    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report, bt_lookup, kline_data, bt_result); hd = os.path.dirname(hp)
     record_step_status("步骤20B: HTML报告", "OK", hp)
     print("\n[步骤21] 验证..."); step21_final_verify(mp, fc)
     record_step_status("步骤21: 最终验证", "OK", f"{fc}只通过")

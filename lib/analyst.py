@@ -11,6 +11,8 @@ v6.13.0 优化:
 - 个股深度: 新增60日区间/BOLL带/KDJ超买超卖/量价背离/板块关联
 """
 
+import re
+
 
 def generate_market_overview(final_candidates, index_data, market_condition,
                               sector_limit_up, total_raw, ae, asig, astr,
@@ -233,7 +235,7 @@ def generate_candidate_analysis(c, kline_data, idx, total):
     code = c.get('code', '')
     name = c.get('name', '')
     strat = c.get('strategy', '?')
-    score = c.get('score', 0)
+    score = c.get('score', 0) or 0
     conf = c.get('confidence', '★')
     change_pct = c.get('change_pct', 0) or 0
     ampl = c.get('amplitude', 0) or 0
@@ -244,11 +246,11 @@ def generate_candidate_analysis(c, kline_data, idx, total):
     vr = c.get('volume_ratio') or 0
     main_in = c.get('main_inflow') or 0
     close = c.get('close', 0) or 0
-    entry = c.get('_entry', 0)
-    stop = c.get('_stop', 0)
-    target = c.get('_target', 0)
-    plr = c.get('_pl_ratio', 0)
-    r7d = c.get('_recent_7d', 0)
+    entry = c.get('_entry', 0) or 0
+    stop = c.get('_stop', 0) or 0
+    target = c.get('_target', 0) or 0
+    plr = c.get('_pl_ratio', 0) or 0
+    r7d = c.get('_recent_7d', 0) or 0
     r7s = c.get('_recent_7d_strategies', {})
     sigs = c.get('_signal_reasons', [])
     lh = c.get('_longhu', '')
@@ -258,9 +260,9 @@ def generate_candidate_analysis(c, kline_data, idx, total):
     np_yoy = c.get('_fd_net_profit_yoy') or 0
     pledge = c.get('_fd_pledge_ratio') or 0
     goodwill = c.get('_fd_goodwill_ratio') or 0
-    amihud = c.get('_amihud', 0)
-    liq_score = c.get('_microstructure_score', 0)
-    news_sens = c.get('_news_sensitivity', 0)
+    amihud = c.get('_amihud', 0) or 0
+    liq_score = c.get('_microstructure_score', 0) or 0
+    news_sens = c.get('_news_sensitivity', 0) or 0
 
     kd = kline_data.get(code, {}) if kline_data else {}
     # v6.12.5: 检测kline数据是否有效
@@ -470,7 +472,7 @@ def _build_technical_analysis(code, close, ma5, ma10, ma20, dif, dea, macd_hist,
     # v6.13.0: 量价背离检测
     if closes and volumes and len(closes) >= 5 and len(volumes) >= 5:
         price_change = closes[-1] - closes[-5] if len(closes) >= 5 else 0
-        vol_change = sum(volumes[-1:]) - sum(volumes[-5:-1]) if len(volumes) >= 5 else 0
+        vol_change = sum(volumes[-1:]) - (sum(volumes[-5:-1]) / 4) if len(volumes) >= 5 else 0  # v6.13.17: 用日均量比较，修正1天vs4天的不对称
         if price_change > 0 and vol_change < 0 and change_pct > 0:
             lines.append(f"- ⚠️ 量价背离：近5日价涨量缩，上涨动能减弱，注意回调风险")
         elif price_change < 0 and vol_change > 0 and change_pct < 0:
@@ -635,17 +637,23 @@ def _build_suggestion(strat, entry, stop, target, plr, score, conf, news_sens, a
     else:
         lines.append(f"- 持仓周期：2-5天（短线操作）")
 
-    # 近期公告（v6.13.16: 替换通用消息敏感度为实际公告内容）
+    # 近期公告（v6.13.17: 替换通用消息敏感度为实际公告内容，增加降级逻辑）
+    ann = ann or ""
     if ann:
-        # 解析公告摘要（取前3条，每条截取前30字符）
         ann_items = []
         for item in ann.split('; '):
-            # 提取 [MM-DD] 和标题
-            m = re.match(r'\[(\d{2}-\d{2})\]([^:]+):(.+)', item.strip())
+            item = item.strip()
+            if not item:
+                continue
+            # 尝试标准格式 [MM-DD]category:title
+            m = re.match(r'\[(\d{2}-\d{2})\]([^:]+):(.+)', item)
             if m:
-                date, cat, title = m.groups()
+                date, _, title = m.groups()
                 title = title.strip()[:30] + ('…' if len(title.strip()) > 30 else '')
                 ann_items.append(f"{date} {title}")
+            elif len(item) > 5:
+                # 降级: 非标准格式，截取前40字符
+                ann_items.append(item.strip()[:40] + ('…' if len(item.strip()) > 40 else ''))
             if len(ann_items) >= 3:
                 break
         if ann_items:
@@ -656,6 +664,8 @@ def _build_suggestion(strat, entry, stop, target, plr, score, conf, news_sens, a
         lines.append(f"- 近期公告：无重大公告数据，该股消息敏感度高，关注盘中异动")
     elif news_sens >= 1:
         lines.append(f"- 近期公告：无重大公告数据，关注后续披露")
+    else:
+        lines.append(f"- 近期公告：暂无公告数据")
 
     return "\n".join(lines)
 
@@ -735,7 +745,7 @@ def generate_ai_report(final_candidates, kline_data, index_data, market_conditio
     )
 
     # 个股深度分析（TOP10）
-    top10 = sorted(final_candidates, key=lambda c: -c.get('_pl_ratio', 0))[:10]
+    top10 = sorted(final_candidates, key=lambda c: -(c.get('_pl_ratio', 0) or 0))[:10]
     report['candidate_analyses'] = []
     for i, c in enumerate(top10):
         analysis = generate_candidate_analysis(c, kline_data, i + 1, len(top10))
