@@ -22,7 +22,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.19"
+BUILTIN_VERSION = "v6.13.20"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -169,7 +169,7 @@ _STRATEGY_TAKE_PROFIT = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 
 
 def _tie_key(c):
     """模块级平局打破键：策略优先级→评分→平局分→量比→换手偏离"""
-    vr = c.get('volume_ratio') or 0
+    vr = c.get('volume_ratio', 0)  # v6.13.20: 添加默认值防止NoneType比较 or 0
     to = c.get('turnover') or 0
     to_penalty = abs(to - 10) if to > 0 else 99
     return (-c.get('score', 0), _STRATEGY_ORDER.get(c.get('strategy', 'Z'), 99),
@@ -641,12 +641,17 @@ def step6_file_init():
     for f in sorted(os.listdir('/workspace')):
         if f.startswith('推荐历史_') and f.endswith('.json'):
             all_h.extend(safe_read_json(os.path.join('/workspace', f)))
+    # v6.13.20: 检查已存在版本集合，避免重复记录
+    existing_versions = set()
+    for r in all_h:
+        if r.get('type') == 'strategy_check':
+            existing_versions.add(r.get('version', ''))
     lc = None
     for r in reversed(all_h):
         if r.get('type') == 'strategy_check': lc = r; break
     if lc and lc.get('version') != file_version:
         log_alert("INFO", "版本检查", f"历史版本≠策略调整版本{file_version}")
-    if lc is None or (lc and lc.get('version') != file_version):
+    if file_version not in existing_versions:
         hf = f"/workspace/推荐历史_{prediction_date.replace('-', '')}.json"
         safe_append_json(hf, {"type": "strategy_check", "version": file_version, "params": params, "date": data_date})
 
@@ -2064,7 +2069,7 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         code = c.get('code', '')
         chg = c.get('change_pct', 0); close = c.get('close', 0); op = c.get('open', 0)
         high = c.get('high', 0); low = c.get('low', 0); amp = c.get('amplitude', 0)
-        vr = c.get('volume_ratio'); to = c.get('turnover', 0)
+        vr = c.get('volume_ratio', 0)  # v6.13.20: 添加默认值防止NoneType比较; to = c.get('turnover', 0)
         kd = kline_data.get(code, {})
         reasons = []
         # 1. 假动量：高开>3%后回落超2%
@@ -2230,7 +2235,7 @@ def step13_strategy_match(candidates, kline_data=None):
     matched = []
     for c in candidates:
         chg = c.get('change_pct', 0); amp = c.get('amplitude', 0)
-        vr = c.get('volume_ratio'); to = c.get('turnover', 0)
+        vr = c.get('volume_ratio', 0)  # v6.13.20: 添加默认值防止NoneType比较; to = c.get('turnover', 0)
         close = c.get('close', 0); op = c.get('open', 0)
         high = c.get('high', 0); low = c.get('low', 0)
         s = None; reason = ""; score = 0
@@ -2444,7 +2449,7 @@ def step14_scoring(candidates, kline_data=None):
             for c in clist:
                 sector_bonus[c.get('code', '')] = 0.10
     for c in candidates:
-        vr = c.get('volume_ratio'); vr = vr if vr is not None else 0
+        vr = c.get('volume_ratio', 0)  # v6.13.20: 添加默认值防止NoneType比较; vr = vr if vr is not None else 0
         to = c.get('turnover'); to = to if to is not None else 0
         chg = c.get('change_pct') or 0
         vs = min(vr / 3.0, 1.0)
@@ -3497,7 +3502,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             business = c.get('business', '')
             amount = c.get('amount', 0) or 0
             turnover = c.get('turnover', 0) or 0
-            vr = c.get('volume_ratio') or 0
+            vr = c.get('volume_ratio', 0)  # v6.13.20: 添加默认值防止NoneType比较 or 0
             main_in = c.get('main_inflow') or 0
             r7d = c.get('_recent_7d') or 0
             r7s = c.get('_recent_7d_strategies', {})
@@ -3620,7 +3625,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             to_str = f'{turnover:.1f}%' if turnover > 0 else '-'
             
             cards.append(f'''<div class="top10-card">
-<div class="top10-card-header"><span class="rank">#{idx}</span><span class="name">{name}</span><span class="code">{code}</span><span class="badge {strat_badge}">{strat} {sname}</span></div>
+<div class="top10-card-header"><span class="rank">#{idx}</span><span class="name">{html.escape(name)}</span><span class="code">{code}</span><span class="badge {strat_badge}">{strat} {sname}</span></div>
 <div class="top10-card-metrics">
 <div class="metric"><div class="val ratio-hl">{plr:.2f}</div><div class="lbl">盈亏比</div></div>
 <div class="metric"><div class="val">{entry:.2f}</div><div class="lbl">进场</div></div>
@@ -3639,7 +3644,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
     if ai_report:
         # 将Markdown转换为结构化HTML
         def _md_to_html(md_text, section_class=''):
-            """将AI分析Markdown转为结构化HTML"""
+            """将AI分析Markdown转为结构化HTML; v6.13.20: 添加HTML转义防护"""
+            import html
             if not md_text: return ''
             lines = md_text.split('\n')
             result = []
@@ -3650,7 +3656,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
                     i += 1; continue
                 # h3 标题
                 if line.startswith('### ') and line[4:].strip():
-                    title = line[4:].strip()
+                    title = html.escape(line[4:].strip())
                     result.append(f'<h3>{title}</h3>')
                     i += 1; continue
                 # h2 标题
@@ -3672,7 +3678,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
                             result.append('<table>')
                             for ri, row in enumerate(real_rows):
                                 tag = 'th' if ri == 0 else 'td'
-                                result.append('<tr>' + ''.join(f'<{tag}>{c}</{tag}>' for c in row) + '</tr>')
+                                result.append('<tr>' + ''.join(f'<{tag}>{html.escape(c)}</{tag}>' for c in row) + '</tr>')
                             result.append('</table>')
                     continue
                 # 列表项
@@ -3683,13 +3689,13 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
                     # 处理额外加粗
                     while '<strong>' in item and item.count('**') >= 2:
                         item = item.replace('**', '<strong>', 1).replace('**', '</strong>', 1)
-                    result.append(f'<div class="ai-dim">{item}</div>')
+                    result.append(f'<div class="ai-dim">{html.escape(item)}</div>')
                     i += 1; continue
                 # 普通段落
                 para = line
                 while '<strong>' in para and para.count('**') >= 2:
                     para = para.replace('**', '<strong>', 1).replace('**', '</strong>', 1)
-                result.append(f'<p>{para}</p>')
+                result.append(f'<p>{html.escape(para)}</p>')
                 i += 1
             return '\n'.join(result)
         
@@ -3729,7 +3735,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             ai_html += f'''<div class="ai-stock-card">
 <div class="ai-stock-card-header">
     <span class="ai-rank">#{ci}</span>
-    <span class="ai-name">{name}</span>
+    <span class="ai-name">{html.escape(name)}</span>
     <span class="ai-code">{code}</span>
 </div>
 <div class="ai-stock-card-body">'''

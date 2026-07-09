@@ -73,7 +73,15 @@ def _fetch_kline_range(code, start_date, lmt=15):
                         'close': float(d[2]), 'high': float(d[3]),
                         'low': float(d[4]), 'volume': float(d[5]),
                     })
+            # v6.13.20: 当天prediction_date无未来K线时回退到最新可用日期
             result = [r for r in result if r['date'] >= start_date]
+            if not result and len(days) > 0:
+                # 回退：取最新K线作为参考
+                result = [{
+                    'date': d[0], 'open': float(d[1]),
+                    'close': float(d[2]), 'high': float(d[3]),
+                    'low': float(d[4]), 'volume': float(d[5]),
+                } for d in days[-1:] if isinstance(d, list) and len(d) >= 6]
             if result:
                 return result
     except Exception as e:
@@ -221,22 +229,30 @@ def _compute_metrics(trades):
     no_data = [t for t in trades if t['result'] in ('no_data', 'no_entry')]
 
     win_rate = len(wins) / max(total - len(no_data), 1) * 100 if total > len(no_data) else 0
-    avg_return = sum(t['return_pct'] for t in trades) / total if total > 0 else 0
+    # v6.13.20: 排除no_data/no_entry，仅计算有效样本平均收益
+    avg_return = sum(t['return_pct'] for t in trades if t['result'] not in ('no_data', 'no_entry')) / max(total - len(no_data), 1) if total > len(no_data) else 0
     avg_win = sum(t['return_pct'] for t in wins) / len(wins) if wins else 0
     avg_loss = sum(t['return_pct'] for t in losses) / len(losses) if losses else 0
     avg_hold = sum(t['hold_days'] for t in trades if t['hold_days'] > 0) / max(total - len(no_data), 1)
 
-    profit_factor = abs(avg_win / avg_loss) if avg_loss != 0 and wins and losses else 0
+    # v6.13.20: 盈亏比改为总额比（总盈利/总亏损绝对值），排除no_data/no_entry
+    total_win_amt = sum(t['return_pct'] for t in wins) if wins else 0
+    total_loss_amt = abs(sum(t['return_pct'] for t in losses)) if losses else 0
+    profit_factor = round(total_win_amt / total_loss_amt, 2) if total_loss_amt > 0 else 0
 
     # v6.13.10: 最大回撤从峰值计算（而非累计重置），更准确反映风险
+    # v6.13.20: 最大回撤仅基于有效样本，跳过no_data/no_entry
     max_dd = 0.0; peak = 0.0; cum = 0.0
     for t in trades:
+        if t['result'] in ('no_data', 'no_entry'):
+            continue
         cum += t['return_pct']
         peak = max(peak, cum)
         dd = peak - cum
         max_dd = max(max_dd, dd)
 
-    returns = [t['return_pct'] for t in trades]
+    # v6.13.20: 夏普计算排除no_data/no_entry
+    returns = [t['return_pct'] for t in trades if t['result'] not in ('no_data', 'no_entry')]
     if len(returns) > 1:
         avg_r = sum(returns) / len(returns)
         variance = sum((r - avg_r) ** 2 for r in returns) / (len(returns) - 1)  # v6.13.10: 样本方差N-1

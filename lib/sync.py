@@ -286,6 +286,11 @@ def step26_github_sync(ctx):
 # ============================================================
 # 步骤27: 飞书推送（单卡片，GitHub Pages 跳转链接）
 # ============================================================
+_STRATEGY_NAMES = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏',
+    'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头',
+    'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线',
+    'P': '地量反弹', 'Q': 'W底突破', 'R': '主力共振(强)', 'S': '主力共振(弱)', 'T': '主力观察'}
+
 def step27_feishu_push(ctx):
     print("\n" + "=" * 60)
     print("步骤27: 飞书推送")
@@ -313,7 +318,7 @@ def step27_feishu_push(ctx):
     for s in ['A', 'B', 'C', 'D', 'E']:
         cnt = strategy_counts.get(s, 0)
         if cnt > 0:
-            names = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏'}
+            names = _STRATEGY_NAMES  # v6.13.20: 使用完整策略名称映射
             strategy_lines.append(f"{names[s]}({s}): {cnt}只")
     strategy_summary = "  ".join(strategy_lines) if strategy_lines else "无"
     
