@@ -22,7 +22,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.20"
+BUILTIN_VERSION = "v6.13.21"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -2069,7 +2069,8 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         code = c.get('code', '')
         chg = c.get('change_pct', 0); close = c.get('close', 0); op = c.get('open', 0)
         high = c.get('high', 0); low = c.get('low', 0); amp = c.get('amplitude', 0)
-        vr = c.get('volume_ratio', 0)  # v6.13.20: 添加默认值防止NoneType比较; to = c.get('turnover', 0)
+        vr = c.get('volume_ratio', 0)  # v6.13.20: 添加默认值防止NoneType比较
+        to = c.get('turnover', 0)  # v6.13.20: 修复to变量未定义
         kd = kline_data.get(code, {})
         reasons = []
         # 1. 假动量：高开>3%后回落超2%
@@ -2235,7 +2236,8 @@ def step13_strategy_match(candidates, kline_data=None):
     matched = []
     for c in candidates:
         chg = c.get('change_pct', 0); amp = c.get('amplitude', 0)
-        vr = c.get('volume_ratio', 0)  # v6.13.20: 添加默认值防止NoneType比较; to = c.get('turnover', 0)
+        vr = c.get('volume_ratio', 0)  # v6.13.20: 添加默认值防止NoneType比较
+        to = c.get('turnover', 0)  # v6.13.20: 修复to变量未定义
         close = c.get('close', 0); op = c.get('open', 0)
         high = c.get('high', 0); low = c.get('low', 0)
         s = None; reason = ""; score = 0
