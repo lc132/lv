@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.24
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率
+A股每日盘前短线标的智能筛选 v6.13.25
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,7 +22,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.24"
+BUILTIN_VERSION = "v6.13.25"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -3489,7 +3489,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             strat = c.get('strategy', '?')
             score = c.get('score', 0)
             conf = c.get('confidence', '')
-            conf_stars = '★★★' if conf == 'high' else ('★★' if conf == 'mid' else '★')
+            # v6.13.25: 修复BUG — conf字段存储的是星星字符串(如'★★★')而非'high'/'mid'/'low'
+            conf_stars = '★★★' if '★★★' in conf else ('★★' if '★★' in conf else '★')
             change_pct = c.get('change_pct', 0)
             ampl = c.get('amplitude', 0)
             strat_badge = f'strat_{strat.lower()}'
@@ -3683,21 +3684,20 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
                                 result.append('<tr>' + ''.join(f'<{tag}>{html.escape(c)}</{tag}>' for c in row) + '</tr>')
                             result.append('</table>')
                     continue
-                # 列表项
+                # v6.13.25: 修复双重转义 — 先escape再替换**，避免<strong>被二次转义
                 if line.startswith('- '):
                     item = line[2:].strip()
-                    # 加粗处理
-                    item = item.replace('**', '<strong>', 1).replace('**', '</strong>', 1) if '**' in item else item
-                    # 处理额外加粗
-                    while '<strong>' in item and item.count('**') >= 2:
-                        item = item.replace('**', '<strong>', 1).replace('**', '</strong>', 1)
-                    result.append(f'<div class="ai-dim">{html.escape(item)}</div>')
+                    item_e = html.escape(item)
+                    item_e = item_e.replace('**', '<strong>', 1).replace('**', '</strong>', 1) if '**' in item_e else item_e
+                    while '<strong>' in item_e and item_e.count('**') >= 2:
+                        item_e = item_e.replace('**', '<strong>', 1).replace('**', '</strong>', 1)
+                    result.append(f'<div class="ai-dim">{item_e}</div>')
                     i += 1; continue
                 # 普通段落
-                para = line
+                para = html.escape(line)
                 while '<strong>' in para and para.count('**') >= 2:
                     para = para.replace('**', '<strong>', 1).replace('**', '</strong>', 1)
-                result.append(f'<p>{html.escape(para)}</p>')
+                result.append(f'<p>{para}</p>')
                 i += 1
             return '\n'.join(result)
         
@@ -3789,7 +3789,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             badge_cls = 'strat_' + sn.lower() if sn else 'strat_b'
             sname = _STRATEGY_NAMES.get(sn, sn)
             backtest_html += f'<tr><td><span class="badge {badge_cls}">{sn}</span> {sname}</td><td>{sm.get("total", 0)}</td><td class="{s_cls}">{s_wr:.1f}%</td><td class="{s_ar_cls}">{s_ar:+.2f}%</td><td>{sm.get("profit_factor", 0):.2f}</td><td class="{s_sr_cls}">{s_sr:.2f}</td></tr>'
-        backtest_html += '</tbody></table><div style="text-align:center;margin-top:1.2rem;padding-top:.8rem;border-top:1px solid #334155"><a href="../backtest/" target="_blank" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:.6rem 1.8rem;border-radius:8px;font-weight:700;font-size:.82rem;text-decoration:none">📋 查看完整回测报告（含交易明细） →</a></div>'
+        backtest_html += '</tbody></table><div style="text-align:center;margin-top:1.2rem;padding-top:.8rem;border-top:1px solid #334155"><a href="../../回测报告.html" target="_blank" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:.6rem 1.8rem;border-radius:8px;font-weight:700;font-size:.82rem;text-decoration:none">📋 查看完整回测报告（含交易明细） →</a></div>'
     else:
         backtest_html = '<div style="color:#94a3b8;padding:1rem;text-align:center">暂无回测数据</div>'
     
@@ -4053,6 +4053,12 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 .top10-card-header .badge{{margin-left:auto}}
 .top10-card-reason{{border-left:2px solid #2d3a4f;padding-left:12px;margin:8px 0;transition:border-color .2s}}
 .top10-card-reason:hover{{border-left-color:rgba(56,189,248,.3)}}
+/* v6.13.25: 回测指标卡片CSS — 从footer移至head */
+.metric-card-bt{{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:13px 10px;text-align:center;transition:border-color .2s,transform .15s}}
+.metric-card-bt:hover{{border-color:#475569;transform:translateY(-1px)}}
+.metric-label-bt{{color:#94a3b8;font-size:.68rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}}
+.metric-value-bt{{color:#e2e8f0;font-size:1.1rem;font-weight:700}}
+.metric-value-bt.win{{color:#22c55e}}.metric-value-bt.loss{{color:#ef4444}}
 </style></head><body>
 <div class="header"><h1>A股短线标的筛选报告</h1><div class="sub">{prediction_date} | 规则版本 {file_version}</div></div>
 <div class="container">
@@ -4102,14 +4108,7 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 <section><h2 style="display:flex;align-items:center;gap:.5rem">📊 历史回测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">最近90天 | 最大持仓10交易日</span></h2>
 {backtest_html}
 </section>
-<div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p><style>
-.metric-card-bt{{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:13px 10px;text-align:center;transition:border-color .2s,transform .15s}}
-.metric-card-bt:hover{{border-color:#475569;transform:translateY(-1px)}}
-.metric-label-bt{{color:#94a3b8;font-size:.68rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}}
-.metric-value-bt{{color:#e2e8f0;font-size:1.1rem;font-weight:700}}
-.metric-value-bt.win{{color:#22c55e}}.metric-value-bt.loss{{color:#ef4444}}
-</style>
-</div></body></html>"""
+<div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
     
     with open(hp, 'w', encoding='utf-8') as f: f.write(html_content)
     log_alert("INFO", "HTML报告", f"已生成至 {hp}")
