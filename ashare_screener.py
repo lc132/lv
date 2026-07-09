@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.25
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复
+A股每日盘前短线标的智能筛选 v6.13.26
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -21,8 +21,9 @@ from lib.microstructure import microstructure_filter
 from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
+from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.25"
+BUILTIN_VERSION = "v6.13.26"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -52,8 +53,9 @@ FEISHU_WEBHOOK = _load_credential("FEISHU_WEBHOOK", "/workspace/.feishu_webhook"
 
 # v6.13.11: 步骤执行状态追踪
 def record_step_status(step_name, status, detail=""):
-    """记录步骤执行状态: status='OK'|'SKIP'|'WARN'|'FAIL'"""
+    """记录步骤执行状态: status='OK'|'SKIP'|'WARN'|'FAIL'。v6.13.26: 同步写入会话记忆"""
     _step_status.append({"step": step_name, "status": status, "detail": detail})
+    save_step(step_name, status, detail)  # v6.13.26: 会话持久化
 
 def print_step_status_summary():
     """打印步骤执行状态摘要"""
@@ -4273,6 +4275,8 @@ def update_data_source_monitor(ds):
 # ============================================================
 def main():
     global market_condition, position_pct
+    # v6.13.26: 初始化会话记忆 — 新日期自动清除旧会话
+    init_session(BUILTIN_VERSION, datetime.now().strftime('%Y-%m-%d'))
     print("=" * 60)
     print(f"A股每日盘前短线标的筛选 {BUILTIN_VERSION}")
     print("=" * 60)
@@ -4451,6 +4455,10 @@ def main():
     
     # v6.13.11: 步骤执行状态报告
     print_step_status_summary()
+    
+    # v6.13.26: 完成会话记忆
+    summary = finish_session()
+    print(f"\n📝 {summary}")
     
     print(f"\n✅ 完成！ {mp}")
     return final, mp
