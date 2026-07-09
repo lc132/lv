@@ -1,7 +1,8 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.13.23
+# A股短线筛选 — 历史回测模块 v6.13.24
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
+# v6.13.24: _try_tencent增加Referer头(修复无数据) + 解析过滤非列表元素 + 超时10s + max_drawdown改用复合收益率
 # v6.13.23: _fetch_kline_range 增加重试(2次)、三级兜底(宽泛日期)、run_backtest 增加跨日期K线复用
 # ============================================================
 
@@ -56,9 +57,9 @@ def _fetch_kline_range(code, start_date, lmt=15):
     沙箱内东方财富API被阻断，切换为腾讯HTTP作为一级数据源"""
 
     def _parse_tencent_days(data, mc, code):
-        """解析腾讯HTTP返回的日K线数据"""
-        days = (data.get('data', {}).get(f'{mc}{code}', {}).get('day', None) or
-                data.get('data', {}).get(f'{mc}{code}', {}).get('qfqday', []))
+        """解析腾讯HTTP返回的日K线数据，过滤非列表元素（如分红信息字典）"""
+        days = (data.get('data', {}).get(f'{mc}{code}', {}).get('qfqday', None) or
+                data.get('data', {}).get(f'{mc}{code}', {}).get('day', []))
         if not days:
             return None
         result = []
@@ -76,8 +77,11 @@ def _fetch_kline_range(code, start_date, lmt=15):
         mc = 'sh' if code.startswith('6') else 'sz'
         url = (f'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?'
                f'param={mc}{code},day,,,{req_lmt},qfq')
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=8, context=_BT_SSL_CTX) as resp:
+        # v6.13.24: 增加Referer头，修复无数据问题（腾讯API检查Referer）
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0',
+            'Referer': 'https://gu.qq.com/'})
+        with urllib.request.urlopen(req, timeout=10, context=_BT_SSL_CTX) as resp:
             data = json.loads(resp.read().decode())
         return _parse_tencent_days(data, mc, code)
 
@@ -263,15 +267,14 @@ def _compute_metrics(trades):
     total_loss_amt = abs(sum(t['return_pct'] for t in losses)) if losses else 0
     profit_factor = round(total_win_amt / total_loss_amt, 2) if total_loss_amt > 0 else 0
 
-    # v6.13.10: 最大回撤从峰值计算（而非累计重置），更准确反映风险
-    # v6.13.20: 最大回撤仅基于有效样本，跳过no_data/no_entry
-    max_dd = 0.0; peak = 0.0; cum = 0.0
+    # v6.13.24: 最大回撤改用复合收益率计算（而非线性求和），更准确反映风险
+    max_dd = 0.0; cum_val = 1.0; peak_val = 1.0
     for t in trades:
         if t['result'] in ('no_data', 'no_entry'):
             continue
-        cum += t['return_pct']
-        peak = max(peak, cum)
-        dd = peak - cum
+        cum_val *= (1 + t['return_pct'] / 100.0)
+        peak_val = max(peak_val, cum_val)
+        dd = (peak_val - cum_val) / peak_val * 100.0
         max_dd = max(max_dd, dd)
 
     # v6.13.20: 夏普计算排除no_data/no_entry
@@ -504,7 +507,7 @@ def generate_backtest_report(bt_result, output_path=None):
     lines.extend([
         "",
         f"> \u26a0\ufe0f 免责声明：回测结果不代表未来表现，仅供参考。",
-        f"> 版本: v6.13.23 | 生成: {today_str}",
+        f"> 版本: v6.13.24 | 生成: {today_str}",
     ])
 
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -560,7 +563,7 @@ def generate_backtest_html(bt_result, output_path=None):
     if not trades:
         html = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>历史回测报告</title>
 <style>body{{font-family:"Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif;max-width:900px;margin:40px auto;padding:20px;background:#f8fafc;color:#1e293b}}h1{{color:#2563eb}}</style></head>
-<body><h1>历史回测报告</h1><p>暂无回测数据。</p><h2>回测说明</h2><ul><li>回测使用最近90天推荐历史。</li><li>单笔最大持仓10个交易日。</li><li>按推荐时的进场、止损、止盈价格进行模拟。</li><li>遵循A股T+1规则，买入当日不检查止盈止损出场。</li><li>回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。</li><li>v6.13.14新增：移动止损(盈利达TP50%保本)、时间止损(持仓3天仍亏损离场)。</li></ul><p style="color:#94a3b8">版本: v6.13.23 | 生成: {today_str}</p></body></html>'''
+<body><h1>历史回测报告</h1><p>暂无回测数据。</p><h2>回测说明</h2><ul><li>回测使用最近90天推荐历史。</li><li>单笔最大持仓10个交易日。</li><li>按推荐时的进场、止损、止盈价格进行模拟。</li><li>遵循A股T+1规则，买入当日不检查止盈止损出场。</li><li>回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。</li><li>v6.13.14新增：移动止损(盈利达TP50%保本)、时间止损(持仓3天仍亏损离场)。</li></ul><p style="color:#94a3b8">版本: v6.13.24 | 生成: {today_str}</p></body></html>'''
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(html)
         return output_path
@@ -688,7 +691,7 @@ tr:hover td{{background:rgba(56,189,248,0.05)}}
 
 <div class="footer">
 <p>\u26a0\ufe0f \u514d\u8d23\u58f0\u660e\uff1a\u56de\u6d4b\u7ed3\u679c\u4e0d\u4ee3\u8868\u672a\u6765\u8868\u73b0\uff0c\u4ec5\u4f9b\u53c2\u8003\u3002</p>
-<p>\u7248\u672c: v6.13.23 | \u751f\u6210: {today_str}</p>
+<p>\u7248\u672c: v6.13.24 | \u751f\u6210: {today_str}</p>
 </div>
 </div>
 </body>
