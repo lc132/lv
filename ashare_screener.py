@@ -22,7 +22,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.21"
+BUILTIN_VERSION = "v6.13.22"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -3749,19 +3749,20 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         
         ai_html += '</div></div>'
     
-    # v6.13.18: 生成回测HTML片段
+    # v6.13.21: 修复HTML回测数据读取 — 指标从bt['metrics']获取，策略从bt['strategy_metrics'](dict)迭代
     backtest_html = ''
     if bt_result and bt_result.get('all_trades'):
         bt = bt_result
+        m = bt.get('metrics', {})
         total_trades = len(bt.get('all_trades', []))
-        win_rate = bt.get('win_rate', 0) * 100
-        avg_return = bt.get('avg_return', 0) * 100
-        profit_loss_ratio = bt.get('profit_loss_ratio', 0)
-        sharpe = bt.get('sharpe', 0)
-        max_drawdown = bt.get('max_drawdown', 0) * 100
-        avg_win = bt.get('avg_win', 0) * 100
-        avg_loss = bt.get('avg_loss', 0) * 100
-        avg_hold = bt.get('avg_hold_days', 0)
+        win_rate = m.get('win_rate', 0)  # _compute_metrics 已返回百分比
+        avg_return = m.get('avg_return', 0)
+        profit_loss_ratio = m.get('profit_factor', 0)  # 键名是 profit_factor
+        sharpe = m.get('sharpe', 0)
+        max_drawdown = m.get('max_drawdown', 0)
+        avg_win = m.get('avg_win', 0)
+        avg_loss = m.get('avg_loss', 0)
+        avg_hold = m.get('avg_hold_days', 0)
         wr_cls = 'win' if win_rate >= 50 else 'loss'
         ar_cls = 'win' if avg_return >= 0 else 'loss'
         sr_cls = 'win' if sharpe >= 0 else 'loss'
@@ -3777,17 +3778,17 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         backtest_html += f'<div class="metric-card-bt"><div class="metric-label-bt">平均亏损</div><div class="metric-value-bt loss">{avg_loss:+.2f}%</div></div>'
         backtest_html += f'<div class="metric-card-bt"><div class="metric-label-bt">平均持仓</div><div class="metric-value-bt">{avg_hold:.1f}天</div></div>'
         backtest_html += '</div><table><thead><tr><th>策略</th><th>笔数</th><th>胜率</th><th>均收</th><th>盈亏比</th><th>夏普</th></tr></thead><tbody>'
-        for s in bt.get('strategy_stats', []):
-            s_wr = s.get('win_rate', 0) * 100
-            s_ar = s.get('avg_return', 0) * 100
+        for s, sm in bt.get('strategy_metrics', {}).items():
+            s_wr = sm.get('win_rate', 0)
+            s_ar = sm.get('avg_return', 0)
             s_cls = 'win' if s_wr >= 50 else 'loss'
             s_ar_cls = 'win' if s_ar >= 0 else 'loss'
-            s_sr = s.get('sharpe', 0)
+            s_sr = sm.get('sharpe', 0)
             s_sr_cls = 'win' if s_sr >= 0 else 'loss'
-            sn = s.get('strategy', '?')
+            sn = s  # s 是策略键名，如 'A', 'B'
             badge_cls = 'strat_' + sn.lower() if sn else 'strat_b'
             sname = _STRATEGY_NAMES.get(sn, sn)
-            backtest_html += f'<tr><td><span class="badge {badge_cls}">{sn}</span> {sname}</td><td>{s.get("trades", 0)}</td><td class="{s_cls}">{s_wr:.1f}%</td><td class="{s_ar_cls}">{s_ar:+.2f}%</td><td>{s.get("profit_loss_ratio", 0):.2f}</td><td class="{s_sr_cls}">{s_sr:.2f}</td></tr>'
+            backtest_html += f'<tr><td><span class="badge {badge_cls}">{sn}</span> {sname}</td><td>{sm.get("total", 0)}</td><td class="{s_cls}">{s_wr:.1f}%</td><td class="{s_ar_cls}">{s_ar:+.2f}%</td><td>{sm.get("profit_factor", 0):.2f}</td><td class="{s_sr_cls}">{s_sr:.2f}</td></tr>'
         backtest_html += '</tbody></table><div style="text-align:center;margin-top:1.2rem;padding-top:.8rem;border-top:1px solid #334155"><a href="../backtest/" target="_blank" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:.6rem 1.8rem;border-radius:8px;font-weight:700;font-size:.82rem;text-decoration:none">📋 查看完整回测报告（含交易明细） →</a></div>'
     else:
         backtest_html = '<div style="color:#94a3b8;padding:1rem;text-align:center">暂无回测数据</div>'
