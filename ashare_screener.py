@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.15
+A股每日盘前短线标的智能筛选 v6.13.18
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测no_entry警告
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -22,7 +22,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.17"
+BUILTIN_VERSION = "v6.13.18"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -3741,7 +3741,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         
         ai_html += '</div></div>'
     
-    # v6.13.15: 生成回测HTML片段
+    # v6.13.18: 生成回测HTML片段
     backtest_html = ''
     if bt_result and bt_result.get('all_trades'):
         bt = bt_result
@@ -4178,12 +4178,15 @@ def step26_github_sync(mp, hd, candidates):
         for f in os.listdir('/workspace'):
             if f.startswith('推荐历史_') and f.endswith('.json'):
                 shutil.copy(os.path.join('/workspace', f), os.path.join(rd, f))
-        # v6.13.13: 同步回测报告到backtest/子目录(GitHub Pages不支持中文文件名)
+        # v6.13.18: 同步回测报告到backtest/子目录(GitHub Pages不支持中文文件名)
         bt_html = os.path.join('/workspace', '回测报告.html')
         if os.path.exists(bt_html):
             bt_dir = os.path.join(rd, 'backtest')
             os.makedirs(bt_dir, exist_ok=True)
             shutil.copy(bt_html, os.path.join(bt_dir, 'index.html'))
+            # 同时复制到筛选报告目录，方便本地查看
+            shutil.copy(bt_html, os.path.join(dst, '回测报告.html'))
+        # 同步回测MD到根目录
         for f in ['回测报告.md']:
             fp = os.path.join('/workspace', f)
             if os.path.exists(fp):
