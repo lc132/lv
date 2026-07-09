@@ -22,7 +22,7 @@ from lib.analyst import generate_ai_report
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 
-BUILTIN_VERSION = "v6.13.18"
+BUILTIN_VERSION = "v6.13.19"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -3780,7 +3780,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             badge_cls = 'strat_' + sn.lower() if sn else 'strat_b'
             sname = _STRATEGY_NAMES.get(sn, sn)
             backtest_html += f'<tr><td><span class="badge {badge_cls}">{sn}</span> {sname}</td><td>{s.get("trades", 0)}</td><td class="{s_cls}">{s_wr:.1f}%</td><td class="{s_ar_cls}">{s_ar:+.2f}%</td><td>{s.get("profit_loss_ratio", 0):.2f}</td><td class="{s_sr_cls}">{s_sr:.2f}</td></tr>'
-        backtest_html += '</tbody></table><div style="text-align:center;margin-top:1.2rem;padding-top:.8rem;border-top:1px solid #334155"><a href="/backtest/" target="_blank" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:.6rem 1.8rem;border-radius:8px;font-weight:700;font-size:.82rem;text-decoration:none">📋 查看完整回测报告（含交易明细） →</a></div>'
+        backtest_html += '</tbody></table><div style="text-align:center;margin-top:1.2rem;padding-top:.8rem;border-top:1px solid #334155"><a href="../backtest/" target="_blank" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:.6rem 1.8rem;border-radius:8px;font-weight:700;font-size:.82rem;text-decoration:none">📋 查看完整回测报告（含交易明细） →</a></div>'
     else:
         backtest_html = '<div style="color:#94a3b8;padding:1rem;text-align:center">暂无回测数据</div>'
     
@@ -4181,11 +4181,16 @@ def step26_github_sync(mp, hd, candidates):
         # v6.13.18: 同步回测报告到backtest/子目录(GitHub Pages不支持中文文件名)
         bt_html = os.path.join('/workspace', '回测报告.html')
         if os.path.exists(bt_html):
+            # 1) GitHub Pages: backtest/ (repo root)
             bt_dir = os.path.join(rd, 'backtest')
             os.makedirs(bt_dir, exist_ok=True)
             shutil.copy(bt_html, os.path.join(bt_dir, 'index.html'))
-            # 同时复制到筛选报告目录，方便本地查看
+            # 2) 本地查看: 筛选目录下回测报告.html
             shutil.copy(bt_html, os.path.join(dst, '回测报告.html'))
+            # 3) 本地查看: workspace/backtest/index.html (支持../backtest/相对路径)
+            ws_bt_dir = os.path.join('/workspace', 'backtest')
+            os.makedirs(ws_bt_dir, exist_ok=True)
+            shutil.copy(bt_html, os.path.join(ws_bt_dir, 'index.html'))
         # 同步回测MD到根目录
         for f in ['回测报告.md']:
             fp = os.path.join('/workspace', f)
