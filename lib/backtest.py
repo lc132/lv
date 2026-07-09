@@ -315,10 +315,10 @@ def run_backtest(hold_days=10, max_days_lookback=90):
 
     today = datetime.now() + timedelta(hours=8)  # v6.13.10: 北京时间（与主脚本一致）
     cutoff = today - timedelta(days=max_days_lookback)
-    # v6.13.10: 预测日=买入日(盘前预测当日买入)，仅排除当天(尚无收盘K线)
+    # v6.13.28: 预测日=买入日(盘前预测当日买入)，排除当天预测(尚无收盘K线，显示无意义)
     history = [h for h in history
                if h.get('prediction_date') and h['prediction_date'] >= cutoff.strftime('%Y-%m-%d')
-               and h['prediction_date'] <= today.strftime('%Y-%m-%d')]
+               and h['prediction_date'] < today.strftime('%Y-%m-%d')]
 
     # v6.13.10: 去重key改为(code,date,strategy,entry)，保留同股票不同策略的推荐
     seen = set()
