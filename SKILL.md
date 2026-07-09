@@ -1,11 +1,12 @@
+- **v6.13.23**: 修复回测"无数据"标的 — _fetch_kline_range增加重试(2次)+三级兜底(宽泛日期lmt=30)，run_backtest增加跨日期K线复用逻辑，4只无数据标的全部消除
 ---
 name: ashare-screener
 description: A股每日盘前短线标的智能筛选(v6.13.21)。基于前一日收盘数据，通过37步筛选流程（北京时间→GitHub拉取行业缓存→节假日→极端行情→外围市场→持仓同步→做T→持仓跟踪→持仓危机→全市场API拉取→行业缓存→历史K线(三级降级pytdx→东方财富HTTP→iTick)→财务→F10→风险事件→拥挤度→13项硬排除→27项信号过滤→20策略评分+MACD/K线+多因子共振→微观结构过滤→行业限制→新闻筛查→TOP10龙虎榜+板块热度排序→主力资金→AI策略分析(市场全景/板块研判/个股深度研判)→历史回测→HTML报告→GitHub同步→飞书推送），输出短线标的_YYYYMMDD.md和可视化HTML报告。
 ---
-# A股盘前短线标的筛选 v6.13.22
+# A股盘前短线标的筛选 v6.13.23
 
 ## 版本历史
-- **v6.13.22**: 修复HTML回测数据显示为0的Bug — metrics从bt["metrics"]读取(原错误从bt顶层读取)，profit_factor键名修正，strategy_metrics从dict迭代(原错误用list)  
+- **v6.13.23**: 修复HTML回测数据显示为0的Bug — metrics从bt["metrics"]读取(原错误从bt顶层读取)，profit_factor键名修正，strategy_metrics从dict迭代(原错误用list)  
 - **v6.13.21**: 修复to变量未定义Bug(step12信号过滤#7高换手低涨幅/step13策略匹配多策略)；行业缓存补全——超声电子(000823)汽车→电子+电子元件,东方钽业(000962)非银金融→有色金属+小金属
 - **v6.13.20**: 回测修复+安全加固——K线过滤当天数据回退/avg_return排除无效/profit_factor总额比/sharpe排除无效/max_drawdown排除无效/volume_ratio默认值/HTML注入转义/md_to_html转义/strategy_check去重/飞书策略名称映射修复
 - **v6.13.19**: 回测链接../backtest/相对路径(GitHub Pages兼容)+workspace/backtest/本地目录——回测链接统一用/backtest/；同安复制回测到筛选目录

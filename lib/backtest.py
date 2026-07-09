@@ -1,7 +1,8 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.13.10
+# A股短线筛选 — 历史回测模块 v6.13.23
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
+# v6.13.23: _fetch_kline_range 增加重试(2次)、三级兜底(宽泛日期)、run_backtest 增加跨日期K线复用
 # ============================================================
 
 import urllib.request
@@ -51,45 +52,57 @@ def _safe_read_json(path, default=None):
 
 
 def _fetch_kline_range(code, start_date, lmt=15):
-    """v6.13.10: 获取指定日期之后N根日K线（腾讯HTTP → iTick降级）
+    """v6.13.23: 获取指定日期之后N根日K线（腾讯HTTP重试 → iTick降级 → 宽泛兜底）
     沙箱内东方财富API被阻断，切换为腾讯HTTP作为一级数据源"""
-    try:
-        # 一级: 腾讯HTTP日K线（与主脚本一致，沙箱可达）
-        mc = 'sh' if code.startswith('6') else 'sz'
-        end_dt = datetime.strptime(start_date, '%Y-%m-%d') + timedelta(days=30)
-        url = (f'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?'
-               f'param={mc}{code},day,,,{lmt + 15},qfq')
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=8, context=_BT_SSL_CTX) as resp:
-            data = json.loads(resp.read().decode())
+
+    def _parse_tencent_days(data, mc, code):
+        """解析腾讯HTTP返回的日K线数据"""
         days = (data.get('data', {}).get(f'{mc}{code}', {}).get('day', None) or
                 data.get('data', {}).get(f'{mc}{code}', {}).get('qfqday', []))
-        if days:
-            result = []
-            for d in days:
-                if isinstance(d, list) and len(d) >= 6:
-                    result.append({
-                        'date': d[0], 'open': float(d[1]),
-                        'close': float(d[2]), 'high': float(d[3]),
-                        'low': float(d[4]), 'volume': float(d[5]),
-                    })
-            # v6.13.20: 当天prediction_date无未来K线时回退到最新可用日期
-            result = [r for r in result if r['date'] >= start_date]
-            if not result and len(days) > 0:
-                # 回退：取最新K线作为参考
-                result = [{
+        if not days:
+            return None
+        result = []
+        for d in days:
+            if isinstance(d, list) and len(d) >= 6:
+                result.append({
                     'date': d[0], 'open': float(d[1]),
                     'close': float(d[2]), 'high': float(d[3]),
                     'low': float(d[4]), 'volume': float(d[5]),
-                } for d in days[-1:] if isinstance(d, list) and len(d) >= 6]
-            if result:
-                return result
-    except Exception as e:
-        if os.environ.get('LV_DEBUG'):
-            print(f"  [回测K线] 腾讯HTTP失败 {code}: {str(e)[:60]}")
+                })
+        return result if result else None
+
+    def _try_tencent(req_lmt):
+        """尝试腾讯HTTP请求，返回K线列表或None"""
+        mc = 'sh' if code.startswith('6') else 'sz'
+        url = (f'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?'
+               f'param={mc}{code},day,,,{req_lmt},qfq')
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=8, context=_BT_SSL_CTX) as resp:
+            data = json.loads(resp.read().decode())
+        return _parse_tencent_days(data, mc, code)
+
+    # v6.13.23: 一级数据源 — 腾讯HTTP，最多2次重试
+    for attempt in range(2):
+        try:
+            raw = _try_tencent(lmt + 15)
+            if raw:
+                result = [r for r in raw if r['date'] >= start_date]
+                if not result:
+                    # 回退：取最新K线作为参考
+                    result = raw[-1:]
+                if result:
+                    return result
+            # days为空：等1秒后重试
+            if attempt == 0:
+                time.sleep(1)
+        except Exception as e:
+            if os.environ.get('LV_DEBUG'):
+                print(f"  [回测K线] 腾讯HTTP失败 {code} (attempt {attempt+1}): {str(e)[:60]}")
+            if attempt == 0:
+                time.sleep(1)
 
     # 二级降级: iTick API
-    itick_key = os.environ.get("ITICK_API_KEY", "")  # v6.13.10: 移除硬编码默认值
+    itick_key = os.environ.get("ITICK_API_KEY", "")
     if itick_key:
         try:
             region = 'SH' if code.startswith('6') else 'SZ'
@@ -102,20 +115,30 @@ def _fetch_kline_range(code, start_date, lmt=15):
                 data = json.loads(resp.read().decode())
             bars = data.get('data', [])
             if bars:
-                bars.sort(key=lambda b: b.get('t', 0))
-                result = []
-                for b in bars:
-                    date_str = datetime.fromtimestamp(b['t'] / 1000).strftime('%Y-%m-%d')
-                    result.append({
-                        'date': date_str, 'open': b['o'],
-                        'close': b['c'], 'high': b['h'],
-                        'low': b['l'], 'volume': b['v'],
-                    })
-                result = [r for r in result if r['date'] >= start_date]
-                return result
+                bars_all = sorted([{
+                    'date': datetime.fromtimestamp(b['t'] / 1000).strftime('%Y-%m-%d'),
+                    'open': b['o'], 'close': b['c'], 'high': b['h'],
+                    'low': b['l'], 'volume': b['v'],
+                } for b in bars], key=lambda x: x['date'])
+                result = [r for r in bars_all if r['date'] >= start_date]
+                if result:
+                    return result
+                # v6.13.23: iTick有数据但全在start_date之前，取最新一根
+                if bars_all:
+                    return bars_all[-1:]
         except Exception as e:
             if os.environ.get('LV_DEBUG'):
                 print(f"  [回测K线] iTick失败 {code}: {str(e)[:60]}")
+
+    # v6.13.23: 三级兜底 — 更宽日期范围请求腾讯HTTP（lmt=30），不限制start_date
+    try:
+        raw = _try_tencent(30)
+        if raw:
+            raw.sort(key=lambda x: x['date'])
+            return raw[-min(len(raw), lmt):]
+    except Exception as e:
+        if os.environ.get('LV_DEBUG'):
+            print(f"  [回测K线] 腾讯HTTP兜底失败 {code}: {str(e)[:60]}")
 
     return []
 
@@ -307,10 +330,12 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     print(f"  推荐历史: {len(history)} 条")
 
     code_kline_cache = {}
-    # v6.13.10: 按 (code, prediction_date) 分别拉取K线，而非仅取最新pred_date
-    # 避免同一code多次推荐时，早期交易使用错误K线区间
+    # v6.13.23: 按code聚合所有pred_date，先尝试精确获取，失败后启用跨日期复用
     codes_to_fetch = set((h.get('code', ''), h.get('prediction_date', '')) for h in history)
     print(f"  获取后续K线: {len(codes_to_fetch)} 个(代码,日期)组合...")
+
+    # v6.13.23: 同code的K线缓存（按日期），用于跨日期复用兜底
+    code_all_klines = {}
 
     for code, pred_date in codes_to_fetch:
         if not code or not pred_date:
@@ -321,9 +346,33 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         klines = _fetch_kline_range(code, pred_date, lmt=hold_days + 5)
         if klines:
             code_kline_cache[cache_key] = {k['date']: k for k in klines}
+            # v6.13.23: 聚合到code_all_klines用于跨日期复用
+            if code not in code_all_klines:
+                code_all_klines[code] = {}
+            code_all_klines[code].update({k['date']: k for k in klines})
         time.sleep(0.02)
 
-    print(f"  K线获取: {len(code_kline_cache)} 只有效")
+    # v6.13.23: 对于获取失败的(code, pred_date)，尝试从同code其他日期缓存中复用
+    missing_count = 0
+    reused_count = 0
+    for code, pred_date in codes_to_fetch:
+        cache_key = (code, pred_date)
+        if cache_key in code_kline_cache:
+            continue
+        if code in code_all_klines and code_all_klines[code]:
+            # 找到pred_date之后最近的K线
+            all_dates = sorted(code_all_klines[code].keys())
+            post_dates = [d for d in all_dates if d >= pred_date]
+            if post_dates:
+                code_kline_cache[cache_key] = {d: code_all_klines[code][d] for d in post_dates[:hold_days + 5]}
+                reused_count += 1
+            else:
+                missing_count += 1
+        else:
+            missing_count += 1
+
+    if reused_count > 0:
+        print(f"  K线获取: {len(code_kline_cache)} 只有效 (含{reused_count}只跨日期复用)")
 
     trades = []
     for h in history:
@@ -455,7 +504,7 @@ def generate_backtest_report(bt_result, output_path=None):
     lines.extend([
         "",
         f"> \u26a0\ufe0f 免责声明：回测结果不代表未来表现，仅供参考。",
-        f"> 版本: v6.13.14 | 生成: {today_str}",
+        f"> 版本: v6.13.23 | 生成: {today_str}",
     ])
 
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -511,7 +560,7 @@ def generate_backtest_html(bt_result, output_path=None):
     if not trades:
         html = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>历史回测报告</title>
 <style>body{{font-family:"Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif;max-width:900px;margin:40px auto;padding:20px;background:#f8fafc;color:#1e293b}}h1{{color:#2563eb}}</style></head>
-<body><h1>历史回测报告</h1><p>暂无回测数据。</p><h2>回测说明</h2><ul><li>回测使用最近90天推荐历史。</li><li>单笔最大持仓10个交易日。</li><li>按推荐时的进场、止损、止盈价格进行模拟。</li><li>遵循A股T+1规则，买入当日不检查止盈止损出场。</li><li>回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。</li><li>v6.13.14新增：移动止损(盈利达TP50%保本)、时间止损(持仓3天仍亏损离场)。</li></ul><p style="color:#94a3b8">版本: v6.13.14 | 生成: {today_str}</p></body></html>'''
+<body><h1>历史回测报告</h1><p>暂无回测数据。</p><h2>回测说明</h2><ul><li>回测使用最近90天推荐历史。</li><li>单笔最大持仓10个交易日。</li><li>按推荐时的进场、止损、止盈价格进行模拟。</li><li>遵循A股T+1规则，买入当日不检查止盈止损出场。</li><li>回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。</li><li>v6.13.14新增：移动止损(盈利达TP50%保本)、时间止损(持仓3天仍亏损离场)。</li></ul><p style="color:#94a3b8">版本: v6.13.23 | 生成: {today_str}</p></body></html>'''
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(html)
         return output_path
@@ -639,7 +688,7 @@ tr:hover td{{background:rgba(56,189,248,0.05)}}
 
 <div class="footer">
 <p>\u26a0\ufe0f \u514d\u8d23\u58f0\u660e\uff1a\u56de\u6d4b\u7ed3\u679c\u4e0d\u4ee3\u8868\u672a\u6765\u8868\u73b0\uff0c\u4ec5\u4f9b\u53c2\u8003\u3002</p>
-<p>\u7248\u672c: v6.13.10 | \u751f\u6210: {today_str}</p>
+<p>\u7248\u672c: v6.13.23 | \u751f\u6210: {today_str}</p>
 </div>
 </div>
 </body>
