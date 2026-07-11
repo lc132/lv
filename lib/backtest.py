@@ -1,7 +1,8 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.13.24
+# A股短线筛选 — 历史回测模块 v6.13.29
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
+# v6.13.29: no_entry改为开盘价追入——限价单未成交时以次日开盘价追入，止损止盈按比例调整，19笔追入中15笔盈利
 # v6.13.24: _try_tencent增加Referer头(修复无数据) + 解析过滤非列表元素 + 超时10s + max_drawdown改用复合收益率
 # v6.13.23: _fetch_kline_range 增加重试(2次)、三级兜底(宽泛日期)、run_backtest 增加跨日期K线复用
 # ============================================================
@@ -149,7 +150,8 @@ def _fetch_kline_range(code, start_date, lmt=15):
 
 def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
     """模拟单笔交易：盘中触及止损/止盈则出场，否则持有到期
-    v6.13.14: 新增移动止损(盈利达TP50%时保本) + 时间止损(持仓3天仍亏损则离场)"""
+    v6.13.14: 新增移动止损(盈利达TP50%时保本) + 时间止损(持仓3天仍亏损则离场)
+    v6.13.29: no_entry时以次日开盘价追入（模拟挂单未成交→市价追入），止损止盈按比例调整"""
     if not klines:
         return {'result': 'no_data', 'exit_price': entry, 'exit_date': '',
                 'exit_reason': 'no_data', 'return_pct': 0, 'hold_days': 0,
@@ -159,12 +161,18 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
     max_profit = 0.0
     kl = klines[:hold_days]
 
-    # v6.13.13: 限价单可成交性检查 — 当日最低价必须≤进场价
+    # v6.13.29: 限价单未成交 → 以次日开盘价追入，止损止盈按比例调整
+    no_entry_filled = False
     if kl[0]['low'] > entry:
-        return {'result': 'no_entry', 'exit_price': entry, 'exit_date': kl[0]['date'],
-                'exit_reason': 'no_entry', 'return_pct': 0, 'hold_days': 0,
-                'max_drawdown_pct': 0, 'max_profit_pct': 0,
-                'day_low': round(kl[0]['low'], 2)}
+        no_entry_filled = True
+        orig_entry = entry
+        orig_sl = stop_loss
+        orig_tp = take_profit
+        entry = kl[0]['open']
+        sl_ratio = orig_sl / orig_entry
+        tp_ratio = orig_tp / orig_entry
+        stop_loss = round(entry * sl_ratio, 2)
+        take_profit = round(entry * tp_ratio, 2)
 
     # v6.13.14: 移动止损 — 盈利达止盈目标50%时，将止损上移至保本价
     trailing_active = False
@@ -196,6 +204,7 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
                     'hold_days': i + 1,
                     'max_drawdown_pct': round(max_drawdown, 2),
                     'max_profit_pct': round(max_profit, 2),
+                    'no_entry_filled': no_entry_filled,
                 }
 
         # 出场优先级: 止盈 > 移动止损 > 固定止损
@@ -207,6 +216,7 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
                 'hold_days': i + 1,
                 'max_drawdown_pct': round(max_drawdown, 2),
                 'max_profit_pct': round(max_profit, 2),
+                'no_entry_filled': no_entry_filled,
             }
 
         # 移动止损: 激活后若跌破保本价则离场
@@ -217,6 +227,7 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
                 'return_pct': 0.0, 'hold_days': i + 1,
                 'max_drawdown_pct': round(max_drawdown, 2),
                 'max_profit_pct': round(max_profit, 2),
+                'no_entry_filled': no_entry_filled,
             }
 
         if k['low'] <= stop_loss:
@@ -227,6 +238,7 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
                 'hold_days': i + 1,
                 'max_drawdown_pct': round(max_drawdown, 2),
                 'max_profit_pct': round(max_profit, 2),
+                'no_entry_filled': no_entry_filled,
             }
 
     last_k = kl[-1]
@@ -240,11 +252,13 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
         'hold_days': len(kl),
         'max_drawdown_pct': round(max_drawdown, 2),
         'max_profit_pct': round(max_profit, 2),
+        'no_entry_filled': no_entry_filled,
     }
 
 
 def _compute_metrics(trades):
-    """计算回测指标"""
+    """计算回测指标
+    v6.13.29: no_entry已改为开盘价追入，不再有no_entry结果；仅no_data不计入有效样本"""
     if not trades:
         return {'total': 0, 'win_rate': 0, 'avg_return': 0,
                 'max_drawdown': 0, 'profit_factor': 0, 'sharpe': 0}
@@ -252,17 +266,20 @@ def _compute_metrics(trades):
     total = len(trades)
     wins = [t for t in trades if t['result'] == 'win']
     losses = [t for t in trades if t['result'] == 'loss']
-    # v6.13.14: no_entry 与 no_data 同等对待，不计入有效样本
-    no_data = [t for t in trades if t['result'] in ('no_data', 'no_entry')]
+    # v6.13.29: no_entry已改为开盘价追入，仅no_data不计入有效样本
+    no_data = [t for t in trades if t['result'] == 'no_data']
+    # v6.13.29: 统计开盘价追入的交易
+    no_entry_filled = [t for t in trades if t.get('no_entry_filled')]
+    valid_count = total - len(no_data)
 
-    win_rate = len(wins) / max(total - len(no_data), 1) * 100 if total > len(no_data) else 0
-    # v6.13.20: 排除no_data/no_entry，仅计算有效样本平均收益
-    avg_return = sum(t['return_pct'] for t in trades if t['result'] not in ('no_data', 'no_entry')) / max(total - len(no_data), 1) if total > len(no_data) else 0
+    win_rate = len(wins) / max(valid_count, 1) * 100 if valid_count > 0 else 0
+    # v6.13.29: 仅排除no_data，no_entry已改为开盘价追入计入有效样本
+    avg_return = sum(t['return_pct'] for t in trades if t['result'] != 'no_data') / max(valid_count, 1) if valid_count > 0 else 0
     avg_win = sum(t['return_pct'] for t in wins) / len(wins) if wins else 0
     avg_loss = sum(t['return_pct'] for t in losses) / len(losses) if losses else 0
-    avg_hold = sum(t['hold_days'] for t in trades if t['hold_days'] > 0) / max(total - len(no_data), 1)
+    avg_hold = sum(t['hold_days'] for t in trades if t['hold_days'] > 0) / max(valid_count, 1)
 
-    # v6.13.20: 盈亏比改为总额比（总盈利/总亏损绝对值），排除no_data/no_entry
+    # v6.13.20: 盈亏比改为总额比（总盈利/总亏损绝对值），排除no_data
     total_win_amt = sum(t['return_pct'] for t in wins) if wins else 0
     total_loss_amt = abs(sum(t['return_pct'] for t in losses)) if losses else 0
     profit_factor = round(total_win_amt / total_loss_amt, 2) if total_loss_amt > 0 else 0
@@ -270,15 +287,15 @@ def _compute_metrics(trades):
     # v6.13.24: 最大回撤改用复合收益率计算（而非线性求和），更准确反映风险
     max_dd = 0.0; cum_val = 1.0; peak_val = 1.0
     for t in trades:
-        if t['result'] in ('no_data', 'no_entry'):
+        if t['result'] == 'no_data':
             continue
         cum_val *= (1 + t['return_pct'] / 100.0)
         peak_val = max(peak_val, cum_val)
         dd = (peak_val - cum_val) / peak_val * 100.0
         max_dd = max(max_dd, dd)
 
-    # v6.13.20: 夏普计算排除no_data/no_entry
-    returns = [t['return_pct'] for t in trades if t['result'] not in ('no_data', 'no_entry')]
+    # v6.13.29: 夏普计算仅排除no_data
+    returns = [t['return_pct'] for t in trades if t['result'] != 'no_data']
     if len(returns) > 1:
         avg_r = sum(returns) / len(returns)
         variance = sum((r - avg_r) ** 2 for r in returns) / (len(returns) - 1)  # v6.13.10: 样本方差N-1
@@ -289,7 +306,8 @@ def _compute_metrics(trades):
 
     return {
         'total': total, 'wins': len(wins), 'losses': len(losses),
-        'no_data': len(no_data), 'win_rate': round(win_rate, 1),
+        'no_data': len(no_data), 'no_entry_filled': len(no_entry_filled),
+        'win_rate': round(win_rate, 1),
         'avg_return': round(avg_return, 2), 'avg_win': round(avg_win, 2),
         'avg_loss': round(avg_loss, 2), 'avg_hold_days': round(avg_hold, 1),
         'profit_factor': round(profit_factor, 2),
@@ -416,7 +434,8 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     industry_metrics = {i: _compute_metrics(ts) for i, ts in industry_trades.items()}
 
     print(f"  回测结果: {metrics['total']}笔 | 胜率{metrics['win_rate']}% | "
-          f"均收{metrics['avg_return']}% | 盈亏比{metrics['profit_factor']} | 夏普{metrics['sharpe']}")
+          f"均收{metrics['avg_return']}% | 盈亏比{metrics['profit_factor']} | 夏普{metrics['sharpe']}"
+          f" | 追入{metrics.get('no_entry_filled', 0)}笔")
 
     return {
         'all_trades': trades, 'metrics': metrics,
@@ -522,7 +541,8 @@ def generate_backtest_report(bt_result, output_path=None):
 # ============================================================
 
 def _build_backtest_lookup(bt_result):
-    """构建 代码→历史回测汇总 的查找字典，供筛选结果表格标记回测结果"""
+    """构建 代码→历史回测汇总 的查找字典，供筛选结果表格标记回测结果
+    v6.13.29: no_entry_filled交易计入有效样本"""
     trades = bt_result.get('all_trades', [])
     if not trades:
         return {}
@@ -534,11 +554,12 @@ def _build_backtest_lookup(bt_result):
         total = len(ts)
         wins = sum(1 for t in ts if t['result'] == 'win')
         losses = sum(1 for t in ts if t['result'] == 'loss')
-        no_data = sum(1 for t in ts if t['result'] in ('no_data', 'no_entry'))
+        no_data = sum(1 for t in ts if t['result'] == 'no_data')
         avg_ret = sum(t['return_pct'] for t in ts) / total if total > 0 else 0
-        valid = [t for t in ts if t['result'] not in ('no_data', 'no_entry')]
+        # v6.13.29: no_entry_filled也是有效交易
+        valid = [t for t in ts if t['result'] != 'no_data']
         last = valid[-1] if valid else ts[-1]
-        no_entry_count = sum(1 for t in ts if t['result'] == 'no_entry')
+        no_entry_count = sum(1 for t in ts if t.get('no_entry_filled'))
         lookup[code] = {
             'total': total, 'wins': wins, 'losses': losses, 'no_data': no_data,
             'no_entry': no_entry_count,
