@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.30
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss(v6.13.30)
+A股每日盘前短线标的智能筛选 v6.13.31
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略PK(v6.13.31)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,7 +23,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.30"
+BUILTIN_VERSION = "v6.13.31"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -3257,9 +3257,103 @@ def _compute_pl_ratios(candidates, sector_limit_up=None):
     return set(c for c, _, _, _ in _pl_sorted[:10])
 
 # ============================================================
-# 步骤20：Markdown输出
+# 步骤19B：同策略PK
 # ============================================================
-def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report=None, bt_lookup=None):
+def step19b_strategy_pk(candidates, kline_data, bt_lookup):
+    """v6.13.31: 同策略标的相互PK，多维度对比标记获胜标的
+    PK维度(5项，各1分): 综合评分/盈亏比/技术面/主力资金/回测胜率
+    每个策略组(≥2只)中总分最高者标记 _pk_winner=True"""
+    from collections import defaultdict
+    strategy_groups = defaultdict(list)
+    for c in candidates:
+        strategy_groups[c.get('strategy', '?')].append(c)
+    
+    pk_results = {}
+    for strat, group in strategy_groups.items():
+        if len(group) < 2:
+            for c in group:
+                c['_pk_winner'] = False
+                c['_pk_score'] = 0
+                c['_pk_note'] = ''
+            continue
+        
+        # 为每只标的计算PK得分
+        for c in group:
+            pk_score = 0
+            pk_details = []
+            code = c.get('code', '')
+            kd = kline_data.get(code, {})
+            
+            # 维度1: 综合评分 (直接比较)
+            pk_details.append(('score', c.get('score', 0)))
+            
+            # 维度2: 盈亏比
+            pk_details.append(('pl', c.get('_pl_ratio', 0) or 0))
+            
+            # 维度3: 技术面 (MACD+KDJ+均线)
+            tech_score = 0
+            if kd:
+                dif = kd.get('dif') or 0; dea = kd.get('dea_val') or 0
+                if dif > dea: tech_score += 1  # MACD金叉/多头
+                k_val = kd.get('k') or 0; d_val = kd.get('d') or 0
+                if k_val > d_val: tech_score += 1  # KDJ金叉
+                ma5 = kd.get('ma5') or 0; ma10 = kd.get('ma10') or 0; ma20 = kd.get('ma20') or 0
+                if ma5 > ma10 > ma20: tech_score += 1  # 均线多头排列
+                elif ma5 > ma10: tech_score += 0.5  # 短期多头
+            pk_details.append(('tech', tech_score))
+            
+            # 维度4: 主力资金
+            pk_details.append(('flow', c.get('main_inflow', 0) or 0))
+            
+            # 维度5: 回测胜率
+            bt_win_rate = 0
+            if bt_lookup and code in bt_lookup:
+                bt = bt_lookup[code]
+                total = bt['total']
+                if total > 0:
+                    bt_win_rate = bt['wins'] / total
+            pk_details.append(('bt', bt_win_rate))
+            
+            c['_pk_details'] = pk_details
+            c['_pk_score'] = 0  # 初始化
+        
+        # 逐维度PK: 每个维度最高者+1分，平局各+0.5
+        dims = ['score', 'pl', 'tech', 'flow', 'bt']
+        for dim_idx, dim_name in enumerate(dims):
+            values = [(c, c['_pk_details'][dim_idx][1]) for c in group]
+            max_val = max(v for _, v in values)
+            if max_val == 0:
+                continue
+            winners = [c for c, v in values if v == max_val]
+            if len(winners) == 1:
+                winners[0]['_pk_score'] += 1
+            else:
+                for w in winners:
+                    w['_pk_score'] += 0.5
+        
+        # 总分最高者获胜；平局时综合评分高者胜
+        max_pk = max(c['_pk_score'] for c in group)
+        top_scorers = [c for c in group if c['_pk_score'] == max_pk]
+        if len(top_scorers) == 1:
+            winner = top_scorers[0]
+        else:
+            winner = max(top_scorers, key=lambda x: x.get('score', 0))
+        
+        for c in group:
+            c['_pk_winner'] = (c is winner)
+            c['_pk_note'] = f"PK:{c['_pk_score']}/5" if c is winner else f"PK:{c['_pk_score']}/5"
+        
+        pk_results[strat] = {
+            'count': len(group),
+            'winner_code': winner.get('code'),
+            'winner_name': winner.get('name'),
+            'winner_score': winner['_pk_score'],
+            'losers': [(c.get('code'), c.get('name'), c['_pk_score']) for c in group if c is not winner]
+        }
+    
+    return pk_results
+# ============================================================
+def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report=None, bt_lookup=None, pk_results=None):
     mp = f"/workspace/短线标的_{prediction_date}.md"
     lines = [
         f"# A股短线标的筛选报告 — {prediction_date}", "",
@@ -3283,8 +3377,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         _top10_codes = _compute_pl_ratios(candidates)
 
         lines.append("## 推荐标的\n")
-        lines.append("| # | TOP10 | 策略 | 标的 | 代码 | 行业 | 二级行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 60日高 | 60日低 | 档位 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 | 盈亏比 | 回测 |\n")
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+        lines.append("| # | TOP10 | PK | 策略 | 标的 | 代码 | 行业 | 二级行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 60日高 | 60日低 | 档位 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 | 盈亏比 | 回测 |\n")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
         for idx, c in enumerate(candidates, 1):
             code = c.get('code', ''); name = c.get('name', '')
             s = c.get('strategy', '?'); ind = _industry_str(c); biz = c.get('business', '')
@@ -3307,6 +3401,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
             tp = round(entry * _STRATEGY_TAKE_PROFIT.get(s, 1.05), 2)
             pl_ratio = c.get('_pl_ratio', round((tp - entry) / max(entry - sl, 0.01), 2))
             top10_mark = "⭐" if code in _top10_codes else ""
+            # v6.13.31: 同策略PK标记
+            pk_mark = "🏆" if c.get('_pk_winner') else ("-" if c.get('_pk_note') == '' else " ")
             r7d = c.get('_recent_7d')
             r7d_str = str(r7d) if r7d is not None else ""
             # v6.6.44: 7日列附带历史策略标注
@@ -3326,7 +3422,16 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                 emoji = '🟢' if bt['last_result'] == 'win' else ('🔴' if bt['last_result'] == 'loss' else '⚪')
                 suffix = '⚠️' if bt.get('no_entry', 0) > 0 else ''
                 bt_mark = f'{emoji}{bt["wins"]}/{bt["total"]}{suffix}'
-            lines.append(f"| {idx} | {top10_mark} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {h60_str} | {l60_str} | {tier_label} | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} | {pl_ratio} | {bt_mark} |\n")
+            lines.append(f"| {idx} | {top10_mark} | {pk_mark} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {h60_str} | {l60_str} | {tier_label} | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} | {pl_ratio} | {bt_mark} |\n")
+        # v6.13.31: 同策略PK总结
+        if pk_results:
+            pk_strats = [(s, info) for s, info in pk_results.items() if info['count'] >= 2]
+            if pk_strats:
+                lines.append("\n## 同策略PK\n")
+                lines.append("- **PK规则**：同策略标的在5个维度（综合评分/盈亏比/技术面/主力资金/回测胜率）两两对决，总分最高者获胜")
+                lines.append("- **PK标记**：🏆 = 获胜 | 空格 = 同策略败方 | - = 无同策略对手")
+                for strat, info in pk_strats:
+                    lines.append(f"  - **{strat}策略** ({info['count']}只): 🏆 **{info['winner_name']}**({info['winner_code']}) 胜出\n")
         lines.append("\n## 回测说明\n")
         lines.append("- **回测列格式**：`图标 + 胜/样本`，例如 `🟢2/2` 表示历史同标的样本2笔、盈利2笔。")
         lines.append("- **图标含义**：🟢 最近一次样本盈利；🔴 最近一次样本亏损；⚪ 后续K线不足或未形成有效胜负；⚠️ 历史有限价单未成交（当日最低价>进场价）；空白表示无可匹配历史样本。")
@@ -3394,7 +3499,24 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
 # ============================================================
 # 步骤20B：HTML报告（v6.6.27 含指数行情）
 # ============================================================
-def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report=None, bt_lookup=None, kline_data=None, bt_result=None):
+def _build_pk_html(pk_results):
+    """v6.13.31: 构建同策略PK HTML片段"""
+    pk_strats = [(s, info) for s, info in pk_results.items() if info['count'] >= 2]
+    if not pk_strats:
+        return ''
+    html_parts = ['<section><h2>同策略PK</h2><div class="pk-summary">']
+    html_parts.append('<p style="color:#94a3b8;font-size:.85rem;margin-bottom:1rem">同策略标的在5个维度（综合评分/盈亏比/技术面/主力资金/回测胜率）对决，总分最高者获胜</p>')
+    for strat, info in pk_strats:
+        html_parts.append(f'<div class="pk-card" style="background:#1e293b;border-radius:12px;padding:1rem;margin-bottom:.75rem;border-left:4px solid #38bdf8">')
+        html_parts.append(f'<div style="font-weight:bold;color:#e2e8f0;margin-bottom:.5rem"><span class="badge strat_{strat.lower()}" style="display:inline-block;margin-right:.5rem">{strat}</span> {info["count"]}只同策略对决</div>')
+        html_parts.append(f'<div style="color:#38bdf8;font-size:1.1rem;margin-bottom:.25rem">🏆 <strong>{info["winner_name"]}</strong> ({info["winner_code"]}) — PK得分 {info["winner_score"]}/5</div>')
+        loser_names = ', '.join(f'{name}({code})' for code, name, score in info['losers'])
+        html_parts.append(f'<div style="color:#94a3b8;font-size:.8rem">败方: {loser_names}</div>')
+        html_parts.append('</div>')
+    html_parts.append('</div></section>')
+    return '\n'.join(html_parts)
+
+def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report=None, bt_lookup=None, kline_data=None, bt_result=None, pk_results=None):
     hd = f"/workspace/ashare-screening-{pred_yyyymmdd}"
     os.makedirs(hd, exist_ok=True)
     hp = f"{hd}/ashare-screening-{pred_yyyymmdd}.html"
@@ -3440,6 +3562,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         else: l60_str = "-"
         tier_label = c.get('_tier_label', '-'); tier_cls = c.get('_tier_cls', 'tier_na')
         top10_mark = "⭐" if code in _top10_codes else ""
+        # v6.13.31: 同策略PK标记
+        pk_mark = "🏆" if c.get('_pk_winner') else ("-" if c.get('_pk_note') == '' else " ")
         r7d_html = str(c.get('_recent_7d')) if c.get('_recent_7d') is not None else ""
         # v6.6.44: 7日列附带历史策略标注
         r7s = c.get('_recent_7d_strategies', {})
@@ -3461,7 +3585,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             bt_emoji = "🟢" if bt["last_result"]=="win" else ("🔴" if bt["last_result"]=="loss" else "⚪")
             bt_suffix = ' ⚠️' if bt.get('no_entry', 0) > 0 else ''
             bt_mark = f'<span class="{bt["last_result"]}">{bt_emoji}{bt["wins"]}/{bt["total"]}{bt_suffix}</span>'
-        rows_html += f"""<tr class="{scl}"><td>{idx}</td><td>{top10_mark}</td><td><span class="badge {scl}">{s}</span></td>
+        rows_html += f"""<tr class="{scl}"><td>{idx}</td><td>{top10_mark}</td><td>{pk_mark}</td><td><span class="badge {scl}">{s}</span></td>
         <td><a href="{url}" target="_blank">{html.escape(name)}</a></td><td>{code}</td><td>{ind}</td><td>{html.escape(biz)}</td>
         <td class="{chg_cls}">{chg:+.2f}%</td><td>{op:.2f}</td><td>{close:.2f}</td>
         <td>{amp:.2f}%</td><td>{h60_str}</td><td>{l60_str}</td><td class="tier {tier_cls}">{tier_label}</td><td>{r7d_html}</td><td>{score}</td><td class="conf {conf_cls}">{conf}</td>
@@ -4108,9 +4232,10 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 </div></section>
 <section><h2>系统告警</h2><div class="alert-list">{alerts_html}</div></section>
 <section><h2>最终推荐标的</h2><div style="overflow-x:auto"><table>
-<thead><tr><th>#</th><th>TOP10</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>二级行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>60日高</th><th>60日低</th><th>档位</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th><th>盈亏比</th><th>回测</th></tr></thead>
-<tbody>{rows_html if rows_html else '<tr><td colspan="22" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div></section>
+<thead><tr><th>#</th><th>TOP10</th><th>PK</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>二级行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>60日高</th><th>60日低</th><th>档位</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th><th>盈亏比</th><th>回测</th></tr></thead>
+<tbody>{rows_html if rows_html else '<tr><td colspan="23" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div></section>
 <section><h2>策略说明</h2><table>
+{'' if not pk_results else _build_pk_html(pk_results)}
 <thead><tr><th style="width:18%">策略</th><th style="width:48%">条件</th><th style="width:16%">仓位(震荡)</th><th style="width:18%">仓位(弱市)</th></tr></thead>
 <tbody>
 <tr><td><span class="badge strat_a">A动量延续</span></td><td style="white-space:normal;word-break:break-all">涨3-7%+量比1.5-3.0+弱市/极端上涨关闭</td><td>12-17%</td><td>0%(关闭)</td></tr>
@@ -4450,9 +4575,12 @@ def main():
     else:
         record_step_status("步骤25: 历史回测", "SKIP", "无推荐历史记录")
 
-    print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup)
+    print("\n[步骤19B] 同策略PK..."); pk_results = step19b_strategy_pk(final, kline_data, bt_lookup)
+    record_step_status("步骤19B: 同策略PK", "OK", f"{sum(1 for v in pk_results.values() if v['count']>=2)}组对决")
+
+    print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup, pk_results)
     record_step_status("步骤20: Markdown", "OK", mp)
-    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report, bt_lookup, kline_data, bt_result); hd = os.path.dirname(hp)
+    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report, bt_lookup, kline_data, bt_result, pk_results); hd = os.path.dirname(hp)
     record_step_status("步骤20B: HTML报告", "OK", hp)
     print("\n[步骤21] 验证..."); step21_final_verify(mp, fc)
     record_step_status("步骤21: 最终验证", "OK", f"{fc}只通过")
