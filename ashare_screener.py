@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.31
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略PK(v6.13.31)
+A股每日盘前短线标的智能筛选 v6.13.32
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略PK(7维度含市场情绪/涨停板块热度)(v6.13.32)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,7 +23,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.31"
+BUILTIN_VERSION = "v6.13.32"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -3259,14 +3259,25 @@ def _compute_pl_ratios(candidates, sector_limit_up=None):
 # ============================================================
 # 步骤19B：同策略PK
 # ============================================================
-def step19b_strategy_pk(candidates, kline_data, bt_lookup):
-    """v6.13.31: 同策略标的相互PK，多维度对比标记获胜标的
-    PK维度(5项，各1分): 综合评分/盈亏比/技术面/主力资金/回测胜率
+def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None, market_condition=None, index_data=None):
+    """v6.13.32: 同策略标的相互PK，多维度对比标记获胜标的
+    PK维度(7项，各1分): 综合评分/盈亏比/技术面/主力资金/回测胜率/市场情绪/涨停板块热度
     每个策略组(≥2只)中总分最高者标记 _pk_winner=True"""
     from collections import defaultdict
     strategy_groups = defaultdict(list)
     for c in candidates:
         strategy_groups[c.get('strategy', '?')].append(c)
+    
+    # v6.13.32: 市场情绪得分（基于指数涨跌，弱市0分、震荡1分、强市2分）
+    sh_info = index_data.get('sh', {}) if index_data else {}
+    sh_chg = sh_info.get('change_pct', 0) if isinstance(sh_info, dict) else 0
+    if sh_chg > 0.5: sentiment_base = 2  # 强市情绪
+    elif sh_chg < -0.5: sentiment_base = 0  # 弱市情绪
+    else: sentiment_base = 1  # 震荡
+    
+    # v6.13.32: 板块热度归一化基准（全市场涨停板块分布）
+    sector_heat = sector_limit_up or {}
+    max_heat = max(sector_heat.values()) if sector_heat else 1
     
     pk_results = {}
     for strat, group in strategy_groups.items():
@@ -3279,10 +3290,9 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup):
         
         # 为每只标的计算PK得分
         for c in group:
-            pk_score = 0
-            pk_details = []
             code = c.get('code', '')
             kd = kline_data.get(code, {})
+            pk_details = []
             
             # 维度1: 综合评分 (直接比较)
             pk_details.append(('score', c.get('score', 0)))
@@ -3314,11 +3324,29 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup):
                     bt_win_rate = bt['wins'] / total
             pk_details.append(('bt', bt_win_rate))
             
+            # v6.13.32: 维度6: 市场情绪（策略适配度：动量策略在强市加分，防御策略在弱市加分）
+            sentiment_score = 0
+            if strat in ('A', 'D', 'G', 'I', 'N', 'P', 'Q'):
+                # 进攻型策略：强市情绪好 → 加分
+                sentiment_score = sentiment_base
+            elif strat in ('B', 'H', 'J', 'M', 'O'):
+                # 防御/回调型策略：弱市更适用 → 反向评分
+                sentiment_score = 2 - sentiment_base
+            else:
+                sentiment_score = 1  # 中性
+            pk_details.append(('sentiment', sentiment_score))
+            
+            # v6.13.32: 维度7: 涨停板块热度（同行业涨停家数/全市场最大涨停家数，归一化0-1）
+            industry = lookup_industry(code)
+            heat = sector_heat.get(industry, 0)
+            heat_normalized = heat / max_heat if max_heat > 0 else 0
+            pk_details.append(('heat', heat_normalized))
+            
             c['_pk_details'] = pk_details
             c['_pk_score'] = 0  # 初始化
         
         # 逐维度PK: 每个维度最高者+1分，平局各+0.5
-        dims = ['score', 'pl', 'tech', 'flow', 'bt']
+        dims = ['score', 'pl', 'tech', 'flow', 'bt', 'sentiment', 'heat']
         for dim_idx, dim_name in enumerate(dims):
             values = [(c, c['_pk_details'][dim_idx][1]) for c in group]
             max_val = max(v for _, v in values)
@@ -3341,7 +3369,7 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup):
         
         for c in group:
             c['_pk_winner'] = (c is winner)
-            c['_pk_note'] = f"PK:{c['_pk_score']}/5" if c is winner else f"PK:{c['_pk_score']}/5"
+            c['_pk_note'] = f"PK:{c['_pk_score']}/7"
         
         pk_results[strat] = {
             'count': len(group),
@@ -3428,7 +3456,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
             pk_strats = [(s, info) for s, info in pk_results.items() if info['count'] >= 2]
             if pk_strats:
                 lines.append("\n## 同策略PK\n")
-                lines.append("- **PK规则**：同策略标的在5个维度（综合评分/盈亏比/技术面/主力资金/回测胜率）两两对决，总分最高者获胜")
+                lines.append("- **PK规则**：同策略标的在7个维度（综合评分/盈亏比/技术面/主力资金/回测胜率/市场情绪/涨停板块热度）两两对决，总分最高者获胜")
                 lines.append("- **PK标记**：🏆 = 获胜 | 空格 = 同策略败方 | - = 无同策略对手")
                 for strat, info in pk_strats:
                     lines.append(f"  - **{strat}策略** ({info['count']}只): 🏆 **{info['winner_name']}**({info['winner_code']}) 胜出\n")
@@ -3505,7 +3533,7 @@ def _build_pk_html(pk_results):
     if not pk_strats:
         return ''
     html_parts = ['<section><h2>同策略PK</h2><div class="pk-summary">']
-    html_parts.append('<p style="color:#94a3b8;font-size:.85rem;margin-bottom:1rem">同策略标的在5个维度（综合评分/盈亏比/技术面/主力资金/回测胜率）对决，总分最高者获胜</p>')
+    html_parts.append('<p style="color:#94a3b8;font-size:.85rem;margin-bottom:1rem">同策略标的在7个维度（综合评分/盈亏比/技术面/主力资金/回测胜率/市场情绪/涨停板块热度）对决，总分最高者获胜</p>')
     for strat, info in pk_strats:
         html_parts.append(f'<div class="pk-card" style="background:#1e293b;border-radius:12px;padding:1rem;margin-bottom:.75rem;border-left:4px solid #38bdf8">')
         html_parts.append(f'<div style="font-weight:bold;color:#e2e8f0;margin-bottom:.5rem"><span class="badge strat_{strat.lower()}" style="display:inline-block;margin-right:.5rem">{strat}</span> {info["count"]}只同策略对决</div>')
@@ -4575,7 +4603,7 @@ def main():
     else:
         record_step_status("步骤25: 历史回测", "SKIP", "无推荐历史记录")
 
-    print("\n[步骤19B] 同策略PK..."); pk_results = step19b_strategy_pk(final, kline_data, bt_lookup)
+    print("\n[步骤19B] 同策略PK..."); pk_results = step19b_strategy_pk(final, kline_data, bt_lookup, sector_limit_up, market_condition, index_data)
     record_step_status("步骤19B: 同策略PK", "OK", f"{sum(1 for v in pk_results.values() if v['count']>=2)}组对决")
 
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup, pk_results)
