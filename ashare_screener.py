@@ -23,7 +23,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.33"
+BUILTIN_VERSION = "v6.13.34"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -3501,11 +3501,16 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                     if s_ not in seen: seen.add(s_); uniq_s.append(s_)
                 r7d_str = f"{r7d} ({','.join(uniq_s)})"
             url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
-            # v6.13.13: 回测标记列 — 新增no_entry警告
+            # v6.13.34: 回测标记列 — no_entry独立标记，不计入胜负
             bt_mark = ''
             if bt_lookup and code in bt_lookup:
                 bt = bt_lookup[code]
-                emoji = '🟢' if bt['last_result'] == 'win' else ('🔴' if bt['last_result'] == 'loss' else '⚪')
+                if bt['last_result'] == 'win':
+                    emoji = '🟢'
+                elif bt['last_result'] == 'no_entry':
+                    emoji = '⚪'
+                else:
+                    emoji = '🔴' if bt['last_result'] == 'loss' else '⚪'
                 suffix = '⚠️' if bt.get('no_entry', 0) > 0 else ''
                 bt_mark = f'{emoji}{bt["wins"]}/{bt["total"]}{suffix}'
             lines.append(f"| {idx} | {top10_mark} | {pk_mark} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {h60_str} | {l60_str} | {tier_label} | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} | {pl_ratio} | {bt_mark} |\n")
@@ -3686,11 +3691,16 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
         scl = f"strat_{s.lower()}"
         url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
-        # v6.13.13: 回测标记列 — 新增no_entry警告
+        # v6.13.34: 回测标记列 — no_entry独立标记，不计入胜负
         bt_mark = ''
         if bt_lookup and code in bt_lookup:
             bt = bt_lookup[code]
-            bt_emoji = "🟢" if bt["last_result"]=="win" else ("🔴" if bt["last_result"]=="loss" else "⚪")
+            if bt["last_result"] == "win":
+                bt_emoji = "🟢"
+            elif bt["last_result"] == "no_entry":
+                bt_emoji = "⚪"
+            else:
+                bt_emoji = "🔴" if bt["last_result"] == "loss" else "⚪"
             bt_suffix = ' ⚠️' if bt.get('no_entry', 0) > 0 else ''
             bt_mark = f'<span class="{bt["last_result"]}">{bt_emoji}{bt["wins"]}/{bt["total"]}{bt_suffix}</span>'
         rows_html += f"""<tr class="{scl}"><td>{idx}</td><td>{top10_mark}</td><td>{pk_mark}</td><td><span class="badge {scl}">{s}</span></td>

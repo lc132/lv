@@ -1,7 +1,8 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.13.30
+# A股短线筛选 — 历史回测模块 v6.13.34
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
+# v6.13.34: no_entry改为独立结果类型——限价单未成交不计入loss，独立标记⚪，显示理论收益但不计入胜率统计
 # v6.13.30: no_entry直接标记失败——限价单未成交视为策略失效，计入loss不再排除
 # v6.13.24: _try_tencent增加Referer头(修复无数据) + 解析过滤非列表元素 + 超时10s + max_drawdown改用复合收益率
 # v6.13.23: _fetch_kline_range 增加重试(2次)、三级兜底(宽泛日期)、run_backtest 增加跨日期K线复用
@@ -161,9 +162,10 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
     max_profit = 0.0
     kl = klines[:hold_days]
 
-    # v6.13.30: 限价单未成交 → 直接标记失败，次日最低价>进场价说明策略方向判断有误
+    # v6.13.34: 限价单未成交 → 独立标记no_entry，次日最低价>进场价说明买单无法成交
+    # 不计入win/loss统计，但保留理论收益供参考（次日开盘价 vs 进场价）
     if kl[0]['low'] > entry:
-        return {'result': 'loss', 'exit_price': kl[0]['open'], 'exit_date': kl[0]['date'],
+        return {'result': 'no_entry', 'exit_price': kl[0]['open'], 'exit_date': kl[0]['date'],
                 'exit_reason': 'no_entry', 'return_pct': round((kl[0]['open'] - entry) / entry * 100, 2),
                 'hold_days': 0, 'max_drawdown_pct': 0, 'max_profit_pct': 0,
                 'day_low': round(kl[0]['low'], 2)}
@@ -247,6 +249,7 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
 
 def _compute_metrics(trades):
     """计算回测指标
+    v6.13.34: no_entry独立统计——限价未成交不计入win/loss，不参与胜率/盈亏比/夏普计算
     v6.13.30: no_entry计入loss（限价未成交视为策略失败），仅no_data不计入有效样本"""
     if not trades:
         return {'total': 0, 'win_rate': 0, 'avg_return': 0,
@@ -256,32 +259,33 @@ def _compute_metrics(trades):
     wins = [t for t in trades if t['result'] == 'win']
     losses = [t for t in trades if t['result'] == 'loss']
     no_data = [t for t in trades if t['result'] == 'no_data']
-    # v6.13.30: no_entry已改为loss，统计归入losses
-    no_entry_count = sum(1 for t in trades if t.get('exit_reason') == 'no_entry')
-    valid_count = total - len(no_data)
+    # v6.13.34: no_entry独立统计，不计入有效样本（未实际成交）
+    no_entry = [t for t in trades if t['result'] == 'no_entry']
+    no_entry_count = len(no_entry)
+    valid_count = total - len(no_data) - len(no_entry)
 
     win_rate = len(wins) / max(valid_count, 1) * 100 if valid_count > 0 else 0
-    avg_return = sum(t['return_pct'] for t in trades if t['result'] != 'no_data') / max(valid_count, 1) if valid_count > 0 else 0
+    avg_return = sum(t['return_pct'] for t in trades if t['result'] not in ('no_data', 'no_entry')) / max(valid_count, 1) if valid_count > 0 else 0
     avg_win = sum(t['return_pct'] for t in wins) / len(wins) if wins else 0
     avg_loss = sum(t['return_pct'] for t in losses) / len(losses) if losses else 0
-    avg_hold = sum(t['hold_days'] for t in trades if t['hold_days'] > 0) / max(valid_count, 1)
+    avg_hold = sum(t['hold_days'] for t in trades if t['hold_days'] > 0 and t['result'] != 'no_entry') / max(valid_count, 1)
 
-    # v6.13.20: 盈亏比改为总额比（总盈利/总亏损绝对值），排除no_data
+    # v6.13.20: 盈亏比改为总额比（总盈利/总亏损绝对值），排除no_data和no_entry
     total_win_amt = sum(t['return_pct'] for t in wins) if wins else 0
     total_loss_amt = abs(sum(t['return_pct'] for t in losses)) if losses else 0
     profit_factor = round(total_win_amt / total_loss_amt, 2) if total_loss_amt > 0 else 0
 
-    # v6.13.24: 最大回撤改用复合收益率计算（而非线性求和），更准确反映风险
+    # v6.13.24: 最大回撤改用复合收益率计算，排除no_data和no_entry
     max_dd = 0.0; cum_val = 1.0; peak_val = 1.0
     for t in trades:
-        if t['result'] == 'no_data':
+        if t['result'] in ('no_data', 'no_entry'):
             continue
         cum_val *= (1 + t['return_pct'] / 100.0)
         peak_val = max(peak_val, cum_val)
         dd = (peak_val - cum_val) / peak_val * 100.0
         max_dd = max(max_dd, dd)
 
-    returns = [t['return_pct'] for t in trades if t['result'] != 'no_data']
+    returns = [t['return_pct'] for t in trades if t['result'] not in ('no_data', 'no_entry')]
     if len(returns) > 1:
         avg_r = sum(returns) / len(returns)
         variance = sum((r - avg_r) ** 2 for r in returns) / (len(returns) - 1)
@@ -421,7 +425,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
 
     print(f"  回测结果: {metrics['total']}笔 | 胜率{metrics['win_rate']}% | "
           f"均收{metrics['avg_return']}% | 盈亏比{metrics['profit_factor']} | 夏普{metrics['sharpe']}"
-          f" | 限价未成交{metrics.get('no_entry', 0)}笔")
+          f" | 限价未成交{metrics.get('no_entry', 0)}笔(不计入胜负)")
 
     return {
         'all_trades': trades, 'metrics': metrics,
@@ -457,8 +461,8 @@ def generate_backtest_report(bt_result, output_path=None):
         "- **样本来源**：最近90天推荐历史，按当时推荐标的、策略、进场价、止损价、止盈价回放后续K线。",
         "- **出场规则**：单笔最大持仓10个交易日；出场优先级为 止盈 > 移动止损(保本) > 固定止损。移动止损在盈利达止盈目标50%时激活，将止损上移至保本价；持仓第3天收盘仍亏损则按时间止损离场。",
         "- **T+1处理**：遵循A股T+1规则，买入当日不检查止盈止损出场，从下一交易日起判断。",
-        "- **结果含义**：`win`为盈利样本，`loss`为亏损样本，`no_data`为后续K线不足或无法形成有效模拟。",
-        "- **指标说明**：胜率为盈利样本占有效样本比例；盈亏比为总盈利绝对值/总亏损绝对值；夏普为单笔收益均值相对波动的简化指标。",
+        "- **结果含义**：`win`为盈利样本，`loss`为亏损样本，`no_entry`为限价单未成交（次日最低价>进场价，买单无法成交，不计入胜负统计），`no_data`为后续K线不足或无法形成有效模拟。",
+        "- **指标说明**：胜率为盈利样本占有效样本比例（不含no_entry和no_data）；盈亏比为总盈利绝对值/总亏损绝对值；夏普为单笔收益均值相对波动的简化指标。",
         "- **局限性**：未计入滑点、手续费、涨跌停无法成交、真实排队成交、资金容量和盘中流动性冲击，回测结果不代表未来表现。",
         f"",
         "## 一、综合指标",
@@ -475,6 +479,7 @@ def generate_backtest_report(bt_result, output_path=None):
         f"| 夏普比率 | {metrics['sharpe']} |",
         f"| 平均持仓天数 | {metrics['avg_hold_days']}天 |",
         f"| 无数据笔数 | {metrics['no_data']} |",
+        f"| 限价未成交 | {metrics.get('no_entry', 0)} |",
         f"",
         "## 二、策略维度",
         f"",
@@ -502,7 +507,12 @@ def generate_backtest_report(bt_result, output_path=None):
     ])
     recent = sorted(trades, key=lambda x: x.get('prediction_date', ''), reverse=True)[:20]
     for t in recent:
-        res_emoji = '\U0001f7e2' if t['result'] == 'win' else ('\U0001f534' if t['result'] == 'loss' else '\u26aa')
+        if t['result'] == 'win':
+            res_emoji = '\U0001f7e2'
+        elif t['result'] == 'no_entry':
+            res_emoji = '\u26aa'
+        else:
+            res_emoji = '\U0001f534' if t['result'] == 'loss' else '\u26aa'
         lines.append(
             f"| {t['prediction_date']} | {t['name']} | {t['code']} | {t['strategy']} | "
             f"{t['industry']} | {t['entry']:.2f} | {res_emoji}{t['result']} | "
@@ -512,7 +522,7 @@ def generate_backtest_report(bt_result, output_path=None):
     lines.extend([
         "",
         f"> \u26a0\ufe0f 免责声明：回测结果不代表未来表现，仅供参考。",
-        f"> 版本: v6.13.24 | 生成: {today_str}",
+        f"> 版本: v6.13.34 | 生成: {today_str}",
     ])
 
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -528,7 +538,7 @@ def generate_backtest_report(bt_result, output_path=None):
 
 def _build_backtest_lookup(bt_result):
     """构建 代码→历史回测汇总 的查找字典，供筛选结果表格标记回测结果
-    v6.13.30: no_entry已计入loss，直接统计loss即可"""
+    v6.13.34: no_entry独立统计，不计入win/loss"""
     trades = bt_result.get('all_trades', [])
     if not trades:
         return {}
@@ -541,10 +551,10 @@ def _build_backtest_lookup(bt_result):
         wins = sum(1 for t in ts if t['result'] == 'win')
         losses = sum(1 for t in ts if t['result'] == 'loss')
         no_data = sum(1 for t in ts if t['result'] == 'no_data')
-        avg_ret = sum(t['return_pct'] for t in ts) / total if total > 0 else 0
-        valid = [t for t in ts if t['result'] != 'no_data']
+        no_entry_count = sum(1 for t in ts if t['result'] == 'no_entry')
+        valid = [t for t in ts if t['result'] not in ('no_data', 'no_entry')]
+        avg_ret = sum(t['return_pct'] for t in valid) / len(valid) if valid else 0
         last = valid[-1] if valid else ts[-1]
-        no_entry_count = sum(1 for t in ts if t.get('exit_reason') == 'no_entry')
         lookup[code] = {
             'total': total, 'wins': wins, 'losses': losses, 'no_data': no_data,
             'no_entry': no_entry_count,
@@ -614,8 +624,15 @@ def generate_backtest_html(bt_result, output_path=None):
     trade_rows = ''
     recent = sorted(trades, key=lambda x: x.get('prediction_date', ''), reverse=True)[:30]
     for t in recent:
-        res_cls = 'win' if t['result'] == 'win' else ('loss' if t['result'] == 'loss' else 'nodata')
-        res_label = '\u76c8\u5229' if t['result'] == 'win' else ('\u4e8f\u635f' if t['result'] == 'loss' else '\u65e0\u6570\u636e')
+        if t['result'] == 'win':
+            res_cls = 'win'
+            res_label = '\u76c8\u5229'
+        elif t['result'] == 'no_entry':
+            res_cls = 'nodata'
+            res_label = '\u672a\u6210\u4ea4'
+        else:
+            res_cls = 'loss' if t['result'] == 'loss' else 'nodata'
+            res_label = '\u4e8f\u635f' if t['result'] == 'loss' else '\u65e0\u6570\u636e'
         ret_sign = '+' if t['return_pct'] >= 0 else ''
         trade_rows += f'''<tr><td>{t['prediction_date']}</td><td>{t['name']}</td><td>{t['code']}</td>
         <td>{t['strategy']}</td><td>{t['industry']}</td><td>{t['entry']:.2f}</td>
@@ -671,7 +688,7 @@ tr:hover td{{background:rgba(56,189,248,0.05)}}
 <div class="note-card"><b>样本来源</b><br>最近90天推荐历史，按当时推荐标的、策略、进场价、止损价、止盈价回放后续K线。</div>
 <div class="note-card"><b>出场规则</b><br>单笔最大持仓10个交易日；若盘中触及止损或止盈，按对应价格出场；若到期未触发，按持仓期末收盘价计算。</div>
 <div class="note-card"><b>T+1处理</b><br>遵循A股T+1规则，买入当日不检查止盈止损出场，从下一交易日起判断。</div>
-<div class="note-card"><b>结果含义</b><br>win为盈利样本，loss为亏损样本，no_data为后续K线不足或无法形成有效模拟。</div>
+<div class="note-card"><b>结果含义</b><br>win为盈利样本，loss为亏损样本，no_entry为限价单未成交（次日最低价>进场价，不计入胜负），no_data为后续K线不足。</div>
 <div class="note-card"><b>指标说明</b><br>胜率为盈利样本占有效样本比例；盈亏比为总盈利绝对值/总亏损绝对值；夏普为单笔收益均值相对波动的简化指标。</div>
 <div class="note-card"><b>局限性</b><br>未计入滑点、手续费、涨跌停无法成交、真实排队成交、资金容量和盘中流动性冲击。</div>
 </div>
@@ -697,7 +714,7 @@ tr:hover td{{background:rgba(56,189,248,0.05)}}
 
 <div class="footer">
 <p>\u26a0\ufe0f \u514d\u8d23\u58f0\u660e\uff1a\u56de\u6d4b\u7ed3\u679c\u4e0d\u4ee3\u8868\u672a\u6765\u8868\u73b0\uff0c\u4ec5\u4f9b\u53c2\u8003\u3002</p>
-<p>\u7248\u672c: v6.13.24 | \u751f\u6210: {today_str}</p>
+<p>\u7248\u672c: v6.13.34 | \u751f\u6210: {today_str}</p>
 </div>
 </div>
 </body>
@@ -752,7 +769,7 @@ def push_backtest_to_feishu(bt_result):
                 },
                 "elements": [
                     {"tag": "div", "text": {"tag": "lark_md",
-                        "content": f"**回测周期**: 最近90天 | **最大持仓**: 10个交易日 | **总交易**: {metrics['total']}笔"}},
+                        "content": f"**回测周期**: 最近90天 | **最大持仓**: 10个交易日 | **总交易**: {metrics['total']}笔 | **限价未成交**: {metrics.get('no_entry', 0)}笔"}},
                     {"tag": "hr"},
                     {"tag": "div", "text": {"tag": "lark_md",
                         "content": f"胜率: **{metrics['win_rate']}%** | 均收: **{metrics['avg_return']}%** | 盈亏比: **{metrics['profit_factor']}** | 夏普: **{metrics['sharpe']}**"}},
