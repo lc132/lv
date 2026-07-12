@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# A股每周短线标的复盘 v6.13.10
+# A股每周短线标的复盘 v6.13.36
 import subprocess, os, json, shutil
 from datetime import datetime, timedelta
 
