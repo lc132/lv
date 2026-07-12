@@ -4,6 +4,7 @@
 步骤13: 五策略筛选
 """
 from lib.core import *
+from collections import Counter
 
 # 策略优先级排序（与主脚本 _STRATEGY_ORDER 保持一致，A-E 子集）
 _MATCH_STRATEGY_ORDER = {'A': 0, 'D': 1, 'C': 2, 'B': 3, 'E': 4}

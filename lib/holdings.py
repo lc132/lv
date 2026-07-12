@@ -4,6 +4,7 @@
 步骤4-4C: 持仓行情同步、做T评估、持仓跟踪同步、持仓危机检查
 """
 from lib.core import *
+from datetime import timedelta
 
 # ============================================================
 # 步骤4: 持仓行情同步
@@ -216,68 +217,70 @@ def step4B_sync_holding_xlsx(ctx):
     try:
         from openpyxl import load_workbook
         wb = load_workbook(xlsx_path)
-        ws = wb["持仓明细"]
-        
-        # code → row mapping (skip header)
-        code_row = {}
-        for row in range(2, ws.max_row + 1):
-            raw_code = ws.cell(row=row, column=1).value
-            if raw_code:
-                code = str(raw_code).strip()
-                if len(code) == 4:
-                    code = code.zfill(6)
-                if code.isdigit() and len(code) == 6:
-                    code_row[code] = row
-        
-        beijing_date = ctx['beijing_date']
-        updated = 0
-        for h in holdings:
-            try:
-                raw_code = h.get("code")
-                code = str(raw_code) if raw_code is not None else ""
-                current = h.get("current")
-                if not code or code not in code_row:
-                    if code:
-                        log_alert("WARNING", "持仓跟踪同步", f"{code} 在xlsx中找不到")
-                    continue
-                if current is None:
-                    log_alert("WARNING", "持仓跟踪同步", f"{code} 缺少current字段，跳过")
-                    continue
-                
-                row = code_row[code]
-                mv = h.get("market_value")
-                pnl_amt = h.get("pnl_amount")
-                if mv is None or pnl_amt is None:
-                    cost = ws.cell(row=row, column=3).value
-                    shares = ws.cell(row=row, column=4).value
-                    if cost and shares and current:
-                        mv = round(current * shares, 2)
-                        pnl_amt = round((current - cost) * shares, 2)
-                
-                ws.cell(row=row, column=8).value = current  # H: 当前价
-                if mv is not None:
-                    ws.cell(row=row, column=9).value = mv  # I: 市值
-                if pnl_amt is not None:
-                    ws.cell(row=row, column=10).value = round(pnl_amt, 2)  # J: 盈亏额
-                pnl_pct_val = h.get("pnl_pct")
+        try:
+            ws = wb["持仓明细"]
+            
+            # code → row mapping (skip header)
+            code_row = {}
+            for row in range(2, ws.max_row + 1):
+                raw_code = ws.cell(row=row, column=1).value
+                if raw_code:
+                    code = str(raw_code).strip()
+                    if len(code) == 4:
+                        code = code.zfill(6)
+                    if code.isdigit() and len(code) == 6:
+                        code_row[code] = row
+            
+            beijing_date = ctx['beijing_date']
+            updated = 0
+            for h in holdings:
                 try:
-                    pnl_pct_float = float(pnl_pct_val) if pnl_pct_val is not None else 0.0
-                except (ValueError, TypeError):
-                    pnl_pct_float = 0.0
-                ws.cell(row=row, column=11).value = round(pnl_pct_float, 4)  # K: 盈亏率
-                ws.cell(row=row, column=12).value = beijing_date  # L: 更新日期
-                updated += 1
-            except Exception as e:
-                log_alert("WARNING", "持仓跟踪同步", f"单条异常(code={h.get('code','?')}): {str(e)[:80]}")
-                continue
-        
-        if updated > 0:
-            wb.save(xlsx_path)
-            print(f"  已同步 {updated} 只持仓到持仓跟踪.xlsx")
-            log_alert("INFO", "持仓跟踪同步", f"已更新{updated}只持仓价格")
-        else:
-            print(f"  无需更新（0只匹配）")
-        wb.close()
+                    raw_code = h.get("code")
+                    code = str(raw_code) if raw_code is not None else ""
+                    current = h.get("current")
+                    if not code or code not in code_row:
+                        if code:
+                            log_alert("WARNING", "持仓跟踪同步", f"{code} 在xlsx中找不到")
+                        continue
+                    if current is None:
+                        log_alert("WARNING", "持仓跟踪同步", f"{code} 缺少current字段，跳过")
+                        continue
+                    
+                    row = code_row[code]
+                    mv = h.get("market_value")
+                    pnl_amt = h.get("pnl_amount")
+                    if mv is None or pnl_amt is None:
+                        cost = ws.cell(row=row, column=3).value
+                        shares = ws.cell(row=row, column=4).value
+                        if cost and shares and current:
+                            mv = round(current * shares, 2)
+                            pnl_amt = round((current - cost) * shares, 2)
+                    
+                    ws.cell(row=row, column=8).value = current  # H: 当前价
+                    if mv is not None:
+                        ws.cell(row=row, column=9).value = mv  # I: 市值
+                    if pnl_amt is not None:
+                        ws.cell(row=row, column=10).value = round(pnl_amt, 2)  # J: 盈亏额
+                    pnl_pct_val = h.get("pnl_pct")
+                    try:
+                        pnl_pct_float = float(pnl_pct_val) if pnl_pct_val is not None else 0.0
+                    except (ValueError, TypeError):
+                        pnl_pct_float = 0.0
+                    ws.cell(row=row, column=11).value = round(pnl_pct_float, 4)  # K: 盈亏率
+                    ws.cell(row=row, column=12).value = beijing_date  # L: 更新日期
+                    updated += 1
+                except Exception as e:
+                    log_alert("WARNING", "持仓跟踪同步", f"单条异常(code={h.get('code','?')}): {str(e)[:80]}")
+                    continue
+            
+            if updated > 0:
+                wb.save(xlsx_path)
+                print(f"  已同步 {updated} 只持仓到持仓跟踪.xlsx")
+                log_alert("INFO", "持仓跟踪同步", f"已更新{updated}只持仓价格")
+            else:
+                print(f"  无需更新（0只匹配）")
+        finally:
+            wb.close()
     except Exception as e:
         log_alert("WARNING", "持仓跟踪同步", f"失败: {str(e)[:100]}")
         print(f"  持仓跟踪同步失败: {str(e)[:80]}")

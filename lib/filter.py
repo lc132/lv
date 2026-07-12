@@ -4,6 +4,8 @@
 步骤11-12: 硬排除31项 (L1/L2/L3分级)、信号质量过滤14项
 """
 from lib.core import *
+from datetime import timedelta
+from collections import Counter
 
 # ============================================================
 # 日志记录 L2/L3 跳过

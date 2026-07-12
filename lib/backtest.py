@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.13.34
+# A股短线筛选 — 历史回测模块 v6.13.35
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # v6.13.34: no_entry改为独立结果类型——限价单未成交不计入loss，独立标记⚪，显示理论收益但不计入胜率统计
@@ -332,7 +332,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     seen = set()
     unique_history = []
     for h in history:
-        key = (h.get('code'), h.get('prediction_date'), h.get('strategy'), round(h.get('entry', 0), 2))
+        key = (h.get('code'), h.get('prediction_date'), h.get('strategy'), round(h.get('entry') or 0, 2))
         if key not in seen:
             seen.add(key)
             unique_history.append(h)
@@ -389,7 +389,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     for h in history:
         code = h.get('code', '')
         strategy = h.get('strategy', '?')
-        entry = h.get('entry', 0)
+        entry = h.get('entry') or 0
         pred_date = h.get('prediction_date', '')
         if not code or not entry or not pred_date:
             continue

@@ -35,14 +35,16 @@ def generate_market_overview(final_candidates, index_data, market_condition,
     sse = index_data.get('sh', {})
     szse = index_data.get('sz', {})
     if sse:
-        sse_chg = sse.get('change_pct', 0)
+        sse_chg = sse.get('change_pct') or 0
         sse_amt = sse.get('amount', 0) or 0
-        lines.append(f"- **上证指数**：{sse.get('price', '?')}（{sse_chg:+.2f}%），涨跌 {sse.get('change_amount', 0):+.2f}点")
+        sse_change_amt = sse.get('change_amount') or 0
+        lines.append(f"- **上证指数**：{sse.get('price', '?')}（{sse_chg:+.2f}%），涨跌 {sse_change_amt:+.2f}点")
         if sse_amt > 0: lines.append(f"  成交额：{sse_amt/1e8:.0f}亿")
     if szse:
-        sz_chg = szse.get('change_pct', 0)
+        sz_chg = szse.get('change_pct') or 0
         sz_amt = szse.get('amount', 0) or 0
-        lines.append(f"- **深证成指**：{szse.get('price', '?')}（{sz_chg:+.2f}%），涨跌 {szse.get('change_amount', 0):+.2f}点")
+        sz_change_amt = szse.get('change_amount') or 0
+        lines.append(f"- **深证成指**：{szse.get('price', '?')}（{sz_chg:+.2f}%），涨跌 {sz_change_amt:+.2f}点")
         if sz_amt > 0: lines.append(f"  成交额：{sz_amt/1e8:.0f}亿")
 
     # v6.13.0: 成交量分析
@@ -119,15 +121,20 @@ def generate_market_overview(final_candidates, index_data, market_condition,
     lines.append("### 1.4 资金流向")
     lines.append("")
     total_main_in = sum(c.get('main_inflow') or 0 for c in final_candidates)
+    has_main_data = any(c.get('main_inflow') is not None for c in final_candidates)
     avg_main_in = total_main_in / fc if fc > 0 else 0
-    lines.append(f"- 推荐标的主力净流入合计：{total_main_in/1e4:.0f}万")
-    if avg_main_in > 1_000_000:
-        lines.append(f"- 平均主力净流入：{avg_main_in/1e4:.0f}万/只 → **主力资金积极做多，资金面有支撑**")
-    elif avg_main_in > 0:
-        lines.append(f"- 平均主力净流入：{avg_main_in/1e4:.0f}万/只 → 主力资金小幅流入，需结合技术面判断")
-    elif total_main_in == 0:
+    if not has_main_data:
         lines.append(f"- 主力资金数据不可得（API通道受限），建议结合盘口观察")
+    elif total_main_in > 0:
+        lines.append(f"- 推荐标的主力净流入合计：{total_main_in/1e4:.0f}万")
+        if avg_main_in > 1_000_000:
+            lines.append(f"- 平均主力净流入：{avg_main_in/1e4:.0f}万/只 → **主力资金积极做多，资金面有支撑**")
+        elif avg_main_in > 0:
+            lines.append(f"- 平均主力净流入：{avg_main_in/1e4:.0f}万/只 → 主力资金小幅流入，需结合技术面判断")
+        else:
+            lines.append(f"- 平均主力净流入：{avg_main_in/1e4:.0f}万/只")
     else:
+        lines.append(f"- 推荐标的主力净流出合计：{abs(total_main_in)/1e4:.0f}万")
         lines.append(f"- 平均主力净流出：{abs(avg_main_in)/1e4:.0f}万/只 → **主力资金偏空，注意风险控制**")
 
     # v6.13.0: 策略分布概览
@@ -162,6 +169,7 @@ def generate_sector_analysis(final_candidates, sector_limit_up, fc):
     # 1. 涨停板块分布
     lines.append("### 2.1 涨停板块热度")
     lines.append("")
+    sorted_sectors = []  # 初始化，防止变量未定义
     if sector_limit_up:
         sorted_sectors = sorted(sector_limit_up.items(), key=lambda x: -x[1])
         lines.append("| 排名 | 板块 | 涨停数 | 热度 | 研判 |")
@@ -192,7 +200,7 @@ def generate_sector_analysis(final_candidates, sector_limit_up, fc):
         lines.append("| 行业 | 推荐数 | 占比 | 判断 |")
         lines.append("|------|--------|------|------|")
         for ind, cnt in sorted_rc[:10]:
-            pct = cnt / fc * 100
+            pct = cnt / max(fc, 1) * 100
             if pct >= 15: jd = "⚠️ 集中度过高"
             elif pct >= 8: jd = "重点关注"
             else: jd = "分散配置"

@@ -4,6 +4,7 @@
 步骤10A-10B: 全市场API拉取、板块/行业补全
 """
 from lib.core import *
+import time
 
 # 从股票名称推断行业（正则匹配）
 _INDUSTRY_PATTERNS = [

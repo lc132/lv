@@ -4,6 +4,7 @@
 步骤20-22: 输出Markdown、生成HTML报告、最终验证、写推荐历史
 """
 from lib.core import *
+from collections import Counter
 
 # ============================================================
 # 步骤20: 输出Markdown
