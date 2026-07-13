@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-A股短线标的回测机制 v6.13.36
+A股短线标的回测机制 v6.13.37
 基于推荐历史中的进场价/止损/止盈，拉取T+1实际收盘价，计算各策略胜率与收益
 """
-import urllib.request, json, os, time
+import urllib.request, urllib.parse, json, os, time
 from datetime import datetime, timedelta, timezone
 from collections import Counter, defaultdict
 

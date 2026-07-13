@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v6.13.36 尾盘决策模型 v1.0
+v6.13.37 尾盘决策模型 v1.0
 运行时机: 14:30-15:00
 功能: 筛选隔夜持有标的（封板质量+空间潜力+板块强度+资金强度）
 """
@@ -100,8 +100,8 @@ def _fetch_limit_up_stocks():
                "&fields=f2,f3,f12,f14,f15,f16,f17,f18,f62,f100,f102,f104")
         try:
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            resp = urllib.request.urlopen(req, timeout=15)
-            data = json.loads(resp.read().decode('utf-8'))
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
             page_stocks = []
             if data.get('data') and data['data'].get('diff'):
                 for d in data['data']['diff']:

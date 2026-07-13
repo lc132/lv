@@ -4,6 +4,7 @@
 步骤4-4C: 持仓行情同步、做T评估、持仓跟踪同步、持仓危机检查
 """
 from lib.core import *
+import urllib.request
 from datetime import timedelta
 
 # ============================================================

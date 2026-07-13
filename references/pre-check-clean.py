@@ -28,11 +28,11 @@ try:
             if t in ('weekly_review', 'strategy_check', 'do_T_eval', 'do_T'):
                 new_records.append(r)
             elif t == 'holding':
-                d = r.get('update_date', '')
+                d = r.get('update_date') or ''
                 if d >= cutoff_90d:
                     new_records.append(r)
             elif t == 'recommendation':
-                d = r.get('date', '')
+                d = r.get('date') or ''
                 if d >= cutoff_7d:
                     new_records.append(r)
             else:

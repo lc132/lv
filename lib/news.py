@@ -4,6 +4,7 @@
 步骤18-19: 新闻筛查、推荐不足降级
 """
 from lib.core import *
+import urllib.request
 from lib.score import tie_break_sort
 
 # ============================================================

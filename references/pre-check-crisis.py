@@ -4,7 +4,7 @@ def check_holding_crisis(holdings):
         code = h.get("code", "?")
         name = h.get("name", "?")
         cost = h.get("cost", 0)
-        current = h.get("current", 0)
+        current = h.get("current") or 0
         prev_close = h.get("prev_close")  # 步骤4在更新前保存的昨日收盘价
         pnl_pct = h.get("pnl_pct", 0)
         

@@ -4,6 +4,7 @@
 步骤23-28: 回溯检查昨日做T、告警日志摘要、筛选概况、GitHub同步、飞书推送、每周复盘拉取
 """
 from lib.core import *
+import shutil, subprocess, urllib.request
 from datetime import timedelta
 from collections import Counter
 

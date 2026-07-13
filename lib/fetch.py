@@ -4,7 +4,7 @@
 步骤10A-10B: 全市场API拉取、板块/行业补全
 """
 from lib.core import *
-import time
+import time, re
 
 # 从股票名称推断行业（正则匹配）
 _INDUSTRY_PATTERNS = [
@@ -494,7 +494,7 @@ def step10A_fetch_all_stocks(ctx):
     gainers = [s for s in stocks
                if s['change_pct'] is not None and 0 < s['change_pct'] <= 7
                and s['close'] is not None and s['close'] > 0
-               and s.get('amount', 0) >= 10_000_000]  # 至少1000万成交额
+               and (s.get('amount') or 0) >= 10_000_000]  # 至少1000万成交额
     if source == 'clist':
         gainers.sort(key=lambda x: (x.get('turnover', 0) or 0), reverse=True)
     else:
@@ -505,7 +505,7 @@ def step10A_fetch_all_stocks(ctx):
     losers = [s for s in stocks
               if s['change_pct'] is not None and -7 <= s['change_pct'] < 0
               and s['close'] is not None and s['close'] > 0
-              and s.get('amount', 0) >= 10_000_000]
+              and (s.get('amount') or 0) >= 10_000_000]
     if source == 'clist':
         losers.sort(key=lambda x: (x.get('turnover', 0) or 0), reverse=True)
     else:

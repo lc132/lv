@@ -188,6 +188,7 @@ def calc_entry_exit(current_price, cost_price, amp_pct, direction):
         buy_zone = (current_price * (1 - amp_pct/300), current_price * (1 - amp_pct/500))
         sell_target = current_price * (1 + amp_pct/200)
         stop_loss = current_price * (1 - amp_pct/80)
+        buy_back = None
     elif "倒T" in direction:
         buy_zone = None
         sell_target = current_price * (1 + amp_pct/300)
@@ -197,6 +198,7 @@ def calc_entry_exit(current_price, cost_price, amp_pct, direction):
         buy_zone = (current_price * 0.98, current_price * 0.99)
         sell_target = current_price * 1.02
         stop_loss = current_price * 0.97
+        buy_back = None
 
     return {
         "buy_zone": buy_zone,

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.36
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK(v6.13.36)
+A股每日盘前短线标的智能筛选 v6.13.37
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK(v6.13.37)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,7 +23,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.36"
+BUILTIN_VERSION = "v6.13.37"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -2177,7 +2177,7 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         # 19. 高位长上影线（v6.9.11: 涨>5%+上影线>实体2倍→高位抛压）
         if chg > 5 and high > max(close, op) and low > 0:
             body = abs(close - op); upper_shadow = high - max(close, op)
-            if upper_shadow > body * 2 and upper_shadow / close > 0.03:
+            if close > 0 and upper_shadow > body * 2 and upper_shadow / close > 0.03:
                 reasons.append("长上影线")
         # 20. 连续缩量（v6.9.11: 量比<0.4+涨跌<1%→无人气横盘）
         if vr is not None and vr < 0.4 and abs(chg) < 1: reasons.append("连续缩量")
@@ -2779,7 +2779,7 @@ def step18_news_screening(candidates):
                 _src_status['xueqiu']['fail'] += 1
                 return None
             
-            with open(cache_path, 'r') as f:
+            with open(cache_path, 'r', encoding='utf-8') as f:
                 cache = json.loads(f.read())
             
             if code not in cache:
@@ -3308,7 +3308,6 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
     """v6.13.33: 同策略PK + 跨策略冠军PK
     第一阶段: 同策略标的7维度对决，标记组内获胜者
     第二阶段: 所有获胜者(含独苗)跨策略对决，标记最强👑冠军"""
-    from collections import defaultdict
     strategy_groups = defaultdict(list)
     for c in candidates:
         strategy_groups[c.get('strategy', '?')].append(c)

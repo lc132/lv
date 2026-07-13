@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v6.13.36 早盘竞价数据获取与验证模块
+v6.13.37 早盘竞价数据获取与验证模块
 数据源: 东方财富竞价接口 (免费)
 """
 import urllib.request, json, time
+from lib.core import log_alert
 
 # 东方财富竞价接口
 _AUCTION_URL = "https://push2.eastmoney.com/api/qt/stock/auction/get"
@@ -30,20 +31,20 @@ def fetch_auction_single(code):
             'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://quote.eastmoney.com/'
         })
-        resp = urllib.request.urlopen(req, timeout=5)
-        data = json.loads(resp.read().decode('utf-8'))
-        if data.get('data'):
-            d = data['data']
-            return {
-                'code': code,
-                'price': d.get('f43', 0) / 100 if d.get('f43') else 0,
-                'open': d.get('f44', 0) / 100 if d.get('f44') else 0,
-                'high': d.get('f45', 0) / 100 if d.get('f45') else 0,
-                'low': d.get('f46', 0) / 100 if d.get('f46') else 0,
-                'volume': d.get('f47', 0),
-                'amount': d.get('f48', 0),
-                'change_pct': d.get('f170', 0) / 100 if d.get('f170') else 0,
-            }
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            if data.get('data'):
+                d = data['data']
+                return {
+                    'code': code,
+                    'price': d.get('f43', 0) / 100 if d.get('f43') else 0,
+                    'open': d.get('f44', 0) / 100 if d.get('f44') else 0,
+                    'high': d.get('f45', 0) / 100 if d.get('f45') else 0,
+                    'low': d.get('f46', 0) / 100 if d.get('f46') else 0,
+                    'volume': d.get('f47', 0),
+                    'amount': d.get('f48', 0),
+                    'change_pct': d.get('f170', 0) / 100 if d.get('f170') else 0,
+                }
     except Exception as e:
         return None
 

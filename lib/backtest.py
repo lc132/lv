@@ -1,8 +1,8 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.13.36
+# A股短线筛选 — 历史回测模块 v6.13.37
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
-# v6.13.36: no_entry改为独立结果类型——限价单未成交不计入loss，独立标记⚪，显示理论收益但不计入胜率统计
+# v6.13.37: no_entry改为独立结果类型——限价单未成交不计入loss，独立标记⚪，显示理论收益但不计入胜率统计
 # v6.13.30: no_entry直接标记失败——限价单未成交视为策略失效，计入loss不再排除
 # v6.13.24: _try_tencent增加Referer头(修复无数据) + 解析过滤非列表元素 + 超时10s + max_drawdown改用复合收益率
 # v6.13.23: _fetch_kline_range 增加重试(2次)、三级兜底(宽泛日期)、run_backtest 增加跨日期K线复用
@@ -162,7 +162,7 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
     max_profit = 0.0
     kl = klines[:hold_days]
 
-    # v6.13.36: 限价单未成交 → 独立标记no_entry，次日最低价>进场价说明买单无法成交
+    # v6.13.37: 限价单未成交 → 独立标记no_entry，次日最低价>进场价说明买单无法成交
     # 不计入win/loss统计，但保留理论收益供参考（次日开盘价 vs 进场价）
     if kl[0]['low'] > entry:
         return {'result': 'no_entry', 'exit_price': kl[0]['open'], 'exit_date': kl[0]['date'],
@@ -249,7 +249,7 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
 
 def _compute_metrics(trades):
     """计算回测指标
-    v6.13.36: no_entry独立统计——限价未成交不计入win/loss，不参与胜率/盈亏比/夏普计算
+    v6.13.37: no_entry独立统计——限价未成交不计入win/loss，不参与胜率/盈亏比/夏普计算
     v6.13.30: no_entry计入loss（限价未成交视为策略失败），仅no_data不计入有效样本"""
     if not trades:
         return {'total': 0, 'win_rate': 0, 'avg_return': 0,
@@ -259,7 +259,7 @@ def _compute_metrics(trades):
     wins = [t for t in trades if t['result'] == 'win']
     losses = [t for t in trades if t['result'] == 'loss']
     no_data = [t for t in trades if t['result'] == 'no_data']
-    # v6.13.36: no_entry独立统计，不计入有效样本（未实际成交）
+    # v6.13.37: no_entry独立统计，不计入有效样本（未实际成交）
     no_entry = [t for t in trades if t['result'] == 'no_entry']
     no_entry_count = len(no_entry)
     valid_count = total - len(no_data) - len(no_entry)
@@ -522,7 +522,7 @@ def generate_backtest_report(bt_result, output_path=None):
     lines.extend([
         "",
         f"> \u26a0\ufe0f 免责声明：回测结果不代表未来表现，仅供参考。",
-        f"> 版本: v6.13.36 | 生成: {today_str}",
+        f"> 版本: v6.13.37 | 生成: {today_str}",
     ])
 
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -538,7 +538,7 @@ def generate_backtest_report(bt_result, output_path=None):
 
 def _build_backtest_lookup(bt_result):
     """构建 代码→历史回测汇总 的查找字典，供筛选结果表格标记回测结果
-    v6.13.36: no_entry独立统计，不计入win/loss"""
+    v6.13.37: no_entry独立统计，不计入win/loss"""
     trades = bt_result.get('all_trades', [])
     if not trades:
         return {}
@@ -714,7 +714,7 @@ tr:hover td{{background:rgba(56,189,248,0.05)}}
 
 <div class="footer">
 <p>\u26a0\ufe0f \u514d\u8d23\u58f0\u660e\uff1a\u56de\u6d4b\u7ed3\u679c\u4e0d\u4ee3\u8868\u672a\u6765\u8868\u73b0\uff0c\u4ec5\u4f9b\u53c2\u8003\u3002</p>
-<p>\u7248\u672c: v6.13.36 | \u751f\u6210: {today_str}</p>
+<p>\u7248\u672c: v6.13.37 | \u751f\u6210: {today_str}</p>
 </div>
 </div>
 </body>

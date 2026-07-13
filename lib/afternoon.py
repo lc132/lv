@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v6.13.36 尾盘决策数据获取与筛选模块
+v6.13.37 尾盘决策数据获取与筛选模块
 数据源: 东方财富分时API + clist主力资金
 """
 import urllib.request, json
+from lib.core import log_alert
 
 
 def fetch_intraday_minute(code):
@@ -25,25 +26,26 @@ def fetch_intraday_minute(code):
             'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://quote.eastmoney.com/'
         })
-        resp = urllib.request.urlopen(req, timeout=10)
-        data = json.loads(resp.read().decode('utf-8'))
-        if data.get('data') and data['data'].get('trends'):
-            trends = data['data']['trends']
-            minutes = []
-            for t in trends:
-                parts = t.split(',')
-                if len(parts) >= 8:
-                    minutes.append({
-                        'time': parts[0],
-                        'open': float(parts[1]),
-                        'close': float(parts[2]),
-                        'high': float(parts[3]),
-                        'low': float(parts[4]),
-                        'volume': float(parts[5]),
-                        'amount': float(parts[6]),
-                    })
-            return minutes
-    except Exception: log_alert("DEBUG", "尾盘决策", "分时数据解析失败");
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            if data.get('data') and data['data'].get('trends'):
+                trends = data['data']['trends']
+                minutes = []
+                for t in trends:
+                    parts = t.split(',')
+                    if len(parts) >= 8:
+                        minutes.append({
+                            'time': parts[0],
+                            'open': float(parts[1]),
+                            'close': float(parts[2]),
+                            'high': float(parts[3]),
+                            'low': float(parts[4]),
+                            'volume': float(parts[5]),
+                            'amount': float(parts[6]),
+                        })
+                return minutes
+    except Exception:
+        log_alert("DEBUG", "尾盘决策", "分时数据解析失败")
         return None
 
 
