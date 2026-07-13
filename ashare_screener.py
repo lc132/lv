@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.37
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK(v6.13.37)
+A股每日盘前短线标的智能筛选 v6.13.38
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK(v6.13.38)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,7 +23,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.37"
+BUILTIN_VERSION = "v6.13.38"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -3806,8 +3806,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             if amount > 0: perf_parts.append(f'成交额{amount/1e8:.2f}亿')
             if turnover > 0: perf_parts.append(f'换手率{turnover:.2f}%')
             if vr > 0: perf_parts.append(f'量比{vr:.2f}')
-            reason_parts.append(f'<strong>当日表现：</strong>{"，".join(perf_parts)}，{industry}行业')
-            if business: reason_parts.append(f'<strong>二级行业：</strong>{business}')
+            reason_parts.append(f'<strong>当日表现：</strong>{"，".join(perf_parts)}，{html.escape(industry)}行业')
+            if business: reason_parts.append(f'<strong>二级行业：</strong>{html.escape(business)}')
             
             # v6.13.0: 2. 60日区间位置 + 技术指标
             tech_parts = []
@@ -3879,17 +3879,17 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             
             # 7. 信号匹配
             if sigs:
-                sig_str = '，'.join(sigs[:5])
+                sig_str = '，'.join(html.escape(s) for s in sigs[:5])
                 if len(sigs) > 5: sig_str += f' 等{len(sigs)}项'
                 reason_parts.append(f'<strong>匹配信号：</strong>{sig_str}')
             
             # 8. 龙虎榜/新闻/公告
             if lh:
-                reason_parts.append(f'<strong>🐉 龙虎榜：</strong>{lh}')
+                reason_parts.append(f'<strong>🐉 龙虎榜：</strong>{html.escape(lh)}')
             if news:
-                reason_parts.append(f'<strong>📰 正面新闻：</strong>{news}')
+                reason_parts.append(f'<strong>📰 正面新闻：</strong>{html.escape(news)}')
             if ann:
-                ann_display = ann.replace('; ', '<br>  ')
+                ann_display = html.escape(ann).replace('; ', '<br>  ')
                 reason_parts.append(f'<strong>📋 公司公告：</strong><br>  {ann_display}')
             
             reason = '<br>'.join(reason_parts)
@@ -4141,7 +4141,7 @@ tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72
 .footer .disclaimer{{color:#ef4444;font-weight:700;margin-top:.6rem;font-size:.82rem}}
 /* links */
 a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decoration:underline;color:#7dd3fc}}
-/* responsive v6.13.4: 全面移动端适配 */
+/* responsive v6.13.38: 全面移动端适配 */
 @media(max-width:768px){{
   .container{{padding:.5rem}}
   .header{{padding:1.2rem .8rem}}
@@ -4281,7 +4281,7 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 .top10-conclusion{{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:18px 22px;margin-top:20px;box-shadow:0 2px 8px rgba(0,0,0,.2)}}
 .top10-conclusion h3{{font-size:1rem;color:#38bdf8;margin-bottom:10px;font-weight:700}}
 .top10-conclusion p{{font-size:.82rem;color:#94a3b8;line-height:1.7;margin-top:8px}}
-/* v6.13.1: AI分析模块美化 */
+/* v6.13.38: AI分析模块美化 */
 .ai-section-wrap{{background:linear-gradient(135deg, #1a2332 0%, #1e293b 50%, #172033 100%);border:1px solid #2d3a4f;border-radius:16px;padding:1.8rem;margin:1.5rem 0;box-shadow:0 4px 20px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.03);position:relative;overflow:hidden}}
 .ai-section-wrap::before{{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg, #38bdf8, #8b5cf6, #ec4899);opacity:.8}}
 .ai-section-wrap h2{{font-size:1.2rem;color:#f0f9ff;margin:0 0 1.2rem;padding:0 0 .8rem;border-bottom:1px solid #2d3a4f;font-weight:700;letter-spacing:.04em;display:flex;align-items:center;gap:10px}}
@@ -4324,7 +4324,7 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 .top10-card-header .badge{{margin-left:auto}}
 .top10-card-reason{{border-left:2px solid #2d3a4f;padding-left:12px;margin:8px 0;transition:border-color .2s}}
 .top10-card-reason:hover{{border-left-color:rgba(56,189,248,.3)}}
-/* v6.13.25: 回测指标卡片CSS — 从footer移至head */
+/* v6.13.38: 回测指标卡片CSS — 从footer移至head */
 .metric-card-bt{{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:13px 10px;text-align:center;transition:border-color .2s,transform .15s}}
 .metric-card-bt:hover{{border-color:#475569;transform:translateY(-1px)}}
 .metric-label-bt{{color:#94a3b8;font-size:.68rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}}
