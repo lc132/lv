@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.38
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK(v6.13.38)
+A股每日盘前短线标的智能筛选 v6.13.39
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK(v6.13.39)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,7 +23,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.38"
+BUILTIN_VERSION = "v6.13.39"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -1545,6 +1545,10 @@ def _fetch_single_kline_tencent(c):
         qfqday = data.get('data', {}).get(stock_key, {}).get('qfqday', [])
         # 过滤掉非列表元素（如分红信息字典）
         bars = [b for b in qfqday if isinstance(b, list) and len(b) >= 6]
+        # v6.13.39: qfq(前复权)对新股可能返回空数据，降级使用不复权数据
+        if not bars or len(bars) < 20:
+            day_data = data.get('data', {}).get(stock_key, {}).get('day', [])
+            bars = [b for b in day_data if isinstance(b, list) and len(b) >= 6]
         if not bars or len(bars) < 20:
             return {}
         # 腾讯格式: [date, open, close, high, low, volume]
@@ -1597,6 +1601,92 @@ def _fetch_single_kline_tencent(c):
             'high60': max(highs[-60:]) if len(highs) >= 60 else (max(highs) if highs else 0),
             'low60': min(lows[-60:]) if len(lows) >= 60 else (min(lows) if lows else 0),
             'days_listed': 999, 'limit_up_days': 0,
+            'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes
+        }
+    except (urllib.error.URLError, json.JSONDecodeError, OSError,
+            ValueError, TypeError, ZeroDivisionError, IndexError):
+        return {}
+
+
+def _fetch_single_kline_eastmoney(c):
+    """v6.13.39: 东方财富HTTP单股K线降级（腾讯HTTP失败时的单股补救）
+    使用东方财富日K线前复权API，无需API Key，返回格式与腾讯HTTP一致
+    """
+    code = c.get('code', '')
+    if not code:
+        return {}
+    try:
+        secid = f'1.{code}' if code.startswith('6') else f'0.{code}'
+        url = (f'https://push2his.eastmoney.com/api/qt/stock/kline/get?'
+               f'secid={secid}&fields1=f1,f2,f3,f4,f5,f6&'
+               f'fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&'
+               f'klt=101&fqt=1&end=20500101&lmt=60')
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0',
+            'Referer': 'https://quote.eastmoney.com/'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        klines = data.get('data', {}).get('klines', [])
+        if not klines or len(klines) < 20:
+            return {}
+        # 东方财富格式: "date,open,close,high,low,volume,amount,amplitude,change_pct,change,turnover"
+        bars = []
+        for k in klines:
+            parts = k.split(',')
+            if len(parts) >= 6:
+                bars.append([parts[0], float(parts[1]), float(parts[2]),
+                            float(parts[3]), float(parts[4]), float(parts[5])])
+        if len(bars) < 20:
+            return {}
+        closes = [b[2] for b in bars]
+        highs = [b[3] for b in bars]
+        lows = [b[4] for b in bars]
+        volumes = [b[5] for b in bars]
+        ma5 = sum(closes[-5:]) / 5 if len(closes) >= 5 else 0
+        ma10 = sum(closes[-10:]) / 10 if len(closes) >= 10 else 0
+        ma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else 0
+        # MACD (12,26,9)
+        ema12 = closes[0]; ema26 = closes[0]
+        difs = [0.0]
+        for pr in closes[1:]:
+            ema12 = ema12 * 11/13 + pr * 2/13
+            ema26 = ema26 * 25/27 + pr * 2/27
+            difs.append(ema12 - ema26)
+        dea = difs[0]
+        macd_hists = [0.0]
+        for d in difs[1:]:
+            dea = dea * 8/10 + d * 2/10
+            macd_hists.append((d - dea) * 2)
+        dif = difs[-1]; dea_val = dea; macd_hist = macd_hists[-1]
+        # KDJ(9,3,3)
+        k_val = 50.0; d_val = 50.0; j_val = 50.0
+        if len(closes) >= 9:
+            for i in range(8, len(closes)):
+                h9 = max(highs[i-8:i+1]); l9 = min(lows[i-8:i+1])
+                rsv = (closes[i] - l9) / (h9 - l9) * 100 if h9 > l9 else 50
+                k_val = 2/3 * k_val + 1/3 * rsv
+                d_val = 2/3 * d_val + 1/3 * k_val
+            j_val = 3 * k_val - 2 * d_val
+        # 布林带(20,2)
+        boll_mid = ma20; boll_upper = boll_mid; boll_lower = boll_mid
+        if len(closes) >= 20 and boll_mid > 0:
+            variance = sum((c - boll_mid) ** 2 for c in closes[-20:]) / 20
+            std = variance ** 0.5
+            boll_upper = boll_mid + 2 * std; boll_lower = boll_mid - 2 * std
+        high20 = max(highs[-20:]) if len(highs) >= 20 else max(highs)
+        low20 = min(lows[-20:]) if len(lows) >= 20 else min(lows)
+        boll_width = (boll_upper - boll_lower) / boll_mid if boll_mid > 0 else 999
+        return {
+            'ma5': ma5, 'ma10': ma10, 'ma20': ma20,
+            'dif': dif, 'dea': dea_val, 'macd_hist': macd_hist,
+            'rsi14': 50.0, 'k': k_val, 'd': d_val, 'j': j_val,
+            'boll_upper': boll_upper, 'boll_mid': boll_mid, 'boll_lower': boll_lower,
+            'boll_width': boll_width, 'wr14': 50.0, 'obv': 0,
+            'pdi': 0.0, 'mdi': 0.0, 'adx': 0.0,
+            'high20': high20, 'low20': low20,
+            'high60': max(highs[-60:]) if len(highs) >= 60 else (max(highs) if highs else 0),
+            'low60': min(lows[-60:]) if len(lows) >= 60 else (min(lows) if lows else 0),
+            'days_listed': len(bars) if bars else 999, 'limit_up_days': 0,
             'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes
         }
     except (urllib.error.URLError, json.JSONDecodeError, OSError,
@@ -4141,7 +4231,7 @@ tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72
 .footer .disclaimer{{color:#ef4444;font-weight:700;margin-top:.6rem;font-size:.82rem}}
 /* links */
 a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decoration:underline;color:#7dd3fc}}
-/* responsive v6.13.38: 全面移动端适配 */
+/* responsive v6.13.39: 全面移动端适配 */
 @media(max-width:768px){{
   .container{{padding:.5rem}}
   .header{{padding:1.2rem .8rem}}
@@ -4281,7 +4371,7 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 .top10-conclusion{{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:18px 22px;margin-top:20px;box-shadow:0 2px 8px rgba(0,0,0,.2)}}
 .top10-conclusion h3{{font-size:1rem;color:#38bdf8;margin-bottom:10px;font-weight:700}}
 .top10-conclusion p{{font-size:.82rem;color:#94a3b8;line-height:1.7;margin-top:8px}}
-/* v6.13.38: AI分析模块美化 */
+/* v6.13.39: AI分析模块美化 */
 .ai-section-wrap{{background:linear-gradient(135deg, #1a2332 0%, #1e293b 50%, #172033 100%);border:1px solid #2d3a4f;border-radius:16px;padding:1.8rem;margin:1.5rem 0;box-shadow:0 4px 20px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.03);position:relative;overflow:hidden}}
 .ai-section-wrap::before{{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg, #38bdf8, #8b5cf6, #ec4899);opacity:.8}}
 .ai-section-wrap h2{{font-size:1.2rem;color:#f0f9ff;margin:0 0 1.2rem;padding:0 0 .8rem;border-bottom:1px solid #2d3a4f;font-weight:700;letter-spacing:.04em;display:flex;align-items:center;gap:10px}}
@@ -4324,7 +4414,7 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 .top10-card-header .badge{{margin-left:auto}}
 .top10-card-reason{{border-left:2px solid #2d3a4f;padding-left:12px;margin:8px 0;transition:border-color .2s}}
 .top10-card-reason:hover{{border-left-color:rgba(56,189,248,.3)}}
-/* v6.13.38: 回测指标卡片CSS — 从footer移至head */
+/* v6.13.39: 回测指标卡片CSS — 从footer移至head */
 .metric-card-bt{{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:13px 10px;text-align:center;transition:border-color .2s,transform .15s}}
 .metric-card-bt:hover{{border-color:#475569;transform:translateY(-1px)}}
 .metric-label-bt{{color:#94a3b8;font-size:.68rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}}
@@ -4612,12 +4702,28 @@ def main():
     record_step_status("步骤10A: 全市场拉取", "OK", f"{total_raw}只")
 
     # v6.13.11: 跳过pytdx(沙箱内始终不可达)，腾讯HTTP一级 → iTick二级
+    # v6.13.39: 新增东方财富单股K线降级，腾讯HTTP失败时自动补救
     print("\n[步骤10C] 历史K线..."); kline_data = step10C_fetch_klines_http(raw_pool)
     valid_kline = sum(1 for v in kline_data.values() if v and v.get('closes'))
     if valid_kline < len(raw_pool) * 0.3:
         kline_data = step10C_fetch_klines_itick(raw_pool)
         valid_kline = sum(1 for v in kline_data.values() if v and v.get('closes'))
         log_alert("WARNING", "K线降级", f"腾讯HTTP仅{valid_kline}只有效，已切换iTick")
+    # v6.13.39: 单股K线降级——腾讯HTTP失败时，东方财富HTTP补救
+    failed_kline = [c.get('code') for c in raw_pool
+                    if not kline_data.get(c.get('code', ''), {}).get('closes')]
+    if failed_kline:
+        rescued = 0
+        for code in failed_kline:
+            c = next((x for x in raw_pool if x.get('code') == code), None)
+            if c:
+                ekd = _fetch_single_kline_eastmoney(c)
+                if ekd and ekd.get('closes'):
+                    kline_data[code] = ekd
+                    rescued += 1
+        if rescued > 0:
+            valid_kline += rescued
+            log_alert("INFO", "K线降级", f"东方财富HTTP补救{rescued}只({','.join(failed_kline[:5])})")
     record_step_status("步骤10C: 历史K线", "OK", f"{valid_kline}有效")
     
     print("\n[步骤11] 硬排除..."); ael, _, er = step11_hard_exclude(raw_pool, ahc, kline_data, pledge_data, goodwill_data, unlock_data, {}); ae = len(ael)
