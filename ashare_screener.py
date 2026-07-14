@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.39
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK(v6.13.39)
+A股每日盘前短线标的智能筛选 v6.13.40
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK(v6.13.40)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,7 +23,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.39"
+BUILTIN_VERSION = "v6.13.40"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -1545,7 +1545,7 @@ def _fetch_single_kline_tencent(c):
         qfqday = data.get('data', {}).get(stock_key, {}).get('qfqday', [])
         # 过滤掉非列表元素（如分红信息字典）
         bars = [b for b in qfqday if isinstance(b, list) and len(b) >= 6]
-        # v6.13.39: qfq(前复权)对新股可能返回空数据，降级使用不复权数据
+        # v6.13.40: qfq(前复权)对新股可能返回空数据，降级使用不复权数据
         if not bars or len(bars) < 20:
             day_data = data.get('data', {}).get(stock_key, {}).get('day', [])
             bars = [b for b in day_data if isinstance(b, list) and len(b) >= 6]
@@ -1609,7 +1609,7 @@ def _fetch_single_kline_tencent(c):
 
 
 def _fetch_single_kline_eastmoney(c):
-    """v6.13.39: 东方财富HTTP单股K线降级（腾讯HTTP失败时的单股补救）
+    """v6.13.40: 东方财富HTTP单股K线降级（腾讯HTTP失败时的单股补救）
     使用东方财富日K线前复权API，无需API Key，返回格式与腾讯HTTP一致
     """
     code = c.get('code', '')
@@ -2696,8 +2696,8 @@ def step18_news_screening(candidates):
     
     # v6.13.11: 源级别状态追踪
     _src_status = {'eastmoney': {'ok': 0, 'fail': 0}, 'bing': {'ok': 0, 'fail': 0},
-                   'cninfo': {'ok': 0, 'fail': 0}, 'cls': {'ok': 0, 'fail': 0},
-                   'xueqiu': {'ok': 0, 'fail': 0}}
+                   'baidu': {'ok': 0, 'fail': 0}, 'cninfo': {'ok': 0, 'fail': 0},
+                   'cls': {'ok': 0, 'fail': 0}, 'xueqiu': {'ok': 0, 'fail': 0}}
     
     def _check_eastmoney(code, name):
         try:
@@ -2738,7 +2738,7 @@ def step18_news_screening(candidates):
                         if kw in title and not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
                             return ('eastmoney_v2', kw)
         except Exception:
-            pass
+            _src_status['eastmoney']['fail'] += 1
         return None
     
     def _check_bing(code, name):
@@ -2806,7 +2806,7 @@ def step18_news_screening(candidates):
                 req = urllib.request.Request('http://www.cninfo.com.cn/new/hisAnnouncement/query', data=params, headers=headers)
                 with urllib.request.urlopen(req, timeout=5) as resp:
                     data = json.loads(resp.read().decode('utf-8'))
-                    for ann in data.get('announcements', []):
+                    for ann in (data.get('announcements') or []):
                         title = ann.get('title', '')
                         for kw in NEGATIVE_KW:
                             if kw in title and not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
@@ -2823,7 +2823,7 @@ def step18_news_screening(candidates):
                 req = urllib.request.Request('http://www.cninfo.com.cn/new/hisAnnouncement/query', data=params, headers=headers)
                 with urllib.request.urlopen(req, timeout=5) as resp:
                     data = json.loads(resp.read().decode('utf-8'))
-                    for ann in data.get('announcements', []):
+                    for ann in (data.get('announcements') or []):
                         title = ann.get('title', '')
                         for kw in NEGATIVE_KW:
                             if kw in title and not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
@@ -2833,30 +2833,24 @@ def step18_news_screening(candidates):
         return None
     
     def _check_cls(code, name):
-        """财联社 — 实时快讯，搜索股票名称在近期电报中出现"""
+        """v6.13.40: CLS API signature upgraded, disabled. Fallback to Bing/Baidu."""
+        return None
+    
+    def _check_bing_fallback(code, name):
+        """v6.13.40: Bing search fallback when xueqiu cache miss"""
         try:
-            sorted_params = sorted([
-                ('app', 'CailianpressWeb'), ('os', 'web'), ('refresh_type', '1'),
-                ('rn', '50'), ('sv', '8.4.6')
-            ], key=lambda x: x[0])
-            query_str = urllib.parse.urlencode(sorted_params)
-            sign = hashlib.md5(hashlib.sha1(query_str.encode()).hexdigest().encode()).hexdigest()
-            url = f'https://www.cls.cn/nodeapi/telegraphList?{query_str}&sign={sign}'
+            query = f'{name} {code} 利空 公告 减持'
+            url = f'https://www.bing.com/search?q={urllib.parse.quote(query)}&count=5'
             req = urllib.request.Request(url, headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Referer': 'https://www.cls.cn/telegraph'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             })
-            with urllib.request.urlopen(req, timeout=4) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
-                telegrams = data.get('data', {}).get('roll_data', [])
-                for tg in telegrams:
-                    content = tg.get('title', '') + tg.get('brief', '') + tg.get('content', '')
-                    if name not in content: continue
-                    for kw in NEGATIVE_KW:
-                        if kw in content and not any(neg in content for neg in FALSE_POSITIVE_NEGATORS):
-                            return ('cls', kw)
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                html = resp.read().decode('utf-8', errors='ignore')
+                for kw in NEGATIVE_KW:
+                    if kw in html.lower() and not any(neg in html.lower() for neg in FALSE_POSITIVE_NEGATORS):
+                        return ('xueqiu_bing_fb', kw)
         except Exception:
-            _src_status['cls']['fail'] += 1
+            pass
         return None
     
     def _check_xueqiu(code, name):
@@ -2873,9 +2867,10 @@ def step18_news_screening(candidates):
                 cache = json.loads(f.read())
             
             if code not in cache:
+                # v6.13.40: cache miss, try Bing search fallback
                 _src_status['xueqiu'] = _src_status.get('xueqiu', {'ok': 0, 'fail': 0})
                 _src_status['xueqiu']['fail'] += 1
-                return None
+                return _check_bing_fallback(code, name)
             
             posts = cache.get(code, [])
             _src_status['xueqiu'] = _src_status.get('xueqiu', {'ok': 0, 'fail': 0})
@@ -2906,12 +2901,11 @@ def step18_news_screening(candidates):
     
     # v6.13.11: 主源不可用时自动降级备选源
     _checkers = [
-        _check_eastmoney,   # 主: 东方财富push2
-        _check_eastmoney_jsonp,  # 备: 东方财富公告API
+        _check_eastmoney_jsonp,  # 东方财富公告API (push2已废弃)
         _check_bing,        # 主: Bing搜索
         _check_baidu,       # 备: 百度搜索
         _check_cninfo,      # 主: 巨潮资讯
-        _check_cls,         # 主: 财联社
+        _check_cls,         # 财联社(API已禁用,依靠Bing/百度)
         _check_xueqiu,      # 备: 雪球讨论
     ]
     
@@ -4231,7 +4225,7 @@ tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72
 .footer .disclaimer{{color:#ef4444;font-weight:700;margin-top:.6rem;font-size:.82rem}}
 /* links */
 a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decoration:underline;color:#7dd3fc}}
-/* responsive v6.13.39: 全面移动端适配 */
+/* responsive v6.13.40: 全面移动端适配 */
 @media(max-width:768px){{
   .container{{padding:.5rem}}
   .header{{padding:1.2rem .8rem}}
@@ -4371,7 +4365,7 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 .top10-conclusion{{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:18px 22px;margin-top:20px;box-shadow:0 2px 8px rgba(0,0,0,.2)}}
 .top10-conclusion h3{{font-size:1rem;color:#38bdf8;margin-bottom:10px;font-weight:700}}
 .top10-conclusion p{{font-size:.82rem;color:#94a3b8;line-height:1.7;margin-top:8px}}
-/* v6.13.39: AI分析模块美化 */
+/* v6.13.40: AI分析模块美化 */
 .ai-section-wrap{{background:linear-gradient(135deg, #1a2332 0%, #1e293b 50%, #172033 100%);border:1px solid #2d3a4f;border-radius:16px;padding:1.8rem;margin:1.5rem 0;box-shadow:0 4px 20px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.03);position:relative;overflow:hidden}}
 .ai-section-wrap::before{{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg, #38bdf8, #8b5cf6, #ec4899);opacity:.8}}
 .ai-section-wrap h2{{font-size:1.2rem;color:#f0f9ff;margin:0 0 1.2rem;padding:0 0 .8rem;border-bottom:1px solid #2d3a4f;font-weight:700;letter-spacing:.04em;display:flex;align-items:center;gap:10px}}
@@ -4414,7 +4408,7 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 .top10-card-header .badge{{margin-left:auto}}
 .top10-card-reason{{border-left:2px solid #2d3a4f;padding-left:12px;margin:8px 0;transition:border-color .2s}}
 .top10-card-reason:hover{{border-left-color:rgba(56,189,248,.3)}}
-/* v6.13.39: 回测指标卡片CSS — 从footer移至head */
+/* v6.13.40: 回测指标卡片CSS — 从footer移至head */
 .metric-card-bt{{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:13px 10px;text-align:center;transition:border-color .2s,transform .15s}}
 .metric-card-bt:hover{{border-color:#475569;transform:translateY(-1px)}}
 .metric-label-bt{{color:#94a3b8;font-size:.68rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}}
@@ -4702,14 +4696,14 @@ def main():
     record_step_status("步骤10A: 全市场拉取", "OK", f"{total_raw}只")
 
     # v6.13.11: 跳过pytdx(沙箱内始终不可达)，腾讯HTTP一级 → iTick二级
-    # v6.13.39: 新增东方财富单股K线降级，腾讯HTTP失败时自动补救
+    # v6.13.40: 新增东方财富单股K线降级，腾讯HTTP失败时自动补救
     print("\n[步骤10C] 历史K线..."); kline_data = step10C_fetch_klines_http(raw_pool)
     valid_kline = sum(1 for v in kline_data.values() if v and v.get('closes'))
     if valid_kline < len(raw_pool) * 0.3:
         kline_data = step10C_fetch_klines_itick(raw_pool)
         valid_kline = sum(1 for v in kline_data.values() if v and v.get('closes'))
         log_alert("WARNING", "K线降级", f"腾讯HTTP仅{valid_kline}只有效，已切换iTick")
-    # v6.13.39: 单股K线降级——腾讯HTTP失败时，东方财富HTTP补救
+    # v6.13.40: 单股K线降级——腾讯HTTP失败时，东方财富HTTP补救
     failed_kline = [c.get('code') for c in raw_pool
                     if not kline_data.get(c.get('code', ''), {}).get('closes')]
     if failed_kline:
