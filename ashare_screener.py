@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.41
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 盈亏比TOP10 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 板块热度排序TOP10 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK(v6.13.41)
+A股每日盘前短线标的智能筛选 v6.13.42
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK(v6.13.42)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 
-# v6.13.41: axdata K线降级（需要Python 3.11+）
+# v6.13.42: axdata K线降级（需要Python 3.11+）
 _axdata_available = False
 _AXDATA_CLIENT = None
 try:
@@ -33,7 +33,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.41"
+BUILTIN_VERSION = "v6.13.42"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -1555,7 +1555,7 @@ def _fetch_single_kline_tencent(c):
         qfqday = data.get('data', {}).get(stock_key, {}).get('qfqday', [])
         # 过滤掉非列表元素（如分红信息字典）
         bars = [b for b in qfqday if isinstance(b, list) and len(b) >= 6]
-        # v6.13.41: qfq(前复权)对新股可能返回空数据，降级使用不复权数据
+        # v6.13.42: qfq(前复权)对新股可能返回空数据，降级使用不复权数据
         if not bars or len(bars) < 20:
             day_data = data.get('data', {}).get(stock_key, {}).get('day', [])
             bars = [b for b in day_data if isinstance(b, list) and len(b) >= 6]
@@ -1619,7 +1619,7 @@ def _fetch_single_kline_tencent(c):
 
 
 def _fetch_single_kline_eastmoney(c):
-    """v6.13.41: 东方财富HTTP单股K线降级（腾讯HTTP失败时的单股补救）
+    """v6.13.42: 东方财富HTTP单股K线降级（腾讯HTTP失败时的单股补救）
     使用东方财富日K线前复权API，无需API Key，返回格式与腾讯HTTP一致
     """
     code = c.get('code', '')
@@ -1704,7 +1704,7 @@ def _fetch_single_kline_eastmoney(c):
         return {}
 
 def _fetch_single_kline_axdata(c):
-    """v6.13.41: axdata单股K线降级（腾讯HTTP+东方财富HTTP均失败时）
+    """v6.13.42: axdata单股K线降级（腾讯HTTP+东方财富HTTP均失败时）
     使用腾讯财经K线接口，通过axdata框架统一调用，对qfq新股处理更稳定
     """
     if not _axdata_available:
@@ -2920,11 +2920,11 @@ def step18_news_screening(candidates):
         return None
     
     def _check_cls(code, name):
-        """v6.13.41: CLS API signature upgraded, disabled. Fallback to Bing/Baidu."""
+        """v6.13.42: CLS API signature upgraded, disabled. Fallback to Bing/Baidu."""
         return None
     
     def _check_bing_fallback(code, name):
-        """v6.13.41: Bing search fallback when xueqiu cache miss"""
+        """v6.13.42: Bing search fallback when xueqiu cache miss"""
         try:
             query = f'{name} {code} 利空 公告 减持'
             url = f'https://www.bing.com/search?q={urllib.parse.quote(query)}&count=5'
@@ -2954,7 +2954,7 @@ def step18_news_screening(candidates):
                 cache = json.loads(f.read())
             
             if code not in cache:
-                # v6.13.41: cache miss, try Bing search fallback
+                # v6.13.42: cache miss, try Bing search fallback
                 _src_status['xueqiu'] = _src_status.get('xueqiu', {'ok': 0, 'fail': 0})
                 _src_status['xueqiu']['fail'] += 1
                 return _check_bing_fallback(code, name)
@@ -3407,7 +3407,7 @@ def _calc_tier_label(c):
     return ('-', 'tier_na')
 
 def _compute_pl_ratios(candidates, sector_limit_up=None):
-    """预计算盈亏比TOP10，标注c['_entry']/c['_stop']/c['_target']/c['_pl_ratio']，返回_top10_codes集合
+    """预计算资金去向，标注c['_entry']/c['_stop']/c['_target']/c['_pl_ratio']，返回_top10_codes集合
     v6.12.10: 板块热度排序——第一优先级板块涨停家数，第二优先级盈亏比"""
     global _pl_sorted
     sector_heat = sector_limit_up or {}
@@ -3706,22 +3706,26 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         lines.append("- **模拟口径**：使用最近90天推荐历史，按推荐表的进场、止损、止盈进行模拟，单笔最大持仓10个交易日。")
         lines.append("- **交易规则**：遵循A股T+1，买入当日不检查止盈止损出场，从下一交易日起判断是否触及止损/止盈。")
         lines.append("- **使用限制**：未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素；样本少时仅作参考，不能代表未来表现。\n")
-        lines.append("\n## TOP10 板块热度精选（按板块涨停家数排序，同热度按盈亏比优先）\n")
-        lines.append("| # | 标的 | 代码 | 策略 | 行业 | 板块热度 | 盈亏比 | 进场 | 止损 | 止盈 | 评分 |")
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
-        for ti, (tcode, tpl, theat, _) in enumerate(_pl_sorted[:10], 1):
-            tc = next((ct for ct in candidates if ct.get('code') == tcode), None)
-            if tc:
-                ts = tc.get('strategy', '?')
-                tind = _industry_str(tc)
-                tname = tc.get('name', '')
-                tentry = calc_entry_price(tc)
-                tsl = round(tentry * _STRATEGY_STOP_LOSS.get(ts, 0.96), 2)
-                ttp = round(tentry * _STRATEGY_TAKE_PROFIT.get(ts, 1.05), 2)
-                tscore = tc.get('score', 0)
-                turl = f"https://quote.eastmoney.com/sh{tcode}.html" if tcode.startswith('6') else f"https://quote.eastmoney.com/sz{tcode}.html"
-                heat_str = f"🔥🔥🔥 {theat}涨停" if theat >= 10 else (f"🔥🔥 {theat}涨停" if theat >= 3 else f"🔥 {theat}涨停")
-                lines.append(f"| {ti} | [{tname}]({turl}) | {tcode} | {ts} | {tind} | {heat_str} | {tpl} | {tentry:.2f} | {tsl:.2f} | {ttp:.2f} | {tscore} |")
+        # v6.13.42: 资金去向——按行业汇总主力净流入
+        lines.append("\n## 资金去向（按行业主力净流入排序）\n")
+        ind_flow = {}
+        for c in candidates:
+            ind = _industry_str(c)
+            mi = c.get('main_inflow', 0)
+            if mi is None: mi = 0
+            ind_flow[ind] = ind_flow.get(ind, {'total': 0.0, 'stocks': []})
+            ind_flow[ind]['total'] += mi
+            ind_flow[ind]['stocks'].append((c.get('code',''), c.get('name',''), mi, c.get('strategy','')))
+        sorted_ind = sorted(ind_flow.items(), key=lambda x: -x[1]['total'])
+        lines.append("| 行业 | 净流入(亿) | 代表标的 |")
+        lines.append("|---|---|---|")
+        for ind, data in sorted_ind:
+            flow_yi = data['total'] / 1e8
+            direction = "流入" if flow_yi > 0 else "流出"
+            abs_flow = abs(flow_yi)
+            tops = sorted(data['stocks'], key=lambda x: -x[2])[:4]
+            stock_str = '、'.join(f"{s[1]}({'+' if s[2]>=0 else ''}{s[2]/1e8:.2f}亿)" for s in tops)
+            lines.append(f"| {ind} | {direction}{abs_flow:.2f} | {stock_str} |")
     sd = Counter(c.get('strategy') for c in candidates)
     sn = _STRATEGY_NAMES
     lines.append("\n## 策略分布")
@@ -3919,170 +3923,33 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
     else:
         alerts_html = '<div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">今日无异常告警</span></div>'
     
-    # ── v6.13.0: TOP10盈亏比精选推荐理由（含交易维度+60日区间+基本面+信号+公告+7日历史）──
-    top10_cards_html = ""
-    top10_sorted = sorted(candidates, key=lambda c: -c.get('_pl_ratio', 0))[:10]
-    if top10_sorted:
-        cards = []
-        for i, c in enumerate(top10_sorted):
-            idx = i + 1
-            code = c.get('code', '')
-            name = c.get('name', '')
-            strat = c.get('strategy', '?')
-            score = c.get('score', 0)
-            conf = c.get('confidence', '')
-            # v6.13.25: 修复BUG — conf字段存储的是星星字符串(如'★★★')而非'high'/'mid'/'low'
-            conf_stars = '★★★' if '★★★' in conf else ('★★' if '★★' in conf else '★')
-            change_pct = c.get('change_pct', 0)
-            ampl = c.get('amplitude', 0)
-            strat_badge = f'strat_{strat.lower()}'
-            entry = c.get('_entry', 0)
-            stop = c.get('_stop', 0)
-            target = c.get('_target', 0)
-            plr = c.get('_pl_ratio', 0)
-            lh = c.get('_longhu', '')
-            news = c.get('_news_positive', '')
-            ann = c.get('_announcement', '')
-            industry = _industry_str(c)
-            business = c.get('business', '')
-            amount = c.get('amount', 0) or 0
-            turnover = c.get('turnover', 0) or 0
-            vr = c.get('volume_ratio', 0)  # v6.13.20: 添加默认值防止NoneType比较 or 0
-            main_in = c.get('main_inflow') or 0
-            r7d = c.get('_recent_7d') or 0
-            r7s = c.get('_recent_7d_strategies', {})
-            sigs = c.get('_signal_reasons', [])
-            roe = c.get('_fd_roe') or 0
-            np_yoy = c.get('_fd_net_profit_yoy') or 0
-            close = c.get('close', 0) or 0
-            
-            # v6.13.0: 获取K线数据用于60日区间/BOLL/KDJ
-            kd = kline_data.get(code, {}) if kline_data else {}
-            has_kline = bool(kd and kd.get('closes') and len(kd.get('closes', [])) >= 5)
-            k_val = kd.get('k', 0) if has_kline else 0
-            d_val = kd.get('d', 0) if has_kline else 0
-            j_val = kd.get('j', 0) if has_kline else 0
-            high60 = kd.get('high60', 0) if has_kline else 0
-            low60 = kd.get('low60', 0) if has_kline else 0
-            boll_upper = kd.get('boll_upper', 0) if has_kline else 0
-            boll_mid = kd.get('boll_mid', 0) if has_kline else 0
-            boll_lower = kd.get('boll_lower', 0) if has_kline else 0
-            
-            sname = _STRATEGY_NAMES.get(strat, '')
-            
-            # 构建推荐理由
-            reason_parts = []
-            # 1. 当日表现 + 行业
-            perf_parts = [f'涨幅{change_pct:+.2f}%', f'振幅{ampl:.1f}%']
-            if amount > 0: perf_parts.append(f'成交额{amount/1e8:.2f}亿')
-            if turnover > 0: perf_parts.append(f'换手率{turnover:.2f}%')
-            if vr > 0: perf_parts.append(f'量比{vr:.2f}')
-            reason_parts.append(f'<strong>当日表现：</strong>{"，".join(perf_parts)}，{html.escape(industry)}行业')
-            if business: reason_parts.append(f'<strong>二级行业：</strong>{html.escape(business)}')
-            
-            # v6.13.0: 2. 60日区间位置 + 技术指标
-            tech_parts = []
-            if has_kline and high60 > 0 and low60 > 0 and close > 0:
-                pos_60 = (close - low60) / (high60 - low60) * 100 if high60 > low60 else 50
-                if pos_60 >= 80: pos_label = f'高位区({pos_60:.0f}%)'
-                elif pos_60 >= 50: pos_label = f'中位区({pos_60:.0f}%)'
-                elif pos_60 >= 20: pos_label = f'低位区({pos_60:.0f}%)'
-                else: pos_label = f'底部区({pos_60:.0f}%)'
-                tech_parts.append(f'60日{pos_label}')
-            if has_kline and k_val > 0 and d_val > 0:
-                if k_val > 80: kdj_label = '超买'
-                elif k_val < 20: kdj_label = '超卖'
-                elif k_val > d_val: kdj_label = '多头'
-                else: kdj_label = '空头'
-                tech_parts.append(f'KDJ{kdj_label}(K={k_val:.0f})')
-            if has_kline and boll_upper > 0 and close > 0:
-                if close >= boll_upper: boll_label = '突破上轨'
-                elif close > boll_mid: boll_label = '上轨区间'
-                elif close > boll_lower: boll_label = '下轨区间'
-                else: boll_label = '跌破下轨'
-                tech_parts.append(f'BOLL{boll_label}')
-            if tech_parts:
-                reason_parts.append(f'<strong>技术面：</strong>{"，".join(tech_parts)}')
-            
-            # 3. 基本面
-            fin_parts = []
-            try: roe_f = float(roe); fin_parts.append(f'ROE {roe_f:.1f}%') if roe_f != 0 else None
-            except (ValueError, TypeError): pass
-            try: np_f = float(np_yoy); fin_parts.append(f'净利润同比 {np_f:+.1f}%') if np_f != 0 else None
-            except (ValueError, TypeError): pass
-            if main_in and main_in != 0:
-                fin_parts.append(f'主力净流入 {main_in/1e4:+.0f}万')
-            if fin_parts:
-                reason_parts.append(f'<strong>基本面：</strong>{"，".join(fin_parts)}')
-            
-            # 4. 进场区间 + 操作建议
-            stop_pct = (1-stop/entry)*100 if entry > 0 else 0
-            target_pct = (target/entry-1)*100 if entry > 0 else 0
-            reason_parts.append(f'<strong>进场区间：</strong>{entry:.2f}元进场，止损{stop:.2f}元（-{stop_pct:.1f}%），止盈{target:.2f}元（+{target_pct:.1f}%），盈亏比{plr:.2f}')
-            
-            # 5. 操作建议
-            op_parts = []
-            if has_kline and high60 > 0 and low60 > 0 and close > 0:
-                pos_60 = (close - low60) / (high60 - low60) * 100 if high60 > low60 else 50
-                if pos_60 >= 80 and strat in ['A', 'G', 'I', 'N']:
-                    op_parts.append('⚠️ 高位追涨，仓位控制在30%以内，开盘观察竞价强度后分批进场')
-                elif pos_60 >= 80:
-                    op_parts.append('高位区域，建议等回调至中位再进场')
-                elif pos_60 <= 20:
-                    op_parts.append('底部区域，安全边际高，可逢低分批建仓')
-                elif strat in ['A', 'G']:
-                    op_parts.append('趋势良好，开盘回踩均线时进场，止损严格')
-                elif strat in ['B', 'D', 'L']:
-                    op_parts.append('低吸策略，开盘不急追，等盘中回调至支撑位进场')
-                else:
-                    op_parts.append('开盘观察5分钟，确认方向后进场')
-            if op_parts:
-                reason_parts.append(f'<strong>操作建议：</strong>{op_parts[0]}')
-            
-            # 6. 7日推荐历史
-            if r7d > 0 and r7s:
-                r7_dates = sorted(r7s.keys())
-                r7_strats = [r7s[d] for d in r7_dates]
-                seen = set(); uniq_s = []
-                for s_ in r7_strats:
-                    if s_ not in seen: seen.add(s_); uniq_s.append(s_)
-                reason_parts.append(f'<strong>7日推荐：</strong>已推荐{r7d}天（策略{",".join(uniq_s)}），可持续关注')
-            
-            # 7. 信号匹配
-            if sigs:
-                sig_str = '，'.join(html.escape(s) for s in sigs[:5])
-                if len(sigs) > 5: sig_str += f' 等{len(sigs)}项'
-                reason_parts.append(f'<strong>匹配信号：</strong>{sig_str}')
-            
-            # 8. 龙虎榜/新闻/公告
-            if lh:
-                reason_parts.append(f'<strong>🐉 龙虎榜：</strong>{html.escape(lh)}')
-            if news:
-                reason_parts.append(f'<strong>📰 正面新闻：</strong>{html.escape(news)}')
-            if ann:
-                ann_display = html.escape(ann).replace('; ', '<br>  ')
-                reason_parts.append(f'<strong>📋 公司公告：</strong><br>  {ann_display}')
-            
-            reason = '<br>'.join(reason_parts)
-            
-            # 成交额格式化
-            amt_str = f'{amount/1e8:.1f}亿' if amount > 0 else '-'
-            to_str = f'{turnover:.1f}%' if turnover > 0 else '-'
-            
-            cards.append(f'''<div class="top10-card">
-<div class="top10-card-header"><span class="rank">#{idx}</span><span class="name">{html.escape(name)}</span><span class="code">{code}</span><span class="badge {strat_badge}">{strat} {sname}</span></div>
-<div class="top10-card-metrics">
-<div class="metric"><div class="val ratio-hl">{plr:.2f}</div><div class="lbl">盈亏比</div></div>
-<div class="metric"><div class="val">{entry:.2f}</div><div class="lbl">进场</div></div>
-<div class="metric"><div class="val">{stop:.2f}</div><div class="lbl">止损</div></div>
-<div class="metric"><div class="val">{target:.2f}</div><div class="lbl">止盈</div></div>
-<div class="metric"><div class="val">{score}</div><div class="lbl">评分</div></div>
-<div class="metric"><div class="val">{conf_stars}</div><div class="lbl">置信</div></div>
-<div class="metric"><div class="val">{amt_str}</div><div class="lbl">成交额</div></div>
-<div class="metric"><div class="val">{to_str}</div><div class="lbl">换手率</div></div>
-</div>
-<div class="top10-card-reason">{reason}</div></div>''')
-        top10_cards_html = '\n'.join(cards)
+    # v6.13.42: 资金去向——按行业汇总主力净流入
+    capital_flow_html = ""
+    ind_flow = {}
+    for c in candidates:
+        ind = _industry_str(c)
+        mi = c.get('main_inflow', 0)
+        if mi is None: mi = 0
+        ind_flow[ind] = ind_flow.get(ind, {'total': 0.0, 'stocks': []})
+        ind_flow[ind]['total'] += mi
+        ind_flow[ind]['stocks'].append((c.get('code',''), c.get('name',''), mi, c.get('strategy','')))
+    sorted_ind = sorted(ind_flow.items(), key=lambda x: -x[1]['total'])
+    if sorted_ind:
+        flow_cards = []
+        for idx, (ind, data) in enumerate(sorted_ind):
+            flow_yi = data['total'] / 1e8
+            direction = "流入" if flow_yi > 0 else "流出"
+            color = "#22c55e" if flow_yi > 0 else "#ef4444"
+            arrow = "↑" if flow_yi > 0 else "↓"
+            tops = sorted(data['stocks'], key=lambda x: -x[2])[:4]
+            tops_html = ''.join(
+                f'<span class="flow-stock">{s[1]}<span style="color:{color}">{arrow}{abs(s[2]/1e8):.2f}亿</span></span>'
+                for s in tops
+            )
+            flow_cards.append(f'''<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#{idx+1}</span><span class="industry-name">{ind}</span><span class="flow-amount" style="color:{color}">{arrow}{abs(flow_yi):.2f}亿 {direction}</span></div>
+<div class="flow-stocks">{tops_html}</div></div>''')
+        capital_flow_html = '\n'.join(flow_cards)
     
     # ── v6.13.1: AI 策略分析 HTML（美化版）──
     ai_html = ""
@@ -4312,7 +4179,7 @@ tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72
 .footer .disclaimer{{color:#ef4444;font-weight:700;margin-top:.6rem;font-size:.82rem}}
 /* links */
 a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decoration:underline;color:#7dd3fc}}
-/* responsive v6.13.41: 全面移动端适配 */
+/* responsive v6.13.42: 全面移动端适配 */
 @media(max-width:768px){{
   .container{{padding:.5rem}}
   .header{{padding:1.2rem .8rem}}
@@ -4339,13 +4206,13 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
   .seg-bar{{height:28px}}
   .seg{{font-size:.7rem}}
   .legend{{font-size:.7rem;gap:.7rem}}
-  .top10-card{{padding:12px 14px}}
-  .top10-card-header .name{{font-size:.85rem}}
-  .top10-card-header .rank{{font-size:1.1rem}}
-  .top10-card-metrics{{grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:6px}}
-  .top10-card-metrics .metric .val{{font-size:.9rem}}
-  .top10-card-metrics .metric .lbl{{font-size:.6rem}}
-  .top10-card-reason{{font-size:.75rem}}
+  .flow-card{{padding:12px 14px}}
+  .flow-card-header .industry-name{{font-size:.85rem}}
+  .flow-card-header .rank{{font-size:1.1rem}}
+  .flow-stocks{{gap:6px}}
+  .flow-stock{{font-size:.72rem;padding:2px 8px}}
+  .flow-stock span{{font-size:.65rem}}
+  .flow-card-header .flow-amount{{font-size:.8rem}}
   .ai-section-wrap{{padding:1rem;margin:1rem 0}}
   .ai-section-wrap h2{{font-size:1rem}}
   .ai-section-wrap h3{{font-size:.82rem}}
@@ -4388,15 +4255,15 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
   .legend-dot{{width:8px;height:8px}}
   th,td{{font-size:.6rem;padding:.2rem .25rem}}
   .badge{{font-size:.6rem;padding:1px 6px}}
-  .top10-card{{padding:10px 12px;border-radius:8px}}
-  .top10-card-header{{gap:6px;margin-bottom:8px}}
-  .top10-card-header .name{{font-size:.78rem}}
-  .top10-card-header .code{{font-size:.65rem}}
-  .top10-card-header .rank{{font-size:1rem;min-width:22px}}
-  .top10-card-metrics{{grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:8px}}
-  .top10-card-metrics .metric .val{{font-size:.8rem}}
-  .top10-card-metrics .metric .lbl{{font-size:.55rem}}
-  .top10-card-reason{{font-size:.7rem;line-height:1.5}}
+  .flow-card{{padding:10px 12px;border-radius:8px}}
+  .flow-card-header{{gap:6px;margin-bottom:8px}}
+  .flow-card-header .industry-name{{font-size:.78rem}}
+  .flow-stocks{{font-size:.68rem}}
+  .flow-card-header .rank{{font-size:1rem;min-width:22px}}
+  .flow-stocks{{gap:4px}}
+  .flow-stock{{font-size:.72rem}}
+  .flow-stock span{{font-size:.6rem}}
+  .flow-card-header .flow-amount{{font-size:.72rem}}
   .ai-section-wrap{{padding:.7rem;margin:.7rem 0;border-radius:10px}}
   .ai-section-wrap h2{{font-size:.88rem;margin-bottom:.8rem;padding-bottom:.5rem}}
   .ai-section-wrap h3{{font-size:.75rem}}
@@ -4426,33 +4293,30 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
   .index-card .idx-price{{font-size:.9rem}}
   .bar-label{{width:60px;font-size:.58rem}}
   th,td{{font-size:.55rem;padding:.15rem .2rem}}
-  .top10-card-metrics{{grid-template-columns:repeat(2,1fr)}}
-  .top10-card-metrics .metric .val{{font-size:.72rem}}
-  .top10-card-reason{{font-size:.65rem}}
+  .flow-stocks{{flex-direction:column}}
+  .flow-stock{{font-size:.68rem}}
+  .flow-card-header .flow-amount{{font-size:.68rem}}
   .funnel-step{{font-size:.62rem}}
   .badge{{font-size:.55rem}}
   .ai-markdown{{font-size:.68rem}}
   .ai-stock-card-body .ai-dim{{font-size:.65rem}}
 }}
-/* TOP10 cards */
-.top10-cards{{display:grid;grid-template-columns:1fr;gap:14px;margin-top:1rem}}
-.top10-card{{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:18px 22px;transition:border-color .2s,box-shadow .2s,transform .15s;box-shadow:0 2px 8px rgba(0,0,0,.2)}}
-.top10-card:hover{{border-color:#38bdf8;box-shadow:0 4px 16px rgba(56,189,248,.12);transform:translateY(-1px)}}
-.top10-card-header{{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}}
-.top10-card-header .rank{{font-size:1.4rem;font-weight:800;color:#38bdf8;min-width:28px}}
-.top10-card-header .name{{font-size:1rem;font-weight:700;color:#f8fafc}}
-.top10-card-header .code{{font-size:.75rem;color:#94a3b8;margin-left:2px}}
-.top10-card-metrics{{display:grid;grid-template-columns:repeat(auto-fit,minmax(85px,1fr));gap:10px;margin-bottom:14px}}
-.top10-card-metrics .metric{{text-align:center}}
-.top10-card-metrics .metric .val{{font-size:1.05rem;font-weight:700;color:#f8fafc}}
-.top10-card-metrics .metric .lbl{{font-size:.68rem;color:#94a3b8}}
-.top10-card-metrics .ratio-hl{{font-size:1.25rem!important}}
-.top10-card-reason{{font-size:.82rem;color:#94a3b8;line-height:1.65}}
-.top10-card-reason strong{{color:#e2e8f0}}
-.top10-conclusion{{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:18px 22px;margin-top:20px;box-shadow:0 2px 8px rgba(0,0,0,.2)}}
+/* v6.13.42: 资金去向卡片 */
+.capital-flow{{display:grid;grid-template-columns:1fr;gap:10px;margin-top:1rem}}
+.flow-card{{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:14px 18px;transition:border-color .2s,box-shadow .2s,transform .15s;box-shadow:0 2px 8px rgba(0,0,0,.2)}}
+.flow-card:hover{{border-color:#38bdf8;box-shadow:0 4px 16px rgba(56,189,248,.12);transform:translateY(-1px)}}
+.flow-card-header{{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap}}
+.flow-card-header .rank{{font-size:1.4rem;font-weight:800;color:#38bdf8;min-width:28px}}
+.flow-card-header .industry-name{{font-size:1rem;font-weight:700;color:#f8fafc}}
+.flow-card-header .flow-amount{{font-size:.9rem;font-weight:600;margin-left:auto}}
+.flow-stocks{{display:flex;flex-wrap:wrap;gap:8px;font-size:.8rem}}
+.flow-stock{{background:#1a2332;padding:3px 10px;border-radius:6px;color:#94a3b8;white-space:nowrap}}
+.flow-stock span{{margin-left:4px;font-weight:600}}
+.flow-stock strong{{color:#e2e8f0}}
+.flow-summary{{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:18px 22px;margin-top:20px;box-shadow:0 2px 8px rgba(0,0,0,.2)}}
 .top10-conclusion h3{{font-size:1rem;color:#38bdf8;margin-bottom:10px;font-weight:700}}
 .top10-conclusion p{{font-size:.82rem;color:#94a3b8;line-height:1.7;margin-top:8px}}
-/* v6.13.41: AI分析模块美化 */
+/* v6.13.42: AI分析模块美化 */
 .ai-section-wrap{{background:linear-gradient(135deg, #1a2332 0%, #1e293b 50%, #172033 100%);border:1px solid #2d3a4f;border-radius:16px;padding:1.8rem;margin:1.5rem 0;box-shadow:0 4px 20px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.03);position:relative;overflow:hidden}}
 .ai-section-wrap::before{{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg, #38bdf8, #8b5cf6, #ec4899);opacity:.8}}
 .ai-section-wrap h2{{font-size:1.2rem;color:#f0f9ff;margin:0 0 1.2rem;padding:0 0 .8rem;border-bottom:1px solid #2d3a4f;font-weight:700;letter-spacing:.04em;display:flex;align-items:center;gap:10px}}
@@ -4489,13 +4353,11 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 .ai-info-card:first-child{{margin-top:0}}
 .ai-info-card .ai-card-title{{font-size:.8rem;font-weight:700;color:#38bdf8;letter-spacing:.04em;margin-bottom:8px;display:flex;align-items:center;gap:6px}}
 .ai-info-card .ai-card-title .dot{{width:6px;height:6px;border-radius:50%;background:#38bdf8;display:inline-block}}
-/* 增强TOP10卡片 */
-.top10-card{{border-left:3px solid transparent;transition:border-left-color .3s,box-shadow .3s,transform .2s}}
-.top10-card:hover{{border-left-color:#38bdf8}}
-.top10-card-header .badge{{margin-left:auto}}
-.top10-card-reason{{border-left:2px solid #2d3a4f;padding-left:12px;margin:8px 0;transition:border-color .2s}}
-.top10-card-reason:hover{{border-left-color:rgba(56,189,248,.3)}}
-/* v6.13.41: 回测指标卡片CSS — 从footer移至head */
+/* 增强资金流向卡片 */
+.flow-card{{border-left:3px solid transparent;transition:border-left-color .3s,box-shadow .3s,transform .2s}}
+.flow-card:hover{{border-left-color:#38bdf8}}
+.flow-card-header .flow-amount{{margin-left:auto}}
+/* v6.13.42: 回测指标卡片CSS — 从footer移至head */
 .metric-card-bt{{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:13px 10px;text-align:center;transition:border-color .2s,transform .15s}}
 .metric-card-bt:hover{{border-color:#475569;transform:translateY(-1px)}}
 .metric-label-bt{{color:#94a3b8;font-size:.68rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}}
@@ -4544,8 +4406,8 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 <tr><td><span class="badge strat_p">P地量反弹</span></td><td style="white-space:normal;word-break:break-all">连续3日缩量至地量+当日放量vr≥1.2+涨1.0-5%阳线+弱市跳过</td><td>6-8%</td><td>3-5%</td></tr>
 <tr><td><span class="badge strat_q">Q W底突破</span></td><td style="white-space:normal;word-break:break-all">20日内两底相差<5%+放量vr≥1.2突破颈线+阳线+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
 </tbody></table></section>
-<section><h2>TOP10 板块热度精选推荐理由</h2>
-<div class="top10-cards">{top10_cards_html if top10_cards_html else '<div style="color:#94a3b8;padding:1rem">暂无TOP10数据</div>'}</div></section>
+<section><h2>资金去向（行业主力净流入排名）</h2>
+<div class="capital-flow">{capital_flow_html if capital_flow_html else '<div style="color:#94a3b8;padding:1rem">暂无资金流向数据</div>'}</div></section>
 {ai_html}
 </div>
 <section><h2 style="display:flex;align-items:center;gap:.5rem">📊 历史回测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">最近90天 | 最大持仓10交易日</span></h2>
@@ -4783,15 +4645,15 @@ def main():
     record_step_status("步骤10A: 全市场拉取", "OK", f"{total_raw}只")
 
     # v6.13.11: 跳过pytdx(沙箱内始终不可达)，腾讯HTTP一级 → iTick二级
-    # v6.13.41: 新增东方财富单股K线降级，腾讯HTTP失败时自动补救
+    # v6.13.42: 新增东方财富单股K线降级，腾讯HTTP失败时自动补救
     print("\n[步骤10C] 历史K线..."); kline_data = step10C_fetch_klines_http(raw_pool)
     valid_kline = sum(1 for v in kline_data.values() if v and v.get('closes'))
     if valid_kline < len(raw_pool) * 0.3:
         kline_data = step10C_fetch_klines_itick(raw_pool)
         valid_kline = sum(1 for v in kline_data.values() if v and v.get('closes'))
         log_alert("WARNING", "K线降级", f"腾讯HTTP仅{valid_kline}只有效，已切换iTick")
-    # v6.13.41: 单股K线降级——腾讯HTTP失败时，东方财富HTTP补救
-    # v6.13.41: 新增axdata三级降级链（腾讯HTTP→东方财富HTTP→axdata）
+    # v6.13.42: 单股K线降级——腾讯HTTP失败时，东方财富HTTP补救
+    # v6.13.42: 新增axdata三级降级链（腾讯HTTP→东方财富HTTP→axdata）
     failed_kline = [c.get('code') for c in raw_pool
                     if not kline_data.get(c.get('code', ''), {}).get('closes')]
     if failed_kline:
