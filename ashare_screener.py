@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.46
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46)
+A股每日盘前短线标的智能筛选 v6.13.47
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46) | 修复配置环境(v6.13.47)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -33,7 +33,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.46"
+BUILTIN_VERSION = "v6.13.47"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -4599,6 +4599,14 @@ def main():
     print(f"A股每日盘前短线标的筛选 {BUILTIN_VERSION}")
     print("=" * 60)
     
+    # v6.13.47: 环境自检 — 凭证缺失时提前告警
+    env_issues = []
+    if not GITHUB_TOKEN: env_issues.append("GitHub Token未配置(GitHub推送/持仓拉取将跳过)")
+    if not FEISHU_WEBHOOK: env_issues.append("飞书Webhook未配置(飞书推送将跳过)")
+    if env_issues:
+        for issue in env_issues:
+            log_alert("WARNING", "环境自检", issue)
+    
     print("\n[步骤0] 北京时间..."); step0_get_beijing_time()
     print(f"  Beijing={beijing_date} Data={data_date} Pred={prediction_date}")
     record_step_status("步骤0: 北京时间", "OK" if beijing_date else "WARN", "API降级为系统时间" if not _beijing_api_ok else "")
@@ -4869,7 +4877,7 @@ def _run_screening_with_retry():
     raise last_error
 
 def _send_failure_alert(error):
-    """重试耗尽后发送飞书失败告警"""
+    """重试耗尽后发送飞书失败告警。v6.13.47: 使用 _http_retry 替代原始 urlopen"""
     if not FEISHU_WEBHOOK: return
     card = {
         "msg_type": "interactive",
@@ -4884,7 +4892,10 @@ def _send_failure_alert(error):
     }
     req = urllib.request.Request(FEISHU_WEBHOOK, data=json.dumps(card, ensure_ascii=False).encode('utf-8'),
                                  headers={'Content-Type': 'application/json'}, method='POST')
-    urllib.request.urlopen(req, timeout=5)
+    try:
+        _http_retry(req, timeout=5, retries=2, label="飞书告警")
+    except Exception:
+        pass  # 告警发送失败不阻塞主流程
 
 if __name__ == "__main__":
     _run_screening_with_retry()

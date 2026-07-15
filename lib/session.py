@@ -20,12 +20,17 @@ def _stamp():
 
 
 def init_session(version, date_str):
-    """初始化新会话。如果旧会话存在且日期不同则清除。"""
+    """初始化新会话。如果旧会话存在且日期不同则清除。
+    v6.13.47: 若旧会话已完成(completed=true)，允许同天重新初始化（新会话ID）"""
     old = _read()
-    if old and old.get("date") != date_str:
-        # 新一天的筛选，清除旧会话
-        _write(None)
-        old = None
+    if old:
+        if old.get("date") != date_str:
+            # 新一天的筛选，清除旧会话
+            _write(None)
+            old = None
+        elif old.get("completed"):
+            # 同天已完成会话，允许重新运行（新会话ID，旧steps保留在日志中）
+            old = None  # 不继承旧会话，全新开始
 
     session_id = str(uuid.uuid4())[:8]
     state = {
