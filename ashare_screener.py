@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.43
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43)
+A股每日盘前短线标的智能筛选 v6.13.44
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -33,7 +33,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.43"
+BUILTIN_VERSION = "v6.13.44"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -4349,7 +4349,19 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 <section><h2>系统告警</h2><div class="alert-list">{alerts_html}</div></section>
 <section><h2>最终推荐标的</h2><div style="overflow-x:auto"><table>
 <thead><tr><th>#</th><th>TOP10</th><th>PK</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>二级行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>60日高</th><th>60日低</th><th>档位</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th><th>盈亏比</th><th>回测</th></tr></thead>
-<tbody>{rows_html if rows_html else '<tr><td colspan="23" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div></section>
+<tbody>{rows_html if rows_html else '<tr><td colspan="23" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div>
+<div style="margin-top:1rem;background:#1a2332;border:1px solid #334155;border-radius:8px;padding:.9rem 1.2rem;font-size:.75rem;color:#94a3b8;line-height:1.8">
+<div style="color:#38bdf8;font-weight:700;margin-bottom:.4rem">回测列说明</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:.3rem 1.5rem">
+<div><span style="color:#e2e8f0;font-weight:600">格式</span>：<code style="background:#0f172a;padding:1px 6px;border-radius:3px;color:#38bdf8">图标 胜/样本</code>，如 <code style="background:#0f172a;padding:1px 6px;border-radius:3px;color:#22c55e">🟢2/2</code> 表示2笔样本均盈利</div>
+<div><span style="color:#22c55e;font-weight:600">🟢</span> 最近一次样本盈利</div>
+<div><span style="color:#ef4444;font-weight:600">🔴</span> 最近一次样本亏损</div>
+<div><span style="color:#94a3b8;font-weight:600">⚪</span> 后续K线不足或未形成有效胜负</div>
+<div><span style="color:#f59e0b;font-weight:600">⚠️</span> 历史有限价单未成交（当日最低价&gt;进场价）</div>
+<div><span style="color:#64748b;font-weight:600">空白</span> 无可匹配历史样本</div>
+</div>
+<div style="margin-top:.5rem;color:#64748b;font-size:.7rem">模拟口径：90天推荐历史，按进场/止损/止盈模拟，单笔最大持仓10交易日，T+1规则，未计入滑点/手续费/涨跌停无法成交。</div>
+</div></section>
 <section><h2>策略说明</h2><table>
 {'' if not pk_results else _build_pk_html(pk_results)}
 <thead><tr><th style="width:18%">策略</th><th style="width:48%">条件</th><th style="width:16%">仓位(震荡)</th><th style="width:18%">仓位(弱市)</th></tr></thead>
