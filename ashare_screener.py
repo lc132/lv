@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.42
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 主力资金HTTP | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK(v6.13.42)
+A股每日盘前短线标的智能筛选 v6.13.43
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -33,7 +33,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.42"
+BUILTIN_VERSION = "v6.13.43"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -300,7 +300,8 @@ def fetch_tencent_stocks(codes):
                     if close <= 0 or prev_close <= 0: continue
                     high = _parse_tencent_field(raw, 33, close)
                     low = _parse_tencent_field(raw, 34, close)
-                    # 腾讯API字段: [37]=amount(万元) [38]=turnover(%) [39]=pe_ttm [43]=amplitude(%) [44]=total_cap(亿元) [45]=high(冗余) [46]=low(冗余) [49]=volume_ratio [62]=主力净流入(万元)
+                    # 腾讯API字段: [37]=amount(万元) [38]=turnover(%) [39]=pe_ttm [43]=amplitude(%) [44]=total_cap(亿元) [45]=high(冗余) [46]=low(冗余) [49]=volume_ratio [62]=年初至今涨跌幅(%) [86]=未知资金流向
+                    # v6.13.43: 字段62非主力净流入(实为YTD涨跌幅)，主力净流入单独从东方财富API获取
                     result.append({
                         "code": code, "name": name,
                         "open": open_p, "close": close,
@@ -312,7 +313,8 @@ def fetch_tencent_stocks(codes):
                         "volume_ratio": _parse_tencent_field(raw, 49, None),
                         "pe_ttm": _parse_tencent_field(raw, 39, None),
                         "total_cap": (_tc := _parse_tencent_field(raw, 44, None)) and _tc * 1e8,  # v6.12.10: fix dup call, 亿元→元
-                        "main_inflow": (_mi := _parse_tencent_field(raw, 62, None)) and _mi * 10000,  # v6.13.4: 腾讯API字段62主力净流入(万元→元)
+                        "ytd_change_pct": _parse_tencent_field(raw, 62, None),  # v6.13.43: 字段62=年初至今涨跌幅(%)
+                        "main_inflow": None,  # v6.13.43: 腾讯API无主力净流入字段，由step10C单独获取
                     })
                 except (ValueError, TypeError, IndexError, AttributeError): pass
             time.sleep(0.05)
@@ -1896,66 +1898,20 @@ def step10C_fetch_klines_itick(candidates):
 
 # ============================================================
 # ============================================================
-# 步骤10C-附：东方财富资金流向（v6.12.5新增）
-# 腾讯基础API不提供主力资金流向，使用东方财富flow API获取
+# 步骤10C-附：主力资金流向（v6.13.43修复）
+# 腾讯API字段62实为YTD涨跌幅(非主力净流入)，东方财富flow API在沙箱中不可达
+# v6.13.43: 主力净流入标记为None，所有输出做优雅降级处理
 # ============================================================
 def step10C_flow_fetch_main_inflow(candidates):
-    """v6.13.4: 优先腾讯API(字段62)，降级东方财富API批量获取主力净流入
-    返回: {code: main_inflow_yuan} 字典，值为 float（元）或 None"""
+    """v6.13.43: 腾讯API无主力净流入字段，东方财富API沙箱不可达。
+    返回: {code: None} 字典，所有值为None（优雅降级）
+    注：后续可接入龙虎榜/大宗交易等替代数据源"""
     flow_data = {}
     if not candidates: return flow_data
-    # 第一顺位：从候选标的已有的腾讯API数据中提取（已在上游fetch_tencent_stocks中获取）
-    missed = []
+    # v6.13.43: 所有外部API均不可用，统一标记为None
     for c in candidates:
         code = c.get('code', '')
-        if not code: continue
-        mi = c.get('main_inflow')
-        if mi is not None:
-            flow_data[code] = mi
-        else:
-            missed.append(c)
-    if missed:
-        # 第二顺位：对腾讯API未获取到的，单独调用腾讯API
-        for c in missed[:]:
-            code = c.get('code', '')
-            if not code: continue
-            try:
-                prefix = 'sz' if code.startswith(('0','3')) else 'sh'
-                url = f"{TENCENT_API}{prefix}{code}"
-                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    text = resp.read().decode('gbk', errors='replace')
-                for line in text.strip().split('\n'):
-                    if not line or '="' not in line: continue
-                    raw = line.split('"')[1].split('~')
-                    if len(raw) < 63: continue
-                    mi_val = _parse_tencent_field(raw, 62, None)
-                    if mi_val is not None:
-                        flow_data[code] = mi_val * 10000  # 万元→元
-                        missed.remove(c)
-                    break
-            except Exception: log_alert("DEBUG", "主力资金", f"{code} 解析失败")
-    # 第三顺位：东方财富API降级(仅对仍未获取到的)
-    still_missed = [c for c in missed if c.get('code','') not in flow_data]
-    for c in still_missed:
-        code = c.get('code', '')
-        if not code: continue
-        try:
-            mc = '1' if code.startswith('6') else '0'
-            secid = f'{mc}.{code}'
-            url = (f'https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?'
-                   f'secid={secid}&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57&lmt=1')
-            req = urllib.request.Request(url, headers={
-                'User-Agent': 'Mozilla/5.0',
-                'Referer': 'https://quote.eastmoney.com/'})
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read().decode())
-            klines = data.get('data', {}).get('klines', [])
-            if klines:
-                parts = klines[0].split(',')
-                main_in = float(parts[1])  # 主力净流入(元)
-                flow_data[code] = main_in
-        except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError, IndexError):
+        if code:
             flow_data[code] = None
     return flow_data
 
@@ -3706,26 +3662,31 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         lines.append("- **模拟口径**：使用最近90天推荐历史，按推荐表的进场、止损、止盈进行模拟，单笔最大持仓10个交易日。")
         lines.append("- **交易规则**：遵循A股T+1，买入当日不检查止盈止损出场，从下一交易日起判断是否触及止损/止盈。")
         lines.append("- **使用限制**：未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素；样本少时仅作参考，不能代表未来表现。\n")
-        # v6.13.42: 资金去向——按行业汇总主力净流入
+        # v6.13.43: 资金去向——按行业汇总主力净流入，无数据时优雅降级
         lines.append("\n## 资金去向（按行业主力净流入排序）\n")
         ind_flow = {}
+        has_flow_data = False
         for c in candidates:
             ind = _industry_str(c)
-            mi = c.get('main_inflow', 0)
+            mi = c.get('main_inflow')
+            if mi is not None: has_flow_data = True
             if mi is None: mi = 0
             ind_flow[ind] = ind_flow.get(ind, {'total': 0.0, 'stocks': []})
             ind_flow[ind]['total'] += mi
             ind_flow[ind]['stocks'].append((c.get('code',''), c.get('name',''), mi, c.get('strategy','')))
-        sorted_ind = sorted(ind_flow.items(), key=lambda x: -x[1]['total'])
-        lines.append("| 行业 | 净流入(亿) | 代表标的 |")
-        lines.append("|---|---|---|")
-        for ind, data in sorted_ind:
-            flow_yi = data['total'] / 1e8
-            direction = "流入" if flow_yi > 0 else "流出"
-            abs_flow = abs(flow_yi)
-            tops = sorted(data['stocks'], key=lambda x: -x[2])[:4]
-            stock_str = '、'.join(f"{s[1]}({'+' if s[2]>=0 else ''}{s[2]/1e8:.2f}亿)" for s in tops)
-            lines.append(f"| {ind} | {direction}{abs_flow:.2f} | {stock_str} |")
+        if has_flow_data:
+            sorted_ind = sorted(ind_flow.items(), key=lambda x: -x[1]['total'])
+            lines.append("| 行业 | 净流入(亿) | 代表标的 |")
+            lines.append("|---|---|---|")
+            for ind, data in sorted_ind:
+                flow_yi = data['total'] / 1e8
+                direction = "流入" if flow_yi > 0 else "流出"
+                abs_flow = abs(flow_yi)
+                tops = sorted(data['stocks'], key=lambda x: -x[2])[:4]
+                stock_str = '、'.join(f"{s[1]}({'+' if s[2]>=0 else ''}{s[2]/1e8:.2f}亿)" for s in tops)
+                lines.append(f"| {ind} | {direction}{abs_flow:.2f} | {stock_str} |")
+        else:
+            lines.append("> ⚠️ 主力资金数据不可得（API通道受限），无法展示行业资金流向。建议结合盘口观察或龙虎榜数据辅助判断。\n")
     sd = Counter(c.get('strategy') for c in candidates)
     sn = _STRATEGY_NAMES
     lines.append("\n## 策略分布")
@@ -3923,33 +3884,38 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
     else:
         alerts_html = '<div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">今日无异常告警</span></div>'
     
-    # v6.13.42: 资金去向——按行业汇总主力净流入
+    # v6.13.43: 资金去向——按行业汇总主力净流入，无数据时优雅降级
     capital_flow_html = ""
     ind_flow = {}
+    has_flow_data = False
     for c in candidates:
         ind = _industry_str(c)
-        mi = c.get('main_inflow', 0)
+        mi = c.get('main_inflow')
+        if mi is not None: has_flow_data = True
         if mi is None: mi = 0
         ind_flow[ind] = ind_flow.get(ind, {'total': 0.0, 'stocks': []})
         ind_flow[ind]['total'] += mi
         ind_flow[ind]['stocks'].append((c.get('code',''), c.get('name',''), mi, c.get('strategy','')))
-    sorted_ind = sorted(ind_flow.items(), key=lambda x: -x[1]['total'])
-    if sorted_ind:
-        flow_cards = []
-        for idx, (ind, data) in enumerate(sorted_ind):
-            flow_yi = data['total'] / 1e8
-            direction = "流入" if flow_yi > 0 else "流出"
-            color = "#22c55e" if flow_yi > 0 else "#ef4444"
-            arrow = "↑" if flow_yi > 0 else "↓"
-            tops = sorted(data['stocks'], key=lambda x: -x[2])[:4]
-            tops_html = ''.join(
-                f'<span class="flow-stock">{s[1]}<span style="color:{color}">{arrow}{abs(s[2]/1e8):.2f}亿</span></span>'
-                for s in tops
-            )
-            flow_cards.append(f'''<div class="flow-card">
+    if has_flow_data:
+        sorted_ind = sorted(ind_flow.items(), key=lambda x: -x[1]['total'])
+        if sorted_ind:
+            flow_cards = []
+            for idx, (ind, data) in enumerate(sorted_ind):
+                flow_yi = data['total'] / 1e8
+                direction = "流入" if flow_yi > 0 else "流出"
+                color = "#22c55e" if flow_yi > 0 else "#ef4444"
+                arrow = "↑" if flow_yi > 0 else "↓"
+                tops = sorted(data['stocks'], key=lambda x: -x[2])[:4]
+                tops_html = ''.join(
+                    f'<span class="flow-stock">{s[1]}<span style="color:{color}">{arrow}{abs(s[2]/1e8):.2f}亿</span></span>'
+                    for s in tops
+                )
+                flow_cards.append(f'''<div class="flow-card">
 <div class="flow-card-header"><span class="rank">#{idx+1}</span><span class="industry-name">{ind}</span><span class="flow-amount" style="color:{color}">{arrow}{abs(flow_yi):.2f}亿 {direction}</span></div>
 <div class="flow-stocks">{tops_html}</div></div>''')
-        capital_flow_html = '\n'.join(flow_cards)
+            capital_flow_html = '\n'.join(flow_cards)
+    else:
+        capital_flow_html = '<div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">主力资金数据不可得（API通道受限），无法展示行业资金流向。建议参考盘口/L2数据或龙虎榜。</span></div>'
     
     # ── v6.13.1: AI 策略分析 HTML（美化版）──
     ai_html = ""
