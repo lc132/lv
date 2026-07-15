@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.44
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44)
+A股每日盘前短线标的智能筛选 v6.13.45
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -33,7 +33,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.44"
+BUILTIN_VERSION = "v6.13.45"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -57,6 +57,43 @@ def _load_credential(env_key, file_path, fallback=""):
         with open(file_path, 'r', encoding='utf-8') as f: return f.read().strip()
     except (FileNotFoundError, PermissionError): pass
     return fallback
+
+# ============================================================
+# v6.13.45: HTTP超时自动重试 — 指数退避，覆盖所有对外API调用
+# ============================================================
+_HTTP_RETRY_DEFAULT = 3  # 默认重试次数
+_HTTP_RETRY_BACKOFF_BASE = 1.5  # 退避基数(秒)
+
+def _http_retry(url, timeout=5, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
+    """HTTP请求超时自动重试，支持指数退避。
+    参数: url — urllib.request.Request 对象
+          timeout — 单次请求超时(秒)
+          retries — 最大重试次数(含首次)
+          label — 日志标签(用于调试)
+    返回: urllib 响应对象（与 urlopen 完全兼容，可直接用于 with 语句）
+    重试条件: socket.timeout / URLError / ConnectionResetError / TimeoutError / RemoteDisconnected
+    不重试: HTTPError(4xx/5xx) / 其他非网络错误"""
+    last_error = None
+    for attempt in range(retries):
+        try:
+            return urllib.request.urlopen(url, timeout=timeout)
+        except (socket.timeout, urllib.error.URLError, ConnectionResetError, TimeoutError) as e:
+            last_error = e
+            if attempt < retries - 1:
+                wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
+                print(f"  ⏳ {label}重试{attempt+1}/{retries-1}({wait:.1f}s): {str(e)[:40]}")
+                time.sleep(wait)
+        except OSError as e:
+            # RemoteDisconnected / BrokenPipe 等OS级别的网络错误
+            if 'RemoteDisconnected' in type(e).__name__ or 'BrokenPipe' in type(e).__name__:
+                last_error = e
+                if attempt < retries - 1:
+                    wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
+                    print(f"  ⏳ {label}重试{attempt+1}/{retries-1}({wait:.1f}s): {type(e).__name__}")
+                    time.sleep(wait)
+            else:
+                raise
+    raise last_error
 
 GITHUB_TOKEN = _load_credential("GITHUB_TOKEN", "/workspace/.github_token")
 FEISHU_WEBHOOK = _load_credential("FEISHU_WEBHOOK", "/workspace/.feishu_webhook")
@@ -259,7 +296,7 @@ def fetch_tencent_index(codes):
     try:
         url = f"{TENCENT_API}{','.join(codes)}"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with _http_retry(req, timeout=5) as resp:
             text = resp.read().decode('gbk', errors='replace')
         for line in text.strip().split('\n'):
             if not line or '="' not in line: continue
@@ -285,7 +322,7 @@ def fetch_tencent_stocks(codes):
         try:
             url = f"{TENCENT_API}{','.join(batch)}"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with _http_retry(req, timeout=10) as resp:
                 text = resp.read().decode('gbk', errors='replace')
             for line in text.strip().split('\n'):
                 if not line or '="' not in line: continue
@@ -337,7 +374,7 @@ def step0_get_beijing_time():
                      'http://worldclockapi.com/api/json/cst/now']:
         try:
             req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with _http_retry(req, timeout=5) as resp:
                 data = json.loads(resp.read())
             dt_str = data.get('dateTime') or data.get('datetime') or data.get('currentDateTime')
             if not dt_str: continue
@@ -480,7 +517,7 @@ def step3_external_markets():
             try:
                 url = f"https://hq.sinajs.cn/list=gb_{code}"
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'})
-                with urllib.request.urlopen(req, timeout=5) as resp:
+                with _http_retry(req, timeout=5) as resp:
                     text = resp.read().decode('gbk')
                 if '=""' in text: all_down = False; break
                 chg = float(text.split('"')[1].split(',')[1]) if ',' in text.split('"')[1] else 0
@@ -754,7 +791,7 @@ def step10A_fetch_all_stocks():
             try:
                 url = f"https://hq.sinajs.cn/list={','.join(batch)}"
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'})
-                with urllib.request.urlopen(req, timeout=5) as resp:
+                with _http_retry(req, timeout=5) as resp:
                     text = resp.read().decode('gbk')
                 for line in text.strip().split('\n'):
                     if not line or '=""' in line: continue
@@ -1038,7 +1075,7 @@ def _fetch_zjh_industry(code):
             'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://emweb.securities.eastmoney.com/'
         })
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with _http_retry(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
             jbzl = data.get('jbzl', {})
             zjh = jbzl.get('sszjhhy', '')
@@ -1551,7 +1588,7 @@ def _fetch_single_kline_tencent(c):
         req = urllib.request.Request(url, headers={
             'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://gu.qq.com/'})
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with _http_retry(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
         stock_key = f'{prefix}{code}'
         qfqday = data.get('data', {}).get(stock_key, {}).get('qfqday', [])
@@ -1636,7 +1673,7 @@ def _fetch_single_kline_eastmoney(c):
         req = urllib.request.Request(url, headers={
             'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://quote.eastmoney.com/'})
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with _http_retry(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
         klines = data.get('data', {}).get('klines', [])
         if not klines or len(klines) < 20:
@@ -1822,7 +1859,7 @@ def step10C_fetch_klines_itick(candidates):
                         'User-Agent': 'Mozilla/5.0',
                         'accept': 'application/json',
                         'token': _ITICK_API_KEY})
-                    with urllib.request.urlopen(req, timeout=10) as resp:
+                    with _http_retry(req, timeout=10) as resp:
                         data = json.loads(resp.read().decode())
                     bars = data.get('data', [])
                     if not bars or len(bars) < 20:
@@ -1945,7 +1982,7 @@ def step10E_fetch_fundamentals(candidates):
         try:
             url = f'https://emweb.securities.eastmoney.com/PC_HSF10/NewFinanceAnalysis/ZYZBAjaxNew?type=0&code={secode}'
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with _http_retry(req, timeout=8) as resp:
                 raw = resp.read()
             # v6.9.21: 处理gzip压缩响应
             if raw[:2] == b'\x1f\x8b':
@@ -2003,7 +2040,7 @@ def step10F_fetch_risk_events():
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'text/html'
         })
-        with urllib.request.urlopen(req, timeout=12) as resp:
+        with _http_retry(req, timeout=12) as resp:
             raw = resp.read().decode('utf-8', errors='ignore')
         # 解析表格: <td>代码</td><td>名称</td><td>日期</td>...<td>占总股本比例</td>
         rows = re.findall(
@@ -2088,7 +2125,7 @@ def step10G_fetch_crowding_data(candidates):
         try:
             url = f'https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={secode}'
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with _http_retry(req, timeout=8) as resp:
                 raw = resp.read()
             if raw[:2] == b'\x1f\x8b':
                 raw = gzip.decompress(raw)
@@ -2750,7 +2787,7 @@ def step18_news_screening(candidates):
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
                 'Referer': 'https://www.eastmoney.com/'
             })
-            with urllib.request.urlopen(req, timeout=4) as resp:
+            with _http_retry(req, timeout=4) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 news_list = data.get('data', {}).get('list', []) if isinstance(data, dict) else []
                 for news in news_list:
@@ -2772,7 +2809,7 @@ def step18_news_screening(candidates):
                 'User-Agent': 'Mozilla/5.0',
                 'Referer': 'https://data.eastmoney.com/'
             })
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with _http_retry(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 items = data.get('data', {}).get('list', [])
                 for item in items:
@@ -2792,7 +2829,7 @@ def step18_news_screening(candidates):
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Accept-Language': 'zh-CN,zh;q=0.9'
             })
-            with urllib.request.urlopen(req, timeout=4) as resp:
+            with _http_retry(req, timeout=4) as resp:
                 html_text = resp.read().decode('utf-8', errors='ignore')
                 for kw in NEGATIVE_KW:
                     if kw not in html_text: continue
@@ -2814,7 +2851,7 @@ def step18_news_screening(candidates):
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Accept-Language': 'zh-CN,zh;q=0.9'
             })
-            with urllib.request.urlopen(req, timeout=4) as resp:
+            with _http_retry(req, timeout=4) as resp:
                 html_text = resp.read().decode('utf-8', errors='ignore')
                 for kw in NEGATIVE_KW:
                     if kw not in html_text: continue
@@ -2847,7 +2884,7 @@ def step18_news_screening(candidates):
                     'sortName': 'announcementTime', 'sortType': '-1'
                 }).encode('utf-8')
                 req = urllib.request.Request('http://www.cninfo.com.cn/new/hisAnnouncement/query', data=params, headers=headers)
-                with urllib.request.urlopen(req, timeout=5) as resp:
+                with _http_retry(req, timeout=5) as resp:
                     data = json.loads(resp.read().decode('utf-8'))
                     for ann in (data.get('announcements') or []):
                         title = ann.get('title', '')
@@ -2864,7 +2901,7 @@ def step18_news_screening(candidates):
                     'sortName': 'announcementTime', 'sortType': '-1'
                 }).encode('utf-8')
                 req = urllib.request.Request('http://www.cninfo.com.cn/new/hisAnnouncement/query', data=params, headers=headers)
-                with urllib.request.urlopen(req, timeout=5) as resp:
+                with _http_retry(req, timeout=5) as resp:
                     data = json.loads(resp.read().decode('utf-8'))
                     for ann in (data.get('announcements') or []):
                         title = ann.get('title', '')
@@ -2887,7 +2924,7 @@ def step18_news_screening(candidates):
             req = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             })
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with _http_retry(req, timeout=5) as resp:
                 html = resp.read().decode('utf-8', errors='ignore')
                 for kw in NEGATIVE_KW:
                     if kw in html.lower() and not any(neg in html.lower() for neg in FALSE_POSITIVE_NEGATORS):
@@ -3051,7 +3088,7 @@ def step18B_top10_enrichment(candidates):
             lh_url = f'https://datacenter.eastmoney.com/securities/api/data/v1/get?reportName=RPT_DAILY_BILLBOARDTRADING&columns=TRADE_DATE,BILLBOARD_NET_AMT,BILLBOARD_BUY_AMT,BILLBOARD_SELL_AMT,EXPLANATION&filter=(SECUCODE="{code}")&pageNumber=1&pageSize=3&sortTypes=-1&sortColumns=TRADE_DATE'
             req = urllib.request.Request(lh_url, headers={
                 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://data.eastmoney.com/'})
-            with urllib.request.urlopen(req, timeout=4) as resp:
+            with _http_retry(req, timeout=4) as resp:
                 lh_data = json.loads(resp.read().decode('utf-8'))
                 lh_rows = lh_data.get('result', {}).get('data', []) if lh_data.get('result') else []
                 if lh_rows:
@@ -3074,7 +3111,7 @@ def step18B_top10_enrichment(candidates):
             news_url = f'https://push2.eastmoney.com/api/qt/stock/news/get?secid={market}.{code}&pageNum=1&pageSize=5&_={int(time.time()*1000)}'
             req = urllib.request.Request(news_url, headers={
                 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.eastmoney.com/'})
-            with urllib.request.urlopen(req, timeout=4) as resp:
+            with _http_retry(req, timeout=4) as resp:
                 news_data = json.loads(resp.read().decode('utf-8'))
                 news_list = news_data.get('data', {}).get('list', []) if isinstance(news_data, dict) else []
                 pos_titles = []
@@ -3094,7 +3131,7 @@ def step18B_top10_enrichment(candidates):
             ann_url = f'https://np-anotice-stock.eastmoney.com/api/security/ann?page_size=5&page_index=1&stock_list={code}&ann_type=A'
             req = urllib.request.Request(ann_url, headers={
                 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://data.eastmoney.com/'})
-            with urllib.request.urlopen(req, timeout=4) as resp:
+            with _http_retry(req, timeout=4) as resp:
                 ann_data = json.loads(resp.read().decode('utf-8'))
                 ann_list = ann_data.get('data', {}).get('list', []) if ann_data.get('success') else []
                 pos_anns = []
@@ -4522,7 +4559,7 @@ def step27_feishu_push(candidates, total_raw, ae, asig, astr, amicro, aind, anew
                 {"tag": "note", "elements": [{"tag": "plain_text", "content": "⚠️ 仅供参考，不构成投资建议"}]}]}}
         req = urllib.request.Request(FEISHU_WEBHOOK, data=json.dumps(card, ensure_ascii=False).encode('utf-8'),
                                      headers={'Content-Type': 'application/json'}, method='POST')
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with _http_retry(req, timeout=10) as resp:
             result = json.loads(resp.read())
         if result.get('code') == 0:
             log_alert("INFO", "飞书推送", f"✅ {prediction_date} 已推送")

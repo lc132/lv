@@ -1,3 +1,4 @@
+- **v6.13.45**: 全局HTTP超时自动重试——新增_http_retry通用函数（指数退避1.5^n），覆盖全部24处对外API调用，重试条件：socket.timeout/URLError/ConnectionResetError/TimeoutError/RemoteDisconnected
 - **v6.13.44**: HTML推荐标的表格下方新增回测列图例——格式说明、图标含义（🟢盈利🔴亏损⚪K线不足⚠️未成交空白无样本）、模拟口径注释
 - **v6.13.43**: 修复主力资金数据源Bug——腾讯API字段62实为YTD涨跌幅(非主力净流入)，主力净流入标记为None优雅降级，MD/HTML资金去向区块无数据时显示提示信息
 - **v6.13.42**: 删除TOP10板块热度精选推荐理由，替换为资金去向——按行业汇总主力净流入，MD表格+HTML卡片双端展示
