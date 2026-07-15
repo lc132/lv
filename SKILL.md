@@ -1,3 +1,4 @@
+- **v6.13.49**: 解决4051超时——HTTP Keep-Alive连接池复用TCP连接(同Host请求共享连接消除握手开销)，socket超时8→12s，默认timeout 5→10s，重试3→2次，退避1.5→1.0s，预计节省30-60s总耗时
 - **v6.13.48**: 修复数量校验误报——step21_final_verify分割标记从废弃的TOP10改为多级fallback(跨策略冠军PK→回测说明→资金去向→策略分布)，修复"概况27≠MD表格37"误报；main()新增_step_status.clear()防止重试时步骤状态累积
 - **v6.13.47**: 修复配置环境失败问题——(1)_send_failure_alert改用_http_retry替代原始urlopen防止告警发送失败 (2)init_session支持同天completed会话重新初始化 (3)main()新增凭证缺失环境自检(WARNING日志)
 - **v6.13.46**: 筛选任务级超时自动重试——_run_screening_with_retry()包装main()，捕获网络/超时/JSON等瞬时错误最多重试3次（10s/20s/40s指数退避），重试耗尽后发送飞书红色告警卡片；代码Bug不重试直接抛出

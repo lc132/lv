@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.48
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46) | 修复配置环境(v6.13.47) | 修复数量校验(v6.13.48)
+A股每日盘前短线标的智能筛选 v6.13.49
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46) | 修复配置环境(v6.13.47) | 修复数量校验(v6.13.48) | HTTP连接池+超时优化(v6.13.49)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -19,12 +19,146 @@ try:
 except Exception:
     pass
 
-# v6.12.23: 全局socket超时+SSL未验证上下文，解决沙箱网络限制
-socket.setdefaulttimeout(8)
+import http.client
 
-# v6.12.23: 全局SSL未验证上下文，解决沙箱SSL证书验证失败问题
+# v6.12.23: 全局socket超时+SSL未验证上下文，解决沙箱网络限制
+socket.setdefaulttimeout(12)  # v6.13.49: 8→12
+
+# v6.12.23: 全局SSL未验证上下文
 _SSL_CTX = ssl._create_unverified_context()
-urllib.request.install_opener(urllib.request.build_opener(urllib.request.HTTPSHandler(context=_SSL_CTX)))
+
+# ============================================================
+# v6.13.49: HTTP Keep-Alive 连接池 — 复用TCP连接消除握手开销
+# 沙箱中 ~160+ 次HTTP请求，每次新建TCP+TLS需 0.5-2s
+# 连接池将同Host请求复用同一连接，预计节省 30-60s 总耗时
+# ============================================================
+_CONN_POOL = {}           # host -> [(conn, in_use), ...]
+_CONN_POOL_MAX = 8        # 每Host最大连接数
+_CONN_POOL_IDLE_MAX = 3   # 每Host最大空闲连接
+_CONN_POOL_LOCK = None    # 延迟初始化(避免pickle/import问题)
+
+def _conn_pool_get(host):
+    """从连接池获取或创建可复用连接"""
+    global _CONN_POOL_LOCK
+    if _CONN_POOL_LOCK is None:
+        import threading
+        _CONN_POOL_LOCK = threading.Lock()
+    with _CONN_POOL_LOCK:
+        if host not in _CONN_POOL:
+            _CONN_POOL[host] = []
+        # 优先复用空闲连接
+        for i, (conn, in_use) in enumerate(_CONN_POOL[host]):
+            if not in_use:
+                # v6.13.49: 探测连接存活(仅已connect过的连接，sock=None表示未连接)
+                if conn.sock is not None:
+                    try:
+                        conn.sock.sendall(b'')
+                    except Exception:
+                        try: conn.close()
+                        except: pass
+                        _CONN_POOL[host].pop(i)
+                        break
+                _CONN_POOL[host][i] = (conn, True)
+                return conn
+        # 创建新连接
+        conn = http.client.HTTPSConnection(host, timeout=12, context=_SSL_CTX)
+        _CONN_POOL[host].append((conn, True))
+        while len(_CONN_POOL[host]) > _CONN_POOL_MAX:
+            old_conn, _ = _CONN_POOL[host].pop(0)
+            try: old_conn.close()
+            except: pass
+        return conn
+
+def _conn_pool_put(host, conn):
+    """归还连接到池中"""
+    with _CONN_POOL_LOCK:
+        if host in _CONN_POOL:
+            for i, (c, _) in enumerate(_CONN_POOL[host]):
+                if c is conn:
+                    _CONN_POOL[host][i] = (conn, False)
+                    break
+        # 清理多余空闲连接
+        idle_count = sum(1 for _, u in _CONN_POOL.get(host, []) if not u)
+        while idle_count > _CONN_POOL_IDLE_MAX:
+            for i, (c, u) in enumerate(_CONN_POOL[host]):
+                if not u:
+                    try: c.close()
+                    except: pass
+                    _CONN_POOL[host].pop(i)
+                    idle_count -= 1
+                    break
+
+def _conn_pool_close_all():
+    """关闭所有连接"""
+    for host in list(_CONN_POOL.keys()):
+        for conn, _ in _CONN_POOL[host]:
+            try: conn.close()
+            except: pass
+        _CONN_POOL[host].clear()
+
+# ============================================================
+# v6.13.49: HTTP超时自动重试 — 连接池复用 + 优化参数
+# 默认超时5→10, 重试3→2, 退避1.5→1.0, 同Host请求复用TCP连接
+# ============================================================
+_HTTP_RETRY_DEFAULT = 2  # v6.13.49: 3→2(任务级重试已覆盖)
+_HTTP_RETRY_BACKOFF_BASE = 1.0  # v6.13.49: 1.5→1.0
+
+def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
+    """HTTP请求超时自动重试，支持连接池复用+指数退避。
+    参数: url — urllib.request.Request 对象
+          timeout — 单次请求超时(秒), v6.13.49: 默认5→10
+          retries — 最大重试次数(含首次), v6.13.49: 3→2
+          label — 日志标签(用于调试)
+    返回: 兼容 urllib 的响应对象（支持 .read() / .getcode() / .info()）
+    重试条件: socket.timeout / URLError / ConnectionResetError / TimeoutError / RemoteDisconnected
+    不重试: HTTPError(4xx/5xx) / 其他非网络错误"""
+    last_error = None
+    parsed = urllib.parse.urlparse(url.full_url if hasattr(url, 'full_url') else url.get_full_url())
+    host = parsed.netloc
+    is_https = parsed.scheme == 'https'
+
+    for attempt in range(retries):
+        conn = None
+        try:
+            if is_https and host:
+                conn = _conn_pool_get(host)
+                path = parsed.path + ('?' + parsed.query if parsed.query else '')
+                headers = dict(url.headers) if url.headers else {}
+                if 'Host' not in headers: headers['Host'] = host
+                if 'Connection' not in headers: headers['Connection'] = 'keep-alive'
+                conn.request(url.get_method(), path, body=url.data, headers=headers)
+                resp = conn.getresponse()
+                data = resp.read()
+                _conn_pool_put(host, conn)
+                # 构造兼容 urllib.addinfourl 的响应对象
+                resp._cached_data = data
+                resp.read = lambda s=-1, d=data: d[:s] if s > 0 else d
+                return resp
+            else:
+                return urllib.request.urlopen(url, timeout=timeout)
+        except (socket.timeout, urllib.error.URLError, ConnectionResetError, TimeoutError) as e:
+            last_error = e
+            if conn: _conn_pool_put(host, conn)
+            if attempt < retries - 1:
+                wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
+                print(f"  ⏳ {label}重试{attempt+1}/{retries-1}({wait:.1f}s): {str(e)[:40]}")
+                time.sleep(wait)
+        except OSError as e:
+            if 'RemoteDisconnected' in type(e).__name__ or 'BrokenPipe' in type(e).__name__:
+                last_error = e
+                if conn: _conn_pool_put(host, conn)
+                if attempt < retries - 1:
+                    wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
+                    print(f"  ⏳ {label}重试{attempt+1}/{retries-1}({wait:.1f}s): {type(e).__name__}")
+                    time.sleep(wait)
+            else:
+                if conn: _conn_pool_put(host, conn)
+                raise
+        except Exception:
+            if conn: _conn_pool_put(host, conn)
+            raise
+    raise last_error
+
 from openpyxl import load_workbook
 from lib.factor import compute_main_force_position, compute_short_term_breakout, resonance_check
 from lib.microstructure import microstructure_filter
@@ -33,7 +167,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.48"
+BUILTIN_VERSION = "v6.13.49"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -57,43 +191,6 @@ def _load_credential(env_key, file_path, fallback=""):
         with open(file_path, 'r', encoding='utf-8') as f: return f.read().strip()
     except (FileNotFoundError, PermissionError): pass
     return fallback
-
-# ============================================================
-# v6.13.45: HTTP超时自动重试 — 指数退避，覆盖所有对外API调用
-# ============================================================
-_HTTP_RETRY_DEFAULT = 3  # 默认重试次数
-_HTTP_RETRY_BACKOFF_BASE = 1.5  # 退避基数(秒)
-
-def _http_retry(url, timeout=5, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
-    """HTTP请求超时自动重试，支持指数退避。
-    参数: url — urllib.request.Request 对象
-          timeout — 单次请求超时(秒)
-          retries — 最大重试次数(含首次)
-          label — 日志标签(用于调试)
-    返回: urllib 响应对象（与 urlopen 完全兼容，可直接用于 with 语句）
-    重试条件: socket.timeout / URLError / ConnectionResetError / TimeoutError / RemoteDisconnected
-    不重试: HTTPError(4xx/5xx) / 其他非网络错误"""
-    last_error = None
-    for attempt in range(retries):
-        try:
-            return urllib.request.urlopen(url, timeout=timeout)
-        except (socket.timeout, urllib.error.URLError, ConnectionResetError, TimeoutError) as e:
-            last_error = e
-            if attempt < retries - 1:
-                wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
-                print(f"  ⏳ {label}重试{attempt+1}/{retries-1}({wait:.1f}s): {str(e)[:40]}")
-                time.sleep(wait)
-        except OSError as e:
-            # RemoteDisconnected / BrokenPipe 等OS级别的网络错误
-            if 'RemoteDisconnected' in type(e).__name__ or 'BrokenPipe' in type(e).__name__:
-                last_error = e
-                if attempt < retries - 1:
-                    wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
-                    print(f"  ⏳ {label}重试{attempt+1}/{retries-1}({wait:.1f}s): {type(e).__name__}")
-                    time.sleep(wait)
-            else:
-                raise
-    raise last_error
 
 GITHUB_TOKEN = _load_credential("GITHUB_TOKEN", "/workspace/.github_token")
 FEISHU_WEBHOOK = _load_credential("FEISHU_WEBHOOK", "/workspace/.feishu_webhook")
