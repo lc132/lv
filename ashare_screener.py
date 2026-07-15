@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.49
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46) | 修复配置环境(v6.13.47) | 修复数量校验(v6.13.48) | HTTP连接池+超时优化(v6.13.49)
+A股每日盘前短线标的智能筛选 v6.13.50
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46) | 修复配置环境(v6.13.47) | 修复数量校验(v6.13.48) | HTTP连接池+超时优化(v6.13.49) | 修复连接池with/close(v6.13.50)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -97,11 +97,31 @@ def _conn_pool_close_all():
         _CONN_POOL[host].clear()
 
 # ============================================================
-# v6.13.49: HTTP超时自动重试 — 连接池复用 + 优化参数
+# v6.13.50: HTTP超时自动重试 — 连接池复用 + 优化参数
 # 默认超时5→10, 重试3→2, 退避1.5→1.0, 同Host请求复用TCP连接
 # ============================================================
 _HTTP_RETRY_DEFAULT = 2  # v6.13.49: 3→2(任务级重试已覆盖)
 _HTTP_RETRY_BACKOFF_BASE = 1.0  # v6.13.49: 1.5→1.0
+
+class _PooledResponse:
+    """v6.13.50: 连接池响应包装器。
+    http.client.HTTPResponse.close() 会销毁底层socket，导致连接池中的连接报废。
+    此包装器：数据已预读，close()/__exit__() 为NO-OP，连接已归还池中不受影响。
+    兼容 urllib 的 .read() / .getcode() / .info() / .status / with 语句。"""
+    def __init__(self, data, status, headers, reason='OK'):
+        self._data = data
+        self.status = status
+        self.code = status
+        self.reason = reason
+        self._headers = headers
+    def read(self, size=-1):
+        if size <= 0: return self._data
+        return self._data[:size]
+    def getcode(self): return self.status
+    def info(self): return self._headers
+    def close(self): pass  # 连接已归还池中
+    def __enter__(self): return self
+    def __exit__(self, *args): pass  # 不关闭连接
 
 def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
     """HTTP请求超时自动重试，支持连接池复用+指数退避。
@@ -109,7 +129,7 @@ def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
           timeout — 单次请求超时(秒), v6.13.49: 默认5→10
           retries — 最大重试次数(含首次), v6.13.49: 3→2
           label — 日志标签(用于调试)
-    返回: 兼容 urllib 的响应对象（支持 .read() / .getcode() / .info()）
+    返回: _PooledResponse(连接池) 或 urllib 响应对象，均支持 .read() / with 语句
     重试条件: socket.timeout / URLError / ConnectionResetError / TimeoutError / RemoteDisconnected
     不重试: HTTPError(4xx/5xx) / 其他非网络错误"""
     last_error = None
@@ -129,11 +149,11 @@ def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
                 conn.request(url.get_method(), path, body=url.data, headers=headers)
                 resp = conn.getresponse()
                 data = resp.read()
-                _conn_pool_put(host, conn)
-                # 构造兼容 urllib.addinfourl 的响应对象
-                resp._cached_data = data
-                resp.read = lambda s=-1, d=data: d[:s] if s > 0 else d
-                return resp
+                status = resp.status
+                headers_info = dict(resp.getheaders())
+                reason = resp.reason
+                _conn_pool_put(host, conn)  # 归还连接到池中
+                return _PooledResponse(data, status, headers_info, reason)
             else:
                 return urllib.request.urlopen(url, timeout=timeout)
         except (socket.timeout, urllib.error.URLError, ConnectionResetError, TimeoutError) as e:
@@ -167,7 +187,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.49"
+BUILTIN_VERSION = "v6.13.50"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
