@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.45
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45)
+A股每日盘前短线标的智能筛选 v6.13.46
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -33,7 +33,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.45"
+BUILTIN_VERSION = "v6.13.46"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -4818,5 +4818,73 @@ def main():
     print(f"\n✅ 完成！ {mp}")
     return final, mp
 
+# ============================================================
+# v6.13.46: 筛选任务超时自动重试 — 指数退避，最多3次
+# ============================================================
+_SCREENING_RETRY = 3
+_SCREENING_BACKOFF = [10, 20, 40]  # 退避等待秒数
+
+def _run_screening_with_retry():
+    """带重试的筛选主入口。抓取网络/超时/JSON解析等瞬时错误自动重试"""
+    last_error = None
+    for attempt in range(_SCREENING_RETRY):
+        try:
+            main()
+            return  # 成功则退出
+        except (socket.timeout, urllib.error.URLError, ConnectionResetError,
+                TimeoutError, json.JSONDecodeError) as e:
+            last_error = e
+            if attempt < _SCREENING_RETRY - 1:
+                wait = _SCREENING_BACKOFF[attempt]
+                print(f"\n{'='*60}")
+                print(f"⚠️ 筛选失败(瞬时错误)，{wait}秒后自动重试({attempt+1}/{_SCREENING_RETRY-1})")
+                print(f"   错误: {type(e).__name__}: {str(e)[:80]}")
+                print(f"{'='*60}")
+                time.sleep(wait)
+        except OSError as e:
+            if 'RemoteDisconnected' in type(e).__name__ or 'BrokenPipe' in type(e).__name__:
+                last_error = e
+                if attempt < _SCREENING_RETRY - 1:
+                    wait = _SCREENING_BACKOFF[attempt]
+                    print(f"\n{'='*60}")
+                    print(f"⚠️ 筛选失败(OS网络错误)，{wait}秒后自动重试({attempt+1}/{_SCREENING_RETRY-1})")
+                    print(f"   错误: {type(e).__name__}")
+                    print(f"{'='*60}")
+                    time.sleep(wait)
+            else:
+                raise
+        except Exception as e:
+            # 非瞬时错误（KeyError/IndexError等代码bug），不重试
+            raise
+    # 所有重试耗尽
+    print(f"\n{'='*60}")
+    print(f"❌ 筛选任务失败：已重试{_SCREENING_RETRY}次，全部失败")
+    print(f"   最后错误: {type(last_error).__name__}: {str(last_error)[:120]}")
+    print(f"{'='*60}")
+    # v6.13.46: 重试耗尽后尝试发送飞书告警
+    try:
+        _send_failure_alert(last_error)
+    except Exception:
+        pass
+    raise last_error
+
+def _send_failure_alert(error):
+    """重试耗尽后发送飞书失败告警"""
+    if not FEISHU_WEBHOOK: return
+    card = {
+        "msg_type": "interactive",
+        "card": {
+            "header": {"title": {"content": "❌ A股筛选任务失败", "tag": "plain_text"}, "template": "red"},
+            "elements": [
+                {"tag": "div", "text": {"tag": "lark_md", "content": f"**版本**: {BUILTIN_VERSION}\n**日期**: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n**错误**: {type(error).__name__}: {str(error)[:200]}\n**状态**: 已重试{_SCREENING_RETRY}次，全部失败"}},
+                {"tag": "hr"},
+                {"tag": "note", "elements": [{"tag": "plain_text", "content": "请检查网络/API状态，下个交易日自动重试"}]}
+            ]
+        }
+    }
+    req = urllib.request.Request(FEISHU_WEBHOOK, data=json.dumps(card, ensure_ascii=False).encode('utf-8'),
+                                 headers={'Content-Type': 'application/json'}, method='POST')
+    urllib.request.urlopen(req, timeout=5)
+
 if __name__ == "__main__":
-    main()
+    _run_screening_with_retry()
