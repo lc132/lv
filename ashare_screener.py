@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.47
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46) | 修复配置环境(v6.13.47)
+A股每日盘前短线标的智能筛选 v6.13.48
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46) | 修复配置环境(v6.13.47) | 修复数量校验(v6.13.48)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -33,7 +33,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.47"
+BUILTIN_VERSION = "v6.13.48"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -4440,8 +4440,14 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 def step21_final_verify(mp, fc):
     try:
         with open(mp, 'r', encoding='utf-8') as f: content = f.read()
-        # v6.9.50: 仅统计推荐标的表（TOP10精选表之前的部分），排除TOP10表干扰
-        main_section = content.split('## TOP10')[0] if '## TOP10' in content else content
+        # v6.13.48: 在推荐标的表之后第一个##章节处截断，排除AI分析/策略分布等后续表格干扰
+        # v6.13.42已将TOP10重命名为资金去向，旧分割标记失效
+        cutoff_markers = ['## 跨策略冠军PK', '## 回测说明', '## 资金去向', '## 策略分布', '## TOP10']
+        main_section = content
+        for marker in cutoff_markers:
+            if marker in content:
+                main_section = content.split(marker)[0]
+                break
         tr = sum(1 for l in main_section.split('\n') if l.strip().startswith('| ') and l.split('|')[1].strip().isdigit())
         if tr != fc: log_alert("ERROR", "数量校验", f"概况{fc}≠MD表格{tr}")
         else: log_alert("INFO", "最终验证", f"通过（{fc}只）")
@@ -4592,7 +4598,9 @@ def update_data_source_monitor(ds):
 # 主流程
 # ============================================================
 def main():
-    global market_condition, position_pct
+    global market_condition, position_pct, _step_status
+    # v6.13.48: 重试时清除旧步骤状态，防止累积
+    _step_status.clear()
     # v6.13.26: 初始化会话记忆 — 新日期自动清除旧会话
     init_session(BUILTIN_VERSION, datetime.now().strftime('%Y-%m-%d'))
     print("=" * 60)
