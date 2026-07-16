@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.50
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46) | 修复配置环境(v6.13.47) | 修复数量校验(v6.13.48) | HTTP连接池+超时优化(v6.13.49) | 修复连接池with/close(v6.13.50)
+A股每日盘前短线标的智能筛选 v6.13.51
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46) | 修复配置环境(v6.13.47) | 修复数量校验(v6.13.48) | HTTP连接池+超时优化(v6.13.49) | 修复连接池with/close(v6.13.50) | 连接池切换urlopen+国恩股份行业修正(v6.13.51)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -88,6 +88,14 @@ def _conn_pool_put(host, conn):
                     idle_count -= 1
                     break
 
+def _conn_close_and_remove(host, conn):
+    """关闭连接并从池中移除（用于异常清理）"""
+    try: conn.close()
+    except: pass
+    with _CONN_POOL_LOCK:
+        if host in _CONN_POOL:
+            _CONN_POOL[host] = [(c, u) for c, u in _CONN_POOL[host] if c is not conn]
+
 def _conn_pool_close_all():
     """关闭所有连接"""
     for host in list(_CONN_POOL.keys()):
@@ -124,41 +132,13 @@ class _PooledResponse:
     def __exit__(self, *args): pass  # 不关闭连接
 
 def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
-    """HTTP请求超时自动重试，支持连接池复用+指数退避。
-    参数: url — urllib.request.Request 对象
-          timeout — 单次请求超时(秒), v6.13.49: 默认5→10
-          retries — 最大重试次数(含首次), v6.13.49: 3→2
-          label — 日志标签(用于调试)
-    返回: _PooledResponse(连接池) 或 urllib 响应对象，均支持 .read() / with 语句
-    重试条件: socket.timeout / URLError / ConnectionResetError / TimeoutError / RemoteDisconnected
-    不重试: HTTPError(4xx/5xx) / 其他非网络错误"""
+    """HTTP请求超时自动重试+指数退避。v6.13.51: 连接池改用urlopen(连接池http.client.HTTPSConnection在沙箱中不可用)"""
     last_error = None
-    parsed = urllib.parse.urlparse(url.full_url if hasattr(url, 'full_url') else url.get_full_url())
-    host = parsed.netloc
-    is_https = parsed.scheme == 'https'
-
     for attempt in range(retries):
-        conn = None
         try:
-            if is_https and host:
-                conn = _conn_pool_get(host)
-                path = parsed.path + ('?' + parsed.query if parsed.query else '')
-                headers = dict(url.headers) if url.headers else {}
-                if 'Host' not in headers: headers['Host'] = host
-                if 'Connection' not in headers: headers['Connection'] = 'keep-alive'
-                conn.request(url.get_method(), path, body=url.data, headers=headers)
-                resp = conn.getresponse()
-                data = resp.read()
-                status = resp.status
-                headers_info = dict(resp.getheaders())
-                reason = resp.reason
-                _conn_pool_put(host, conn)  # 归还连接到池中
-                return _PooledResponse(data, status, headers_info, reason)
-            else:
-                return urllib.request.urlopen(url, timeout=timeout)
+            return urllib.request.urlopen(url, timeout=timeout, context=_SSL_CTX)
         except (socket.timeout, urllib.error.URLError, ConnectionResetError, TimeoutError) as e:
             last_error = e
-            if conn: _conn_pool_put(host, conn)
             if attempt < retries - 1:
                 wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
                 print(f"  ⏳ {label}重试{attempt+1}/{retries-1}({wait:.1f}s): {str(e)[:40]}")
@@ -166,17 +146,18 @@ def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
         except OSError as e:
             if 'RemoteDisconnected' in type(e).__name__ or 'BrokenPipe' in type(e).__name__:
                 last_error = e
-                if conn: _conn_pool_put(host, conn)
                 if attempt < retries - 1:
                     wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
                     print(f"  ⏳ {label}重试{attempt+1}/{retries-1}({wait:.1f}s): {type(e).__name__}")
                     time.sleep(wait)
             else:
-                if conn: _conn_pool_put(host, conn)
                 raise
-        except Exception:
-            if conn: _conn_pool_put(host, conn)
-            raise
+        except http.client.CannotSendRequest as e:
+            last_error = e
+            if attempt < retries - 1:
+                wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
+                print(f"  ⏳ {label}重试{attempt+1}/{retries-1}({wait:.1f}s): CannotSendRequest")
+                time.sleep(wait)
     raise last_error
 
 from openpyxl import load_workbook
@@ -187,7 +168,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.50"
+BUILTIN_VERSION = "v6.13.51"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -1436,6 +1417,7 @@ HARDCODED_INDUSTRY = {
     '002455': '基础化工',  # 百川股份（精细化工/新材料，在002400-002499段但非传媒）
     '002734': '基础化工',  # 利民股份（农药原药/制剂，在002700-002799段但非机械设备）
     '002759': '家用电器',  # 天际股份（小家电制造，在002700-002799段但非机械设备）
+    '002768': '基础化工',  # 国恩股份（改性塑料/复合材料，在002700-002799段但非机械设备）
     '000815': '计算机',    # 美利云（数据中心/云计算，在000800-000899段但非汽车）
     '300139': '有色金属',  # 晓程科技（黄金开采，在300100-300199段但非汽车）
     '301555': '基础化工',  # 惠柏新材（环氧树脂，在301500-301599段但非汽车）
