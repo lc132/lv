@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.53
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46) | 修复配置环境(v6.13.47) | 修复数量校验(v6.13.48) | HTTP连接池+超时优化(v6.13.49) | 修复连接池with/close(v6.13.50) | 连接池切换urlopen+国恩股份行业修正(v6.13.51) | 资金去向智能代理(成交额×涨跌幅×量比)(v6.13.52) | 个股深度研判标注👑跨策略冠军(v6.13.53)
+A股每日盘前短线标的智能筛选 v6.13.54
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46) | 修复配置环境(v6.13.47) | 修复数量校验(v6.13.48) | HTTP连接池+超时优化(v6.13.49) | 修复连接池with/close(v6.13.50) | 连接池切换urlopen+国恩股份行业修正(v6.13.51) | 资金去向智能代理(成交额×涨跌幅×量比)(v6.13.52) | 个股深度研判标注👑跨策略冠军(v6.13.53) | lookup_industry缓存自动加载+同策略PK显示得分(v6.13.54)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -168,7 +168,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.53"
+BUILTIN_VERSION = "v6.13.54"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -1091,17 +1091,21 @@ INDUSTRY_MAP = {
     '304200-304299': '建筑装饰', '304300-304399': '基础化工',
 }
 def lookup_industry(code):
-    """行业查表：v6.9.34 硬编码覆盖 → 东方财富HTTP缓存 → 代码段映射"""
+    """行业查表：v6.9.34 硬编码覆盖 → 东方财富HTTP缓存 → 代码段映射
+    v6.13.53: 缓存未加载时自动加载，防止回退到错误的代码段映射"""
     # 1. 硬编码覆盖优先（手动校对，最高优先级）
     if code in HARDCODED_INDUSTRY:
         return HARDCODED_INDUSTRY[code]
     # 2. 东方财富缓存（证监会→申万映射）。v6.9.36: 兼容dict格式值
+    # v6.13.53: 缓存为空时自动加载，防止回退到不准确的代码段映射
+    if not _industry_cache:
+        _load_industry_cache()
     if code in _industry_cache and _industry_cache[code]:
         v = _industry_cache[code]
         if isinstance(v, dict):
             return v.get('sshy', '') or '未知'
         return v
-    # 3. 代码段映射
+    # 3. 代码段映射（仅缓存中无此code时作为兜底，精确度低）
     try:
         ci = int(code)
     except (ValueError, TypeError):
@@ -3801,7 +3805,11 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                 lines.append("- **PK规则**：同策略标的在7个维度对决，总分最高者获胜")
                 lines.append("- **PK标记**：👑 = 跨策略冠军 | 🏆 = 同策略获胜者 | 空格 = 败方 | - = 无对手")
                 for strat, info in pk_strats:
-                    lines.append(f"  - **{strat}策略** ({info['count']}只): 🏆 **{info['winner_name']}**({info['winner_code']}) 胜出\n")
+                    score = info.get('winner_score', 0)
+                    loser_str = ''
+                    if info.get('losers'):
+                        loser_str = ' | 败方: ' + '、'.join(f'{name}({code}){s:.1f}分' for code, name, s in info['losers'])
+                    lines.append(f"  - **{strat}策略** ({info['count']}只): 🏆 **{info['winner_name']}**({info['winner_code']}) — {score:.1f}/7分{loser_str}\n")
         lines.append("\n## 回测说明\n")
         lines.append("- **回测列格式**：`图标 + 胜/样本`，例如 `🟢2/2` 表示历史同标的样本2笔、盈利2笔。")
         lines.append("- **图标含义**：🟢 最近一次样本盈利；🔴 最近一次样本亏损；⚪ 后续K线不足或未形成有效胜负；⚠️ 历史有限价单未成交（当日最低价>进场价）；空白表示无可匹配历史样本。")
@@ -3906,7 +3914,7 @@ def _build_pk_html(pk_results):
             html_parts.append(f'<div class="pk-card" style="background:#1e293b;border-radius:12px;padding:1rem;margin-bottom:.75rem;border-left:4px solid #38bdf8">')
             html_parts.append(f'<div style="font-weight:bold;color:#e2e8f0;margin-bottom:.5rem"><span class="badge strat_{strat.lower()}" style="display:inline-block;margin-right:.5rem">{strat}</span> {info["count"]}只同策略对决</div>')
             html_parts.append(f'<div style="color:#38bdf8;font-size:1.1rem;margin-bottom:.25rem">🏆 <strong>{info["winner_name"]}</strong> ({info["winner_code"]}) — PK得分 {info["winner_score"]}/7</div>')
-            loser_names = ', '.join(f'{name}({code})' for code, name, score in info['losers'])
+            loser_names = ', '.join(f'{name}({code}){s:.1f}分' for code, name, s in info['losers'])
             html_parts.append(f'<div style="color:#94a3b8;font-size:.8rem">败方: {loser_names}</div>')
             html_parts.append('</div>')
         html_parts.append('</div></section>')
