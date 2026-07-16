@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.51
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46) | 修复配置环境(v6.13.47) | 修复数量校验(v6.13.48) | HTTP连接池+超时优化(v6.13.49) | 修复连接池with/close(v6.13.50) | 连接池切换urlopen+国恩股份行业修正(v6.13.51)
+A股每日盘前短线标的智能筛选 v6.13.52
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46) | 修复配置环境(v6.13.47) | 修复数量校验(v6.13.48) | HTTP连接池+超时优化(v6.13.49) | 修复连接池with/close(v6.13.50) | 连接池切换urlopen+国恩股份行业修正(v6.13.51) | 资金去向智能代理(成交额×涨跌幅×量比)(v6.13.52)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -132,7 +132,7 @@ class _PooledResponse:
     def __exit__(self, *args): pass  # 不关闭连接
 
 def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
-    """HTTP请求超时自动重试+指数退避。v6.13.51: 连接池改用urlopen(连接池http.client.HTTPSConnection在沙箱中不可用)"""
+    """HTTP请求超时自动重试+指数退避。v6.13.52: 连接池改用urlopen(沙箱兼容)"""
     last_error = None
     for attempt in range(retries):
         try:
@@ -168,7 +168,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.51"
+BUILTIN_VERSION = "v6.13.52"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -2034,21 +2034,31 @@ def step10C_fetch_klines_itick(candidates):
 
 # ============================================================
 # ============================================================
-# 步骤10C-附：主力资金流向（v6.13.43修复）
-# 腾讯API字段62实为YTD涨跌幅(非主力净流入)，东方财富flow API在沙箱中不可达
-# v6.13.43: 主力净流入标记为None，所有输出做优雅降级处理
+# 步骤10C-附：主力资金流向（v6.13.52修复）
+# 所有外部资金流向API(push2/nufm/sina)在沙箱中不可达，改用智能代理估算
+# 代理公式：主力净流入 ≈ 成交额 × 涨跌幅(%) / 100 × 主力贡献系数
+# 主力贡献系数：量比>1.5时0.20，量比>0.8时0.12，否则0.06
 # ============================================================
 def step10C_flow_fetch_main_inflow(candidates):
-    """v6.13.43: 腾讯API无主力净流入字段，东方财富API沙箱不可达。
-    返回: {code: None} 字典，所有值为None（优雅降级）
-    注：后续可接入龙虎榜/大宗交易等替代数据源"""
+    """v6.13.52: 所有外部资金流API不可达，使用成交额×涨跌幅代理估算主力净流入。
+    代理逻辑：量比反映主力参与度，高量比→高主力贡献系数
+    返回: {code: float} 字典，值为估算主力净流入(元)"""
     flow_data = {}
     if not candidates: return flow_data
-    # v6.13.43: 所有外部API均不可用，统一标记为None
     for c in candidates:
         code = c.get('code', '')
-        if code:
-            flow_data[code] = None
+        if not code: continue
+        amount = c.get('amount', 0) or 0
+        change_pct = c.get('change_pct', 0) or 0
+        vol_ratio = c.get('volume_ratio') or 1.0
+        # 主力贡献系数：量比越高，主力参与度越高
+        if vol_ratio > 1.5: master_ratio = 0.20
+        elif vol_ratio > 0.8: master_ratio = 0.12
+        else: master_ratio = 0.06
+        # 主力净流入 = 成交额 × 涨跌幅% × 主力贡献系数
+        # 涨为正(主力买入主导)，跌为负(主力卖出主导)
+        flow = amount * (change_pct / 100.0) * master_ratio
+        flow_data[code] = round(flow, 2)
     return flow_data
 
 # ============================================================
