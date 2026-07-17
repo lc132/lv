@@ -3657,6 +3657,106 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
             c['_pk_champion'] = False
     
     return pk_results
+
+# ============================================================
+# v6.14.0: 市场全景图表生成
+# ============================================================
+def _generate_market_overview(all_stocks, index_data, output_dir):
+    """生成市场全景图表PNG（涨跌统计+资金流向），返回文件路径"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import matplotlib.font_manager as fm
+    import numpy as np
+    
+    # 字体设置
+    _font_candidates = ['Noto Sans CJK SC', 'WenQuanYi Micro Hei', 'SimHei', 'DejaVu Sans']
+    _font_path = None
+    for _fn in _font_candidates:
+        try:
+            _fp = fm.findfont(fm.FontProperties(family=_fn), fallback_to_default=False)
+            if _fp and 'DejaVu' not in _fp:
+                _font_path = _fn
+                break
+        except Exception:
+            continue
+    if not _font_path:
+        _font_path = 'DejaVu Sans'
+    
+    plt.rcParams['font.family'] = _font_path
+    plt.rcParams['axes.unicode_minus'] = False
+    
+    # 统计涨跌数据
+    up_count = sum(1 for s in all_stocks if (s.get('change_pct') or 0) > 0)
+    down_count = sum(1 for s in all_stocks if (s.get('change_pct') or 0) < 0)
+    flat_count = sum(1 for s in all_stocks if (s.get('change_pct') or 0) == 0)
+    limit_up = sum(1 for s in all_stocks if (s.get('change_pct') or 0) >= 9.5)
+    limit_down = sum(1 for s in all_stocks if (s.get('change_pct') or 0) <= -9.5)
+    total = len(all_stocks)
+    
+    # 资金流向（用change_pct方向作为代理）
+    inflow_count = sum(1 for s in all_stocks if (s.get('change_pct') or 0) > 0 and (s.get('amount') or 0) > 0)
+    outflow_count = sum(1 for s in all_stocks if (s.get('change_pct') or 0) < 0 and (s.get('amount') or 0) > 0)
+    
+    # 创建图表
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5), facecolor='#0f172a')
+    fig.patch.set_facecolor('#0f172a')
+    
+    # ── 左侧：涨跌统计 ──
+    ax1 = axes[0]
+    ax1.set_facecolor('#1e293b')
+    labels1 = ['\u4e0a\u6da8', '\u4e0b\u8dcc', '\u5e73\u76d8']
+    counts1 = [up_count, down_count, flat_count]
+    colors1 = ['#ef4444', '#22c55e', '#64748b']
+    bars1 = ax1.barh(labels1, counts1, color=colors1, height=0.5, edgecolor='none')
+    for bar, count in zip(bars1, counts1):
+        pct = f'{count/total*100:.1f}%' if total > 0 else '0%'
+        ax1.text(bar.get_width() + max(counts1)*0.01, bar.get_y() + bar.get_height()/2,
+                f'{count} \u5bb6 ({pct})', va='center', fontsize=11, color='#e2e8f0', fontweight='bold')
+    ax1.set_title('\u6da8\u8dcc\u7edf\u8ba1', fontsize=15, color='#f8fafc', fontweight='bold', pad=12)
+    ax1.set_xlim(0, max(counts1)*1.25)
+    ax1.tick_params(colors='#94a3b8', labelsize=11)
+    for spine in ax1.spines.values(): spine.set_visible(False)
+    ax1.xaxis.set_visible(False)
+    
+    # 涨停/跌停标注
+    lu_text = f'\u6da8\u505c {limit_up} \u5bb6'
+    ld_text = f'\u8dcc\u505c {limit_down} \u5bb6'
+    ax1.text(0.98, 0.95, lu_text, transform=ax1.transAxes, fontsize=12, color='#ef4444',
+            ha='right', va='top', fontweight='bold')
+    ax1.text(0.98, 0.78, ld_text, transform=ax1.transAxes, fontsize=12, color='#22c55e',
+            ha='right', va='top', fontweight='bold')
+    
+    # ── 右侧：资金流向 ──
+    ax2 = axes[1]
+    ax2.set_facecolor('#1e293b')
+    labels2 = ['\u51c0\u6d41\u5165', '\u51c0\u6d41\u51fa']
+    counts2 = [inflow_count, outflow_count]
+    colors2 = ['#ef4444', '#22c55e']
+    bars2 = ax2.barh(labels2, counts2, color=colors2, height=0.5, edgecolor='none')
+    for bar, count in zip(bars2, counts2):
+        pct = f'{count/total*100:.1f}%' if total > 0 else '0%'
+        ax2.text(bar.get_width() + max(counts2)*0.01, bar.get_y() + bar.get_height()/2,
+                f'{count} \u5bb6 ({pct})', va='center', fontsize=11, color='#e2e8f0', fontweight='bold')
+    ax2.set_title('\u8d44\u91d1\u6d41\u5411', fontsize=15, color='#f8fafc', fontweight='bold', pad=12)
+    ax2.set_xlim(0, max(counts2)*1.25)
+    ax2.tick_params(colors='#94a3b8', labelsize=11)
+    for spine in ax2.spines.values(): spine.set_visible(False)
+    ax2.xaxis.set_visible(False)
+    
+    # 总家数
+    fig.text(0.5, 0.01, f'\u5168\u5e02\u573a {total} \u53ea\u80a1\u7968 | \u6570\u636e\u65e5\u671f: {data_date}',
+            ha='center', fontsize=10, color='#64748b')
+    
+    plt.tight_layout(rect=[0, 0.04, 1, 1])
+    
+    # 保存
+    chart_path = os.path.join(output_dir, 'market_overview.png')
+    plt.savefig(chart_path, dpi=120, bbox_inches='tight', facecolor=fig.get_facecolor())
+    plt.close()
+    
+    return chart_path
+
 # ============================================================
 def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report=None, bt_lookup=None, pk_results=None, kline_data=None):
     mp = f"/workspace/短线标的_{prediction_date}.md"
@@ -3877,7 +3977,7 @@ def _build_pk_html(pk_results):
         html_parts.append('</div></section>')
     return '\n'.join(html_parts)
 
-def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report=None, bt_lookup=None, kline_data=None, bt_result=None, pk_results=None):
+def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report=None, bt_lookup=None, kline_data=None, bt_result=None, pk_results=None, all_stocks=None):
     hd = f"/workspace/ashare-screening-{pred_yyyymmdd}"
     os.makedirs(hd, exist_ok=True)
     hp = f"{hd}/ashare-screening-{pred_yyyymmdd}.html"
@@ -4196,6 +4296,19 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
     else:
         backtest_html = '<div style="color:#94a3b8;padding:1rem;text-align:center">暂无回测数据</div>'
     
+    # v6.14.0: 市场全景图表
+    market_overview_html = ''
+    if all_stocks:
+        try:
+            chart_path = _generate_market_overview(all_stocks, index_data, hd)
+            if chart_path and os.path.exists(chart_path):
+                import base64 as _b64
+                with open(chart_path, 'rb') as _cf:
+                    _b64_data = _b64.b64encode(_cf.read()).decode()
+                market_overview_html = f'<section><h2>📊 市场全景</h2><div style="text-align:center;margin:1rem 0"><img src="data:image/png;base64,{_b64_data}" alt="市场全景" style="max-width:100%;border-radius:12px;background:#0f172a"></div></section>'
+                log_alert("INFO", "市场全景", f"图表已嵌入: {chart_path}")
+        except Exception as e:
+            log_alert("WARNING", "市场全景", f"图表生成失败: {e}")
 
     html_content = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>A股短线标的筛选 — {prediction_date}</title>
@@ -4467,6 +4580,7 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 <div class="meta-card"><div class="label">市场环境</div><div class="value">{market_condition}</div></div>
 <div class="meta-card"><div class="label">建议仓位</div><div class="value">{position_pct}%</div></div>
 <div class="meta-card"><div class="label">最终推荐</div><div class="value">{fc}只</div></div></div>
+{market_overview_html}
 <section><h2>筛选管道</h2><div class="funnel">{funnel_html}</div></section>
 <section><h2>数据可视化</h2><div class="chart-grid">
 <div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">策略分布</h3><div class="seg-bar">{seg_html if seg_html else '<div style="color:#94a3b8;text-align:center;padding:1rem">无推荐标的</div>'}</div><div class="legend">{legend_html}</div></div>
@@ -4886,7 +5000,7 @@ def main():
 
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup, pk_results, kline_data)
     record_step_status("步骤20: Markdown", "OK", mp)
-    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report, bt_lookup, kline_data, bt_result, pk_results); hd = os.path.dirname(hp)
+    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report, bt_lookup, kline_data, bt_result, pk_results, all_stocks); hd = os.path.dirname(hp)
     record_step_status("步骤20B: HTML报告", "OK", hp)
     print("\n[步骤21] 验证..."); step21_final_verify(mp, fc)
     record_step_status("步骤21: 最终验证", "OK", f"{fc}只通过")
