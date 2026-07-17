@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.13.55
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 数量校验修复 | 指数数据显示修复 | 周末跳过推荐历史 | 资金去向行业排名 | HTML深色主题美化 | 雪球新闻源 | 回测K线Referer修复+复合收益率 | HTML报告4项漏洞修复 | 会话记忆断点续跑 | 回测no_entry计入loss | 同策略+跨策略冠军PK | 修复主力资金数据源(v6.13.43) | 推荐标的回测列图例(v6.13.44) | 超时自动重试(v6.13.45) | 筛选任务重试(v6.13.46) | 修复配置环境(v6.13.47) | 修复数量校验(v6.13.48) | HTTP连接池+超时优化(v6.13.49) | 修复连接池with/close(v6.13.50) | 连接池切换urlopen+国恩股份行业修正(v6.13.51) | 资金去向智能代理(成交额×涨跌幅×量比)(v6.13.52) | 个股深度研判标注👑跨策略冠军(v6.13.53) | lookup_industry缓存自动加载+同策略PK显示得分(v6.13.54) | 漏洞修复:v6.13.55(死代码清理/版本统一/Token泄露/异常处理)
+A股每日盘前短线标的智能筛选 v6.14.0
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 漏洞修复(死代码清理/版本统一/Token泄露)(v6.13.55)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -73,7 +73,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.13.55"
+BUILTIN_VERSION = "v6.14.0"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -2015,8 +2015,17 @@ def step10E_fetch_fundamentals(candidates):
                     'revenue': latest.get('TOTALOPERATEREVE'),
                     'eps': latest.get('EPSJB'),
                     'report_date': latest.get('REPORT_DATE', ''),
-                    'pledge_ratio': latest.get('PLEDGERATIO'),        # v6.9.43: 质押比例（信号#28用）
-                    'goodwill_ratio': latest.get('GOODWILLRATIO'),   # v6.9.43: 商誉占比（信号#29用）
+                    'pledge_ratio': latest.get('PLEDGERATIO'),        # v6.9.43: 质押比例
+                    'goodwill_ratio': latest.get('GOODWILLRATIO'),   # v6.9.43: 商誉占比
+                    # v6.14.0: 基本面PK维度 — 新增6个字段
+                    'revenue_yoy': latest.get('TOTALOPERATEREVETZ'),   # 营收同比(%)
+                    'net_profit_yoy': latest.get('PARENTNETPROFITTZ'), # 净利同比(%)
+                    'deduct_np_yoy': latest.get('DJD_DEDUCTDPNP_YOY'), # 扣非净利同比(%)
+                    'gross_margin': latest.get('XSMLL'),               # 销售毛利率(%)
+                    'net_margin': latest.get('XSJLL'),                 # 销售净利率(%)
+                    'debt_ratio': latest.get('ZCFZL'),                 # 资产负债率(%)
+                    'ocf_to_revenue': latest.get('JYXJLYYSR'),         # 经营现金流/营收
+                    'roic': latest.get('ROIC'),                        # ROIC(%)
                 }
                 # v6.9.39: 计算净利润同比（与4期前同季度对比）
                 if len(items) >= 5:
@@ -3442,49 +3451,79 @@ def _compute_pl_ratios(candidates, sector_limit_up=None):
 # 步骤19B：同策略PK
 # ============================================================
 def _init_pk_details(c, kline_data, bt_lookup, sentiment_base, sector_heat, max_heat):
-    """v6.13.33: 为标的填充PK维度数据"""
+    """v6.14.0: 基本面+技术面融合7维度PK
+    维度体系: 成长性+盈利能力+估值水位+资产质量+现金流+筹码+板块热度
+    同行业优先比较，跨行业使用记分卡加权"""
     code = c.get('code', '')
     strat = c.get('strategy', '?')
     kd = kline_data.get(code, {})
     pk_details = []
-    # 维度1: 综合评分
-    pk_details.append(('score', c.get('score', 0)))
-    # 维度2: 盈亏比
-    pk_details.append(('pl', c.get('_pl_ratio', 0) or 0))
-    # 维度3: 技术面
-    tech_score = 0
-    if kd:
-        dif = kd.get('dif') or 0; dea = kd.get('dea_val') or 0
-        if dif > dea: tech_score += 1
-        k_val = kd.get('k') or 0; d_val = kd.get('d') or 0
-        if k_val > d_val: tech_score += 1
-        ma5 = kd.get('ma5') or 0; ma10 = kd.get('ma10') or 0; ma20 = kd.get('ma20') or 0
-        if ma5 > ma10 > ma20: tech_score += 1
-        elif ma5 > ma10: tech_score += 0.5
-    pk_details.append(('tech', tech_score))
-    # 维度4: 主力资金
-    pk_details.append(('flow', c.get('main_inflow', 0) or 0))
-    # 维度5: 回测胜率
-    bt_win_rate = 0
-    if bt_lookup and code in bt_lookup:
-        bt = bt_lookup[code]
-        if bt['total'] > 0:
-            bt_win_rate = bt['wins'] / bt['total']
-    pk_details.append(('bt', bt_win_rate))
-    # 维度6: 市场情绪
-    if strat in ('A', 'D', 'G', 'I', 'N', 'P', 'Q'):
-        sentiment_score = sentiment_base
-    elif strat in ('B', 'H', 'J', 'M', 'O'):
-        sentiment_score = 2 - sentiment_base
+    
+    # ---- 维度1: 成长性(growth) ----
+    # 营收同比 + 净利同比 + 扣非净利同比 取均值，N/A 用0填充
+    rev_yoy = _safe_float(c.get('_fd_revenue_yoy'))
+    np_yoy = _safe_float(c.get('_fd_net_profit_yoy'))
+    dnp_yoy = _safe_float(c.get('_fd_deduct_np_yoy'))
+    vals = [v for v in [rev_yoy, np_yoy, dnp_yoy] if v is not None]
+    growth = sum(vals) / len(vals) if vals else 0
+    pk_details.append(('growth', growth))
+    
+    # ---- 维度2: 盈利能力(profitability) ----
+    # ROE → ROIC → 净利率 三级降级
+    roe = _safe_float(c.get('_fd_roe'))
+    roic = _safe_float(c.get('_fd_roic'))
+    net_margin = _safe_float(c.get('_fd_net_margin'))
+    profitability = roe if roe is not None else (roic if roic is not None else (net_margin if net_margin is not None else 0))
+    pk_details.append(('profit', profitability))
+    
+    # ---- 维度3: 估值水位(valuation) ----
+    # PE = 现价/每股收益，越低越好。负PE=最差(-999)，无数据=中位(0)
+    eps = _safe_float(c.get('_fd_eps'))
+    close = c.get('close', 0) or 0
+    if eps is not None and eps > 0 and close > 0:
+        pe = close / eps  # 正PE，越低越好（取反）
+        pe_score = -pe    # 反序：PE越小得分越高
+    elif eps is not None and eps <= 0:
+        pe_score = -9999  # 亏损股，估值最差
     else:
-        sentiment_score = 1
-    pk_details.append(('sentiment', sentiment_score))
-    # 维度7: 涨停板块热度
+        pe_score = 0      # 无数据，中位
+    pk_details.append(('value', pe_score))
+    
+    # ---- 维度4: 资产质量(quality) ----
+    # 资产负债率，越低越好（取反序）
+    debt = _safe_float(c.get('_fd_debt_ratio'))
+    if debt is not None:
+        quality = -abs(debt)  # 反序：负债率越低得分越高
+    else:
+        quality = -50         # 无数据按50%计算
+    pk_details.append(('quality', quality))
+    
+    # ---- 维度5: 现金流(cashflow) ----
+    # 经营现金流/营收，越高越好
+    ocf = _safe_float(c.get('_fd_ocf_to_revenue'))
+    cashflow = ocf if ocf is not None else 0
+    pk_details.append(('cashflow', cashflow))
+    
+    # ---- 维度6: 筹码(flow) ----
+    # 主力资金净流入（万元），越高越好
+    inflow = c.get('main_inflow', 0) or 0
+    pk_details.append(('flow', inflow))
+    
+    # ---- 维度7: 板块热度(heat) ----
+    # 行业涨停家数归一化
     industry = lookup_industry(code)
     heat = sector_heat.get(industry, 0)
     heat_normalized = heat / max_heat if max_heat > 0 else 0
     pk_details.append(('heat', heat_normalized))
+    
     c['_pk_details'] = pk_details
+
+
+def _safe_float(val):
+    """安全转换为float，None/空/非数字返回None"""
+    if val is None: return None
+    try: return float(val)
+    except (ValueError, TypeError): return None
 
 def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None, market_condition=None, index_data=None):
     """v6.13.33: 同策略PK + 跨策略冠军PK
@@ -3521,8 +3560,9 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
             c['_pk_score'] = 0
             c['_pk_champion'] = False
         
-        # 逐维度PK: 每个维度最高者+1分，平局各+0.5
-        dims = ['score', 'pl', 'tech', 'flow', 'bt', 'sentiment', 'heat']
+        # v6.14.0: 逐维度PK — 基本面+技术面融合7维度
+        # growth/profit/value/quality/cashflow/flow/heat
+        dims = ['growth', 'profit', 'value', 'quality', 'cashflow', 'flow', 'heat']
         for dim_idx, dim_name in enumerate(dims):
             values = [(c, c['_pk_details'][dim_idx][1]) for c in group]
             max_val = max(v for _, v in values)
@@ -3575,7 +3615,7 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
             c['_champion_score'] = 0
         
         # 复用已有_pk_details，每个维度最高者+1分
-        dims = ['score', 'pl', 'tech', 'flow', 'bt', 'sentiment', 'heat']
+        dims = ['growth', 'profit', 'value', 'quality', 'cashflow', 'flow', 'heat']
         for dim_idx, dim_name in enumerate(dims):
             values = [(c, c['_pk_details'][dim_idx][1]) for c in all_winners]
             max_val = max(v for _, v in values)
@@ -3704,7 +3744,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                 lines.append(f"- 👑 **最强标的**: **{champion_info['winner_name']}**({champion_info['winner_code']}) — 冠军得分 {champion_info['winner_score']}/7")
                 loser_names = ', '.join(f'{name}({code})' for code, name, score in champion_info['losers'])
                 lines.append(f"- 挑战者: {loser_names}")
-                lines.append("- **PK规则**：所有策略获胜者(含独苗)在7个维度（综合评分/盈亏比/技术面/主力资金/回测胜率/市场情绪/涨停板块热度）对决，总分最高者加冕👑冠军")
+                lines.append("- **PK规则**：所有策略获胜者(含独苗)在7个维度（成长性/盈利能力/估值水位/资产质量/现金流/筹码/板块热度）对决，总分最高者加冕👑冠军")
             if pk_strats:
                 lines.append("\n## 同策略PK\n")
                 lines.append("- **PK规则**：同策略标的在7个维度对决，总分最高者获胜")

@@ -1,3 +1,4 @@
+- **v6.14.0**: 基本面PK体系升级——(1)F10数据采集新增revenue_yoy/net_profit_yoy/deduct_np_yoy/gross_margin/net_margin/debt_ratio/ocf_to_revenue/roic共8个字段 (2)_init_pk_details重写为7维度：成长性(营收+净利+扣非增速均值)、盈利能力(ROE→ROIC→净利率三级降级)、估值水位(PE反序/亏损股-9999)、资产质量(负债率反序)、现金流(经营现金流/营收)、筹码(主力资金)、板块热度 (3)移除旧维度：score/pl/tech/bt/sentiment (4)新增_safe_float安全转换函数
 - **v6.13.55**: 漏洞修复——(1)lib/sync.py GITHUB_TOKEN改用GIT_ASKPASS(防进程列表泄露) (2)lib/core.py BUILTIN_VERSION统一到v6.13.55 (3)清理~100行连接池死代码(_CONN_POOL/_PooledResponse) (4)_run_screening_with_retry中OSError判断改用isinstance替代字符串匹配
 - **v6.13.54**: 同策略PK评分修复——(1)lookup_industry增加缓存自动加载：缓存为空时自动调用_load_industry_cache()，防止回退到不准确的代码段映射(INDUSTRY_MAP)导致heat维度为0 (2)MD报告同策略PK显示胜者得分+败方得分 (3)HTML报告同策略PK败方增加得分
 - **v6.13.53**: 个股深度研判增加👑跨策略冠军标注——(1)MD报告个股深度分析标题中冠军标的加👑前缀 (2)HTML报告个股深度研判卡片冠军标的加👑金色图标 (3)冠军代码从pk_results['__champion__']['winner_code']提取
@@ -23,9 +24,9 @@
 - **v6.13.23**: 修复回测"无数据"标的 — _fetch_kline_range增加重试(2次)+三级兜底(宽泛日期lmt=30)，run_backtest增加跨日期K线复用逻辑，4只无数据标的全部消除
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.13.55)。基于前一日收盘数据，通过37步筛选流程（北京时间→GitHub拉取行业缓存→节假日→极端行情→外围市场→持仓同步→做T→持仓跟踪→持仓危机→全市场API拉取→行业缓存→历史K线(三级降级pytdx→东方财富HTTP→iTick)→财务→F10→风险事件→拥挤度→13项硬排除→27项信号过滤→20策略评分+MACD/K线+多因子共振→微观结构过滤→行业限制→新闻筛查→TOP10龙虎榜+板块热度排序→主力资金→AI策略分析(市场全景/板块研判/个股深度研判)→历史回测→HTML报告→GitHub同步→飞书推送），输出短线标的_YYYYMMDD.md和可视化HTML报告。
+description: A股每日盘前短线标的智能筛选(v6.14.0)。基于前一日收盘数据，通过37步筛选流程，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度（成长性/盈利能力/估值水位/资产质量/现金流/筹码/板块热度）。
 ---
-# A股盘前短线标的筛选 v6.13.55
+# A股盘前短线标的筛选 v6.14.0
 
 ## 版本历史
 - **v6.13.23**: 修复HTML回测数据显示为0的Bug — metrics从bt["metrics"]读取(原错误从bt顶层读取)，profit_factor键名修正，strategy_metrics从dict迭代(原错误用list)  
