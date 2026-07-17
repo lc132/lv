@@ -412,17 +412,32 @@ def step28_weekly_review(ctx):
     print("  周六 → 执行每周复盘...")
     
     if not GITHUB_TOKEN: print("  ⚠️ 无GitHub Token，跳过复盘"); return  # v6.12.8
-    repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
+    repo_url = f"https://github.com/{GITHUB_REPO}.git"
     temp_dir = f"{TEMP_DIR}/lv_weekly_review"
     
     try:
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
         
-        subprocess.run(
-            ["git", "clone", "--depth", "1", "--branch", "main", repo_url, temp_dir],
-            capture_output=True, text=True, timeout=60, check=True
-        )
+        # v6.13.55: 使用 GIT_ASKPASS 安全传递 Token，避免 Token 出现在进程列表
+        import tempfile as _tmp
+        askpass_script = None
+        try:
+            fd, askpass_script = _tmp.mkstemp(prefix='git_askpass_', suffix='.sh')
+            with os.fdopen(fd, 'w', encoding='utf-8') as _af:
+                _af.write('#!/bin/bash\necho "$GIT_TOKEN"\n')
+            os.chmod(askpass_script, 0o700)
+            _env = os.environ.copy()
+            _env['GIT_ASKPASS'] = askpass_script
+            _env['GIT_TOKEN'] = GITHUB_TOKEN
+            subprocess.run(
+                ["git", "clone", "--depth", "1", "--branch", "main", repo_url, temp_dir],
+                capture_output=True, text=True, timeout=60, check=True, env=_env
+            )
+        finally:
+            if askpass_script and os.path.exists(askpass_script):
+                try: os.remove(askpass_script)
+                except OSError: pass
         
         # 收集本周推荐的MD文件
         md_files = []
