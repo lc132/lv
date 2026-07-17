@@ -1,4 +1,4 @@
-- **v6.14.0**: 基本面PK体系升级——(1)F10数据采集新增revenue_yoy/net_profit_yoy/deduct_np_yoy/gross_margin/net_margin/debt_ratio/ocf_to_revenue/roic共8个字段 (2)_init_pk_details重写为7维度：成长性(营收+净利+扣非增速均值)、盈利能力(ROE→ROIC→净利率三级降级)、估值水位(PE反序/亏损股-9999)、资产质量(负债率反序)、现金流(经营现金流/营收)、筹码(主力资金)、板块热度 (3)移除旧维度：score/pl/tech/bt/sentiment (4)新增_safe_float安全转换函数
+- **v6.14.0**: 基本面PK体系升级+冠军深度分析注入——(1)F10数据采集新增8个字段 (2)PK维度重构为基本面+技术面融合7维度 (3)冠军始终进入个股深度分析：MD/HTML输出阶段检测冠军是否在TOP10内，若不在则自动调用generate_candidate_analysis生成深度分析并插入首位
 - **v6.13.55**: 漏洞修复——(1)lib/sync.py GITHUB_TOKEN改用GIT_ASKPASS(防进程列表泄露) (2)lib/core.py BUILTIN_VERSION统一到v6.13.55 (3)清理~100行连接池死代码(_CONN_POOL/_PooledResponse) (4)_run_screening_with_retry中OSError判断改用isinstance替代字符串匹配
 - **v6.13.54**: 同策略PK评分修复——(1)lookup_industry增加缓存自动加载：缓存为空时自动调用_load_industry_cache()，防止回退到不准确的代码段映射(INDUSTRY_MAP)导致heat维度为0 (2)MD报告同策略PK显示胜者得分+败方得分 (3)HTML报告同策略PK败方增加得分
 - **v6.13.53**: 个股深度研判增加👑跨策略冠军标注——(1)MD报告个股深度分析标题中冠军标的加👑前缀 (2)HTML报告个股深度研判卡片冠军标的加👑金色图标 (3)冠军代码从pk_results['__champion__']['winner_code']提取

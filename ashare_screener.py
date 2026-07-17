@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 A股每日盘前短线标的智能筛选 v6.14.0
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 漏洞修复(死代码清理/版本统一/Token泄露)(v6.13.55)
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -68,7 +68,7 @@ def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
 from openpyxl import load_workbook
 from lib.factor import compute_main_force_position, compute_short_term_breakout, resonance_check
 from lib.microstructure import microstructure_filter
-from lib.analyst import generate_ai_report
+from lib.analyst import generate_ai_report, generate_candidate_analysis  # v6.14.0: 冠军深度分析
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
@@ -3658,7 +3658,7 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
     
     return pk_results
 # ============================================================
-def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report=None, bt_lookup=None, pk_results=None):
+def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report=None, bt_lookup=None, pk_results=None, kline_data=None):
     mp = f"/workspace/短线标的_{prediction_date}.md"
     lines = [
         f"# A股短线标的筛选报告 — {prediction_date}", "",
@@ -3806,7 +3806,19 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         lines.append("")
         # v6.13.53: 跨策略冠军获取，用于个股深度研判标注👑
         champion_code = pk_results.get('__champion__', {}).get('winner_code', '') if pk_results else ''
-        for ca in ai_report.get('candidate_analyses', []):
+        # v6.14.0: 冠军始终进入深度分析（即使不在TOP10内）
+        analyses = list(ai_report.get('candidate_analyses', []))
+        champion_in_analyses = any(ca.get('code') == champion_code for ca in analyses)
+        if champion_code and not champion_in_analyses:
+            champion_candidate = next((c for c in candidates if c.get('code') == champion_code), None)
+            if champion_candidate:
+                try:
+                    champion_analysis = generate_candidate_analysis(champion_candidate, kline_data or {}, 0, len(candidates))
+                    analyses.insert(0, champion_analysis)
+                    log_alert("INFO", "深度分析", f"冠军 {champion_candidate.get('name','')}({champion_code}) 已注入深度分析")
+                except Exception as e:
+                    log_alert("WARNING", "深度分析", f"冠军 {champion_candidate.get('name','')}({champion_code}) 注入失败: {e}")
+        for ca in analyses:
             code = ca.get('code', '')
             crown = "👑 " if code == champion_code else ""
             lines.append(f"### {crown}{ca.get('code', '')} {ca.get('name', '')}（{ca.get('strategy', '')}）")
@@ -4111,7 +4123,17 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         
         # v6.13.53: 跨策略冠军获取，用于HTML个股深度研判卡片标注👑
         champion_code_html = pk_results.get('__champion__', {}).get('winner_code', '') if pk_results else ''
-        for ci, ca in enumerate(ai_report.get('candidate_analyses', []), 1):
+        # v6.14.0: 冠军始终进入深度分析（即使不在TOP10内）
+        html_analyses = list(ai_report.get('candidate_analyses', []))
+        champion_in_html = any(ca.get('code') == champion_code_html for ca in html_analyses)
+        if champion_code_html and not champion_in_html:
+            champion_candidate_html = next((c for c in candidates if c.get('code') == champion_code_html), None)
+            if champion_candidate_html:
+                try:
+                    champion_analysis_html = generate_candidate_analysis(champion_candidate_html, kline_data or {}, 0, len(candidates))
+                    html_analyses.insert(0, champion_analysis_html)
+                except Exception: pass
+        for ci, ca in enumerate(html_analyses, 1):
             code = ca.get('code', '')
             name = ca.get('name', '')
             crown_html = '<span style="color:#fbbf24;font-size:1.3rem;margin-right:4px">👑</span>' if code == champion_code_html else ''
@@ -4862,7 +4884,7 @@ def main():
     print("\n[步骤19B] 同策略PK..."); pk_results = step19b_strategy_pk(final, kline_data, bt_lookup, sector_limit_up, market_condition, index_data)
     record_step_status("步骤19B: 同策略PK", "OK", f"{sum(1 for v in pk_results.values() if v['count']>=2)}组对决")
 
-    print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup, pk_results)
+    print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup, pk_results, kline_data)
     record_step_status("步骤20: Markdown", "OK", mp)
     print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report, bt_lookup, kline_data, bt_result, pk_results); hd = os.path.dirname(hp)
     record_step_status("步骤20B: HTML报告", "OK", hp)
