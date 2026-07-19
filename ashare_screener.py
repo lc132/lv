@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.14.0
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0)
+A股每日盘前短线标的智能筛选 v6.15.0
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -73,7 +73,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.14.1"
+BUILTIN_VERSION = "v6.15.0"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -505,9 +505,117 @@ def step2_extreme_market():
     sh = idx.get("sh000001", {})
     cur = sh.get("price", 0); chg = sh.get("change_pct", 0)
     log_alert("INFO", "极端行情", f"上证{cur:.0f} 涨跌{chg:.2f}%")
-    if chg <= -3: return True
-    if chg >= 3: position_pct = 30; market_condition = "强市(极端上涨/降仓防追高)"
+    if chg <= -3:
+        # v6.15.0: 写入极端行情标记，供次日 step2A 修复监测使用
+        _write_extreme_flag(data_date, cur, chg, "暴跌")
+        return True
+    if chg >= 3:
+        _write_extreme_flag(data_date, cur, chg, "暴涨")
+        position_pct = 30; market_condition = "强市(极端上涨/降仓防追高)"
     return False
+
+# v6.15.0: 极端行情标记文件读写
+_EXTREME_FLAG_FILE = "/workspace/.extreme_market_flag"
+
+def _write_extreme_flag(date_str, price, chg_pct, tag):
+    """写入极端行情标记，供次日修复监测使用"""
+    try:
+        with open(_EXTREME_FLAG_FILE, 'w', encoding='utf-8') as f:
+            json.dump({"date": date_str, "price": price, "change_pct": chg_pct, "tag": tag}, f, ensure_ascii=False)
+    except Exception: pass
+
+def _read_extreme_flag():
+    """读取极端行情标记，返回dict或None"""
+    try:
+        with open(_EXTREME_FLAG_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError): return None
+
+def _clear_extreme_flag():
+    """清除极端行情标记"""
+    try:
+        os.remove(_EXTREME_FLAG_FILE)
+    except FileNotFoundError: pass
+
+def step2A_recovery_monitor():
+    """v6.15.0: 极端行情后修复监测——检测前一日极端行情后的市场修复力度，动态调整仓位和筛选参数"""
+    global position_pct, market_condition
+    flag = _read_extreme_flag()
+    if not flag: return False  # 无极端行情记录，正常流程
+    
+    ext_date = flag.get("date", "")
+    ext_chg = flag.get("change_pct", 0)
+    ext_tag = flag.get("tag", "")
+    
+    # 仅在前一日极端行情后的下一个交易日触发
+    if ext_date != data_date:
+        _clear_extreme_flag()  # 过期标记清理
+        return False
+    
+    print(f"  🔍 检测到前一日极端行情[{ext_date}]: {ext_tag} {ext_chg:+.2f}% → 启动修复监测")
+    
+    # 获取当前三大指数数据
+    idx = fetch_tencent_index(["sh000001", "sz399001", "sz399006"])
+    if not idx:
+        log_alert("WARNING", "修复监测", "指数数据获取失败，按弱修复处理")
+        position_pct = 25; market_condition = "弱市(极端修复中/保守)"
+        _clear_extreme_flag()
+        return False
+    
+    # 修复力度评分（满分10分）
+    recovery_score = 0
+    details = []
+    
+    # 维度1: 上证涨跌幅（0-3分）
+    sh = idx.get("sh000001", {})
+    sh_chg = sh.get("change_pct", 0)
+    if sh_chg >= 1.5: recovery_score += 3; details.append(f"上证+{sh_chg:.2f}%(+3)")
+    elif sh_chg >= 0.5: recovery_score += 2; details.append(f"上证+{sh_chg:.2f}%(+2)")
+    elif sh_chg >= 0: recovery_score += 1; details.append(f"上证{sh_chg:+.2f}%(+1)")
+    else: details.append(f"上证{sh_chg:+.2f}%(+0)")
+    
+    # 维度2: 深证成指涨跌幅（0-2分）
+    sz = idx.get("sz399001", {})
+    sz_chg = sz.get("change_pct", 0)
+    if sz_chg >= 2.0: recovery_score += 2; details.append(f"深证+{sz_chg:.2f}%(+2)")
+    elif sz_chg >= 0.5: recovery_score += 1; details.append(f"深证+{sz_chg:.2f}%(+1)")
+    else: details.append(f"深证{sz_chg:+.2f}%(+0)")
+    
+    # 维度3: 创业板涨跌幅（0-2分，创业板弹性更大）
+    cy = idx.get("sz399006", {})
+    cy_chg = cy.get("change_pct", 0)
+    if cy_chg >= 3.0: recovery_score += 2; details.append(f"创业板+{cy_chg:.2f}%(+2)")
+    elif cy_chg >= 1.0: recovery_score += 1; details.append(f"创业板+{cy_chg:.2f}%(+1)")
+    else: details.append(f"创业板{cy_chg:+.2f}%(+0)")
+    
+    # 维度4: 综合涨幅（0-3分，三指数平均涨幅打分）
+    avg_chg = (sh_chg + sz_chg + cy_chg) / 3
+    if avg_chg >= 2.0: recovery_score += 3; details.append(f"均涨幅+{avg_chg:.2f}%(+3)")
+    elif avg_chg >= 1.0: recovery_score += 2; details.append(f"均涨幅+{avg_chg:.2f}%(+2)")
+    elif avg_chg >= 0: recovery_score += 1; details.append(f"均涨幅{avg_chg:+.2f}%(+1)")
+    else: details.append(f"均涨幅{avg_chg:+.2f}%(+0)")
+    
+    # 根据修复评分决定策略
+    print(f"  修复评分: {recovery_score}/10 | {' | '.join(details)}")
+    
+    if recovery_score >= 7:
+        market_condition = "强市(有力修复)"
+        position_pct = 40
+        print(f"  ✅ 修复有力 → 仓位40% 正常筛选")
+        record_step_status("步骤2A: 修复监测", "OK", f"修复评分{recovery_score}/10 有力修复 仓位40%")
+    elif recovery_score >= 4:
+        market_condition = "震荡(修复中)"
+        position_pct = 25
+        print(f"  ⚠️ 修复中 → 仓位25% 谨慎筛选")
+        record_step_status("步骤2A: 修复监测", "WARN", f"修复评分{recovery_score}/10 修复中 仓位25%")
+    else:
+        market_condition = "弱市(修复无力)"
+        position_pct = 20
+        print(f"  ⚠️ 修复无力 → 仓位20% 保守筛选")
+        record_step_status("步骤2A: 修复监测", "WARN", f"修复评分{recovery_score}/10 修复无力 仓位20%")
+    
+    _clear_extreme_flag()
+    return False  # 不跳过筛选，继续执行
 
 # ============================================================
 # 步骤3-3A：外围市场（保留新浪，腾讯无美股）
@@ -4835,6 +4943,8 @@ def main():
     print("\n[步骤2] 极端行情...")
     if step2_extreme_market(): print("  极端行情跳过"); record_step_status("步骤2: 极端行情", "SKIP", "触发极端行情保护"); return
     record_step_status("步骤2: 极端行情", "OK")
+
+    print("\n[步骤2A] 修复监测..."); step2A_recovery_monitor()
 
     print("\n[步骤3] 外围市场..."); step3_external_markets()
     record_step_status("步骤3: 外围市场", "OK")
