@@ -73,7 +73,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.14.0"
+BUILTIN_VERSION = "v6.14.1"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -82,6 +82,7 @@ data_date = None; prediction_date = None; pred_yyyymmdd = None
 _CN_HOLIDAYS_2026 = [
     "2026-01-01","2026-01-02","2026-02-16","2026-02-17","2026-02-18","2026-02-19","2026-02-20",
     "2026-04-06","2026-05-01","2026-06-19","2026-06-20","2026-06-21",
+    "2026-09-25",  # v6.14.1: 补全中秋节休市
     "2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07"
 ]
 file_version = BUILTIN_VERSION; params = {}

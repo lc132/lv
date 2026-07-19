@@ -1,3 +1,4 @@
+- **v6.14.1**: 补全节假日——新增2026年中秋节休市日(9月25日)。2026-07-17极端行情(上证-3.05%)触发筛选跳过，验证极端行情保护机制正常。
 - **v6.14.0**: 基本面PK体系升级+冠军深度分析注入——(1)F10数据采集新增8个字段 (2)PK维度重构为基本面+技术面融合7维度 (3)冠军始终进入个股深度分析：MD/HTML输出阶段检测冠军是否在TOP10内，若不在则自动调用generate_candidate_analysis生成深度分析并插入首位
 - **v6.13.55**: 漏洞修复——(1)lib/sync.py GITHUB_TOKEN改用GIT_ASKPASS(防进程列表泄露) (2)lib/core.py BUILTIN_VERSION统一到v6.13.55 (3)清理~100行连接池死代码(_CONN_POOL/_PooledResponse) (4)_run_screening_with_retry中OSError判断改用isinstance替代字符串匹配
 - **v6.13.54**: 同策略PK评分修复——(1)lookup_industry增加缓存自动加载：缓存为空时自动调用_load_industry_cache()，防止回退到不准确的代码段映射(INDUSTRY_MAP)导致heat维度为0 (2)MD报告同策略PK显示胜者得分+败方得分 (3)HTML报告同策略PK败方增加得分
@@ -24,9 +25,9 @@
 - **v6.13.23**: 修复回测"无数据"标的 — _fetch_kline_range增加重试(2次)+三级兜底(宽泛日期lmt=30)，run_backtest增加跨日期K线复用逻辑，4只无数据标的全部消除
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.14.0)。基于前一日收盘数据，通过37步筛选流程，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度（成长性/盈利能力/估值水位/资产质量/现金流/筹码/板块热度）。
+description: A股每日盘前短线标的智能筛选(v6.14.1)。基于前一日收盘数据，通过37步筛选流程，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度（成长性/盈利能力/估值水位/资产质量/现金流/筹码/板块热度）。
 ---
-# A股盘前短线标的筛选 v6.14.0
+# A股盘前短线标的筛选 v6.14.1
 
 ## 版本历史
 - **v6.13.23**: 修复HTML回测数据显示为0的Bug — metrics从bt["metrics"]读取(原错误从bt顶层读取)，profit_factor键名修正，strategy_metrics从dict迭代(原错误用list)  
