@@ -331,6 +331,9 @@ def generate_candidate_analysis(c, kline_data, idx, total):
     summary = _build_summary(strat, sname, score, conf, plr, change_pct, industry, main_in, r7d, close, high60, low60, has_kline)
 
     return {
+        'code': code,
+        'name': name,
+        'strategy': strat,
         'strategy_logic': strategy_logic,
         'technical': technical,
         'capital': capital,
