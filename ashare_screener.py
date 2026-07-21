@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.16.0
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数API(v6.16.0)
+A股每日盘前短线标的智能筛选 v6.16.1
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -73,7 +73,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.0"
+BUILTIN_VERSION = "v6.16.1"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -150,55 +150,79 @@ def _fetch_cls_telegraphs(pages=3):
     return all_items
 
 # v6.16.0: 麦蕊智数API封装
-def _mairui_longhubang_daily(licence=None):
-    """获取当日龙虎榜全量数据"""
+# 跌停/涨停股池缓存（单次运行内复用）
+_mairui_dt_cache = None
+_mairui_zt_cache = None
+
+def _mairui_fetch_dt_pool(date_str=None, licence=None):
+    """获取跌停股池（利空检测用）"""
+    global _mairui_dt_cache
+    if _mairui_dt_cache is not None: return _mairui_dt_cache
+    if licence is None: licence = MAIRUI_LICENCE
+    if not licence: return []
+    if date_str is None:
+        if beijing_date is None: return []
+        date_str = beijing_date
+    try:
+        url = f'https://api.mairuiapi.com/hslt/dtgc/{date_str}/{licence}'
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.mairui.club/'})
+        with _http_retry(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            _mairui_dt_cache = data if isinstance(data, list) else data.get('data', [])
+            return _mairui_dt_cache
+    except Exception: return []
+
+def _mairui_fetch_zt_pool(date_str=None, licence=None):
+    """获取涨停股池（TOP10增强用）"""
+    global _mairui_zt_cache
+    if _mairui_zt_cache is not None: return _mairui_zt_cache
+    if licence is None: licence = MAIRUI_LICENCE
+    if not licence: return []
+    if date_str is None:
+        if beijing_date is None: return []
+        date_str = beijing_date
+    try:
+        url = f'https://api.mairuiapi.com/hslt/ztgc/{date_str}/{licence}'
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.mairui.club/'})
+        with _http_retry(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            _mairui_zt_cache = data if isinstance(data, list) else data.get('data', [])
+            return _mairui_zt_cache
+    except Exception: return []
+
+def _mairui_longhubang_for_top10(code):
+    """v6.16.1: 麦蕊涨停股池格式化(TOP10增强用)"""
+    if not MAIRUI_LICENCE: return ''
+    try:
+        zt_pool = _mairui_fetch_zt_pool()
+        if not zt_pool: return ''
+        for item in zt_pool:
+            item_code = str(item.get('dm', '') or '')
+            if code != item_code: continue
+            zf = item.get('zf', 0) or 0
+            fbt = item.get('fbt', '') or ''
+            lbc = item.get('lbc', 0) or 0
+            fbt_str = f'封板{fbt}' if fbt else ''
+            lbc_str = f'{lbc}连板' if lbc and lbc > 1 else ''
+            parts = [p for p in [f'涨停+{zf:.1f}%', fbt_str, lbc_str] if p]
+            return ' '.join(parts)
+        return ''
+    except Exception: return ''
+
+def _mairui_announcements(code, licence=None):
+    """v6.16.0: 获取个股最新公告"""
     if licence is None: licence = MAIRUI_LICENCE
     if not licence: return None
     try:
-        url = f'{MAIRUI_BASE}/hilh/mrxq/{licence}'
+        url = f'https://a.mairuiapi.com/hsstock/announcement/{code}/{licence}'
         req = urllib.request.Request(url, headers={
             'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.mairui.club/'})
         with _http_retry(req, timeout=10) as resp:
             data = json.loads(resp.read().decode('utf-8'))
             return data if isinstance(data, list) else data.get('data', data.get('result', []))
     except Exception: return None
-
-def _mairui_announcements(code, licence=None):
-        """获取个股最新公告"""
-        if licence is None: licence = MAIRUI_LICENCE
-        if not licence: return None
-        try:
-            url = f'{MAIRUI_BASE_V2}/hsstock/announcement/{code}/{licence}'
-            req = urllib.request.Request(url, headers={
-                'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.mairui.club/'})
-            with _http_retry(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
-                return data if isinstance(data, list) else data.get('data', data.get('result', []))
-        except Exception: return None
-
-def _mairui_longhubang_for_top10(code):
-    """v6.16.0: 麦蕊龙虎榜格式化(TOP10增强用)"""
-    if not MAIRUI_LICENCE: return ''
-    try:
-        lhb_data = _mairui_longhubang_daily()
-        if not lhb_data: return ''
-        for item in lhb_data:
-            item_code = str(item.get('code', '') or item.get('dm', '') or '')
-            if code not in item_code: continue
-            lh_date = str(item.get('date', '') or item.get('tdate', '') or '')[:10]
-            net_amt = item.get('net', item.get('jme', 0)) or 0
-            if isinstance(net_amt, str):
-                try: net_amt = float(net_amt)
-                except: net_amt = 0
-            lh_dir = '净买入' if net_amt > 0 else '净卖出'
-            lh_abs = abs(net_amt)
-            if lh_abs >= 100000000:
-                lh_amt_str = f'{lh_abs/1e8:.1f}亿'
-            else:
-                lh_amt_str = f'{lh_abs/1e4:.0f}万'
-            return f'{lh_date} {lh_dir} {lh_amt_str}'
-        return ''
-    except Exception: return ''
 
 # v6.13.11: 步骤执行状态追踪
 def record_step_status(step_name, status, detail=""):
@@ -3167,26 +3191,19 @@ def step18_news_screening(candidates):
             _src_status['cls']['fail'] += 1
             return None
     
-    def _check_mairui_lhb(code, name):
-        """v6.16.0: 麦蕊龙虎榜利空检测 — 净卖出>1000万或机构/游资卖出"""
+    def _check_mairui_dt(code, name):
+        """v6.16.1: 麦蕊跌停股池检测 — 个股是否在今日跌停列表中"""
         if not MAIRUI_LICENCE: return None
         try:
-            lhb_data = _mairui_longhubang_daily()
-            if not lhb_data: return None
-            for item in lhb_data:
-                item_code = str(item.get('code', '') or item.get('dm', '') or '')
-                item_name = str(item.get('name', '') or item.get('mc', '') or '')
-                if code not in item_code and name not in item_name: continue
-                net_amt = item.get('net', item.get('jme', 0)) or 0
-                if isinstance(net_amt, str):
-                    try: net_amt = float(net_amt)
-                    except: net_amt = 0
-                if net_amt < 0 and abs(net_amt) > 10000000:
-                    return ('mairui_lhb', f'龙虎榜净卖出{abs(net_amt)/1e8:.1f}亿')
-                explanation = str(item.get('explanation', '') or item.get('sm', '') or '')
-                if '机构卖出' in explanation or '游资卖出' in explanation:
-                    return ('mairui_lhb', '龙虎榜机构/游资卖出')
-                return None
+            dt_pool = _mairui_fetch_dt_pool()
+            if not dt_pool: return None
+            for item in dt_pool:
+                item_code = str(item.get('dm', '') or '')
+                if code == item_code:
+                    zf = item.get('zf', 0) or 0
+                    lbc = item.get('lbc', 0) or 0
+                    lbc_str = f'连续{lbc}天' if lbc and lbc > 1 else ''
+                    return ('mairui_dt', f'跌停{zf:.1f}%{lbc_str}')
             return None
         except Exception: return None
     
@@ -3197,7 +3214,7 @@ def step18_news_screening(candidates):
             anns = _mairui_announcements(code)
             if not anns: return None
             for ann in anns:
-                title = str(ann.get('title', '') or ann.get('bt', '') or '')
+                title = str(ann.get('zt', '') or ann.get('title', '') or '')
                 for kw in NEGATIVE_KW:
                     if kw in title and not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
                         return ('mairui_ann', kw)
@@ -3278,7 +3295,7 @@ def step18_news_screening(candidates):
     ]
     # v6.16.0: 麦蕊智数源（需licence，无licence时自动跳过）
     if MAIRUI_LICENCE:
-        _checkers.append(_check_mairui_lhb)  # 龙虎榜利空
+        _checkers.append(_check_mairui_dt)   # v6.16.1: 跌停股池利空
         _checkers.append(_check_mairui_ann)  # 公告利空
     
     for c in to_check:
@@ -3375,10 +3392,10 @@ def step18B_top10_enrichment(candidates):
         c['_news_positive'] = ''
         c['_announcement'] = ''
         
-        # ── 龙虎榜 (v6.16.0: 麦蕊优先, datacenter-web备选) ──
+        # ── 涨停/龙虎榜 (v6.16.1: 麦蕊涨停股池优先, datacenter-web备选) ──
         try:
             lh_result = ''
-            # v6.16.0: 优先使用麦蕊智数龙虎榜API
+            # v6.16.1: 优先使用麦蕊智数涨停股池API
             if MAIRUI_LICENCE:
                 lh_result = _mairui_longhubang_for_top10(code)
             # 备选: datacenter-web (原datacenter已失效)
