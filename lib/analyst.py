@@ -238,7 +238,7 @@ def generate_candidate_analysis(c, kline_data, idx, total):
     个股深度分析
     对单个候选标的进行策略逻辑、技术面、资金面、基本面、风险、操作建议的综合研判。
 
-    返回: dict with keys: strategy_logic, technical, capital, fundamental, risk, suggestion, summary
+    返回: dict with keys: code, name, strategy, strategy_logic, technical, capital, fundamental, risk, suggestion, summary
     """
     code = c.get('code', '')
     name = c.get('name', '')
@@ -760,9 +760,6 @@ def generate_ai_report(final_candidates, kline_data, index_data, market_conditio
     report['candidate_analyses'] = []
     for i, c in enumerate(top10):
         analysis = generate_candidate_analysis(c, kline_data, i + 1, len(top10))
-        analysis['code'] = c.get('code', '')
-        analysis['name'] = c.get('name', '')
-        analysis['strategy'] = c.get('strategy', '?')
         report['candidate_analyses'].append(analysis)
 
     return report

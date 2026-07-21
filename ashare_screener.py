@@ -100,6 +100,13 @@ def _load_credential(env_key, file_path, fallback=""):
     return fallback
 
 GITHUB_TOKEN = _load_credential("GITHUB_TOKEN", "/workspace/.github_token")
+
+# --- v6.15.3: Token/Webhook 格式校验
+if GITHUB_TOKEN and not (GITHUB_TOKEN.startswith("ghp_") or GITHUB_TOKEN.startswith("github_pat_")):
+    log_alert("WARNING", "凭证校验", "GITHUB_TOKEN格式异常，推送可能失败")
+if FEISHU_WEBHOOK and not FEISHU_WEBHOOK.startswith("https://open.feishu.cn/open-apis/bot/v2/hook/"):
+    log_alert("WARNING", "凭证校验", "FEISHU_WEBHOOK格式异常，推送可能失败")
+
 FEISHU_WEBHOOK = _load_credential("FEISHU_WEBHOOK", "/workspace/.feishu_webhook")
 
 # v6.13.11: 步骤执行状态追踪
@@ -449,9 +456,7 @@ def _git_with_token(cmd_args, timeout=30, check=True, log_prefix=""):
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write('#!/bin/bash\necho "$GIT_TOKEN"\n')
         os.chmod(askpass_script, 0o700)
-        env = os.environ.copy()
-        env['GIT_ASKPASS'] = askpass_script
-        env['GIT_TOKEN'] = GITHUB_TOKEN
+        env = {'PATH': os.environ.get('PATH', ''), 'HOME': os.environ.get('HOME', ''), 'GIT_ASKPASS': askpass_script, 'GIT_TOKEN': GITHUB_TOKEN}
         result = subprocess.run(cmd_args, capture_output=True, text=True, timeout=timeout, env=env, check=check)
         return result
     finally:
@@ -522,7 +527,8 @@ def _write_extreme_flag(date_str, price, chg_pct, tag):
     try:
         with open(_EXTREME_FLAG_FILE, 'w', encoding='utf-8') as f:
             json.dump({"date": date_str, "price": price, "change_pct": chg_pct, "tag": tag}, f, ensure_ascii=False)
-    except Exception: pass
+    except Exception as e:
+        log_alert("WARNING", "极端行情标记", f"写入失败: {e}")
 
 def _read_extreme_flag():
     """读取极端行情标记，返回dict或None"""
@@ -3240,7 +3246,8 @@ def step18B_top10_enrichment(candidates):
                         lh_amt_str = f'{lh_abs:.0f}万'
                     c['_longhu'] = f'{lh_date} {lh_dir} {lh_amt_str}'
                     tot_lh += 1
-        except (urllib.error.URLError, json.JSONDecodeError, OSError): pass
+        except (urllib.error.URLError, json.JSONDecodeError, OSError):
+            _news_fail_count += 1
         
         # ── 正面新闻 ──
         try:
@@ -3260,7 +3267,8 @@ def step18B_top10_enrichment(candidates):
                 if pos_titles:
                     c['_news_positive'] = '; '.join(pos_titles)
                     tot_news += 1
-        except (urllib.error.URLError, json.JSONDecodeError, OSError): pass
+        except (urllib.error.URLError, json.JSONDecodeError, OSError):
+            _news_fail_count += 1
         
         # ── 公司公告（v6.9.52）──
         try:
@@ -3294,7 +3302,8 @@ def step18B_top10_enrichment(candidates):
                 if pos_anns:
                     c['_announcement'] = '; '.join(pos_anns)
                     tot_ann += 1
-        except (urllib.error.URLError, json.JSONDecodeError, OSError): pass
+        except (urllib.error.URLError, json.JSONDecodeError, OSError):
+            _news_fail_count += 1
     
     log_alert("INFO", "TOP10增强", f"龙虎榜{tot_lh}/10 正面新闻{tot_news}/10 公司公告{tot_ann}/10")
 
@@ -3544,6 +3553,8 @@ def _compute_pl_ratios(candidates, sector_limit_up=None):
     for c in candidates:
         s = c.get('strategy', '?')
         entry = calc_entry_price(c)
+        if s not in _STRATEGY_STOP_LOSS:
+            log_alert("WARNING", "策略参数", f"{code} 未知策略{s!r}，使用默认止损/止盈")
         sl = round(entry * _STRATEGY_STOP_LOSS.get(s, 0.96), 2)
         tp = round(entry * _STRATEGY_TAKE_PROFIT.get(s, 1.05), 2)
         pl_ratio = round((tp - entry) / max(entry - sl, 0.01), 2)
@@ -4030,7 +4041,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         for ca in analyses:
             code = ca.get('code', '')
             crown = "👑 " if code == champion_code else ""
-            lines.append(f"### {crown}{ca.get('code', '')} {ca.get('name', '')}（{ca.get('strategy', '')}）")
+            strategy = ca.get('strategy', '?')
+            lines.append(f"### {crown}{code} {ca.get('name', '')}（{strategy}）")
             lines.append("")
             lines.append(ca.get('summary', ''))
             lines.append("")
@@ -4341,7 +4353,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
                 try:
                     champion_analysis_html = generate_candidate_analysis(champion_candidate_html, kline_data or {}, 0, len(candidates))
                     html_analyses.insert(0, champion_analysis_html)
-                except Exception: pass
+                except Exception as e:
+                    log_alert("WARNING", "深度分析", f"HTML冠军 {champion_candidate_html.get('name','')}({champion_code_html}) 注入失败: {e}")
         for ci, ca in enumerate(html_analyses, 1):
             code = ca.get('code', '')
             name = ca.get('name', '')
@@ -4351,6 +4364,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
     <span class="ai-rank">#{ci}</span>
     {crown_html}<span class="ai-name">{html.escape(name)}</span>
     <span class="ai-code">{code}</span>
+    <span class="ai-strategy">{ca.get('strategy', '?')}</span>
 </div>
 <div class="ai-stock-card-body">'''
             for key, label, css_cls in dim_config:
