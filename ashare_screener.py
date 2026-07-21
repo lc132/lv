@@ -100,14 +100,13 @@ def _load_credential(env_key, file_path, fallback=""):
     return fallback
 
 GITHUB_TOKEN = _load_credential("GITHUB_TOKEN", "/workspace/.github_token")
+FEISHU_WEBHOOK = _load_credential("FEISHU_WEBHOOK", "/workspace/.feishu_webhook")
 
 # --- v6.15.3: Token/Webhook 格式校验
 if GITHUB_TOKEN and not (GITHUB_TOKEN.startswith("ghp_") or GITHUB_TOKEN.startswith("github_pat_")):
     log_alert("WARNING", "凭证校验", "GITHUB_TOKEN格式异常，推送可能失败")
 if FEISHU_WEBHOOK and not FEISHU_WEBHOOK.startswith("https://open.feishu.cn/open-apis/bot/v2/hook/"):
     log_alert("WARNING", "凭证校验", "FEISHU_WEBHOOK格式异常，推送可能失败")
-
-FEISHU_WEBHOOK = _load_credential("FEISHU_WEBHOOK", "/workspace/.feishu_webhook")
 
 # v6.16.0: 麦蕊智数API配置（免费版500次/天, 需注册获取licence）
 # 注册地址: https://www.mairui.club/gratis (需手机号+短信验证码)
@@ -1641,6 +1640,8 @@ HARDCODED_INDUSTRY = {
     '603683': '基础化工',  # 晶华新材（胶粘材料/功能性薄膜，在603600-603699段但非轻工制造）
     '000725': '电子',      # 京东方A（半导体显示面板，在000700-000799段但非钢铁）
     '600999': '非银金融',  # 招商证券（证券公司，在600900-600999段但非银行）
+    # v6.16.2: 行业修正
+    '002739': '传媒',      # 万达电影/儒意电影（影视传媒，在002700-002799段但非机械设备）
 }
 
 # ============================================================
@@ -3383,7 +3384,7 @@ def step18B_top10_enrichment(candidates):
                        '终止', '取消', '撤销', '暂停', '亏损', '预亏', '未通过', '否决',
                        '破产', '清算', '重整', '无法表示意见', '保留意见']
     
-    tot_lh = 0; tot_news = 0; tot_ann = 0
+    tot_lh = 0; tot_news = 0; tot_ann = 0; _news_fail_count = 0
     for c in top10:
         code = c.get('code', '')
         name = c.get('name', '')
