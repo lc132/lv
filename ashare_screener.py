@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.16.1
+A股每日盘前短线标的智能筛选 v6.16.3
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -73,7 +73,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.1"
+BUILTIN_VERSION = "v6.16.3"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -3033,10 +3033,11 @@ def step18_news_screening(candidates):
     ]
     
     # v6.13.11: 源级别状态追踪
-    _src_status = {'eastmoney': {'ok': 0, 'fail': 0}, 'bing': {'ok': 0, 'fail': 0},
+    # v6.16.3: 精简源状态，移除废弃的eastmoney和xueqiu
+    _src_status = {'bing': {'ok': 0, 'fail': 0},
                    'baidu': {'ok': 0, 'fail': 0}, 'cninfo': {'ok': 0, 'fail': 0},
-                   'cls': {'ok': 0, 'fail': 0}, 'xueqiu': {'ok': 0, 'fail': 0},
-                   'mairui': {'ok': 0, 'fail': 0}}  # v6.16.0
+                   'cls': {'ok': 0, 'fail': 0},
+                   'mairui': {'ok': 0, 'fail': 0}}
     
     def _check_eastmoney(code, name):
         try:
@@ -3285,14 +3286,12 @@ def step18_news_screening(candidates):
         c['_news_skip_reason'] = '评分不足前30'
     passed.extend(skip)
     
-    # v6.16.0: 主源+备选源，含麦蕊(需licence)+CLS电报v2
+    # v6.16.3: 精简为5稳定源——移除东方财富(403/404)和雪球(缓存全失败)
     _checkers = [
-        _check_eastmoney_jsonp,  # 东方财富公告API (push2已废弃)
-        _check_bing,        # 主: Bing搜索
+        _check_cninfo,      # 主: 巨潮资讯（法定信披，最稳定）
+        _check_cls_v2,      # 主: CLS电报v2（批量拉取90条本地搜索）
+        _check_bing,        # 备: Bing搜索
         _check_baidu,       # 备: 百度搜索
-        _check_cninfo,      # 主: 巨潮资讯
-        _check_cls_v2,      # v6.16.0: CLS电报v2 (替换禁用版)
-        _check_xueqiu,      # 备: 雪球讨论
     ]
     # v6.16.0: 麦蕊智数源（需licence，无licence时自动跳过）
     if MAIRUI_LICENCE:
@@ -3425,20 +3424,24 @@ def step18B_top10_enrichment(candidates):
         except (urllib.error.URLError, json.JSONDecodeError, OSError):
             _news_fail_count += 1
         
-        # ── 正面新闻 ──
+        # ── 正面新闻（v6.16.3: push2已废弃，改用Bing搜索）──
         try:
-            news_url = f'https://push2.eastmoney.com/api/qt/stock/news/get?secid={market}.{code}&pageNum=1&pageSize=5&_={int(time.time()*1000)}'
+            query = f'{name} {code} 利好 业绩'
+            news_url = f'https://www.bing.com/search?q={urllib.parse.quote(query)}'
             req = urllib.request.Request(news_url, headers={
-                'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.eastmoney.com/'})
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'Accept-Language': 'zh-CN,zh;q=0.9'})
             with _http_retry(req, timeout=4) as resp:
-                news_data = json.loads(resp.read().decode('utf-8'))
-                news_list = news_data.get('data', {}).get('list', []) if isinstance(news_data, dict) else []
+                html_text = resp.read().decode('utf-8', errors='ignore')
                 pos_titles = []
-                for news in news_list:
-                    title = news.get('title', '')
-                    if any(kw in title for kw in POSITIVE_KW):  # v6.13.17: 使用全部28个关键词
-                        short = title[:20] + ('...' if len(title) > 20 else '')
-                        pos_titles.append(short)
+                for kw in POSITIVE_KW[:12]:  # 取前12个高频利好关键词
+                    if kw in html_text:
+                        kw_pos = html_text.find(kw)
+                        ctx = html_text[max(0,kw_pos-60):min(len(html_text),kw_pos+60)]
+                        if name in ctx or code in ctx:
+                            short = kw[:12]
+                            if short not in pos_titles:
+                                pos_titles.append(short)
                     if len(pos_titles) >= 2: break
                 if pos_titles:
                     c['_news_positive'] = '; '.join(pos_titles)
