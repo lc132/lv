@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.16.4
+A股每日盘前短线标的智能筛选 v6.16.5
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 20策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -73,7 +73,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.4"
+BUILTIN_VERSION = "v6.16.5"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -335,10 +335,10 @@ DEFAULT_PARAMS = {
 }
 
 # 模块级策略映射表（DRY：避免函数内重复定义）
-_STRATEGY_ORDER = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16, 'R': 17, 'S': 18, 'T': 19}
-_STRATEGY_NAMES = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破', 'R': '主力共振(强)', 'S': '主力共振(弱)', 'T': '主力观察'}
-_STRATEGY_COLORS = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4', 'G': '#10b981', 'H': '#f97316', 'I': '#14b8a6', 'J': '#ef4444', 'K': '#a855f7', 'L': '#eab308', 'M': '#f472b6', 'N': '#84cc16', 'O': '#38bdf8', 'P': '#fb923c', 'Q': '#22d3ee', 'R': '#dc2626', 'S': '#f97316', 'T': '#94a3b8'}
-_STRATEGY_STOP_LOSS = {'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965, 'F': 0.965, 'G': 0.95, 'H': 0.94, 'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95, 'R': 0.95, 'S': 0.95, 'T': 0.94}
+_STRATEGY_ORDER = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16, 'R': 17, 'S': 18, 'T': 19, 'U': 20}
+_STRATEGY_NAMES = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破', 'R': '主力共振(强)', 'S': '主力共振(弱)', 'T': '主力观察', 'U': '涨停追击'}
+_STRATEGY_COLORS = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4', 'G': '#10b981', 'H': '#f97316', 'I': '#14b8a6', 'J': '#ef4444', 'K': '#a855f7', 'L': '#eab308', 'M': '#f472b6', 'N': '#84cc16', 'O': '#38bdf8', 'P': '#fb923c', 'Q': '#22d3ee', 'R': '#dc2626', 'S': '#f97316', 'T': '#94a3b8', 'U': '#ff3b3b'}
+_STRATEGY_STOP_LOSS = {'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965, 'F': 0.965, 'G': 0.95, 'H': 0.94, 'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95, 'R': 0.95, 'S': 0.95, 'T': 0.94, 'U': 0.93}
 _STRATEGY_TAKE_PROFIT = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06, 'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05, 'R': 1.05, 'S': 1.04, 'T': 1.04}
 
 def _tie_key(c):
@@ -2877,6 +2877,21 @@ def step13_strategy_match(candidates, kline_data=None):
                         if neck > 0 and close > neck * 1.005 and close > op:
                             if vr is not None and vr >= 1.2:
                                 s = "Q"; reason = f"W底突破:两底{l1:.2f}/{l2:.2f}+突破颈线{neck:.2f}+放量"; score = 9
+        # ── U 涨停追击（v6.16.5: 独立涨停策略，从信号过滤池直接筛选，不依赖其他策略）──
+        # 核心逻辑：寻找强动量+涨停基因+放量+小盘的特征股，独立于其他策略
+        if not s:
+            tc = c.get('total_cap', 0) or 0
+            kd_u = kline_data.get(c.get('code', ''), {})
+            lu_days = kd_u.get('limit_up_days', 0) if isinstance(kd_u, dict) else 0
+            # 涨停追击条件：涨幅3-9%(未封板)+量比≥1.5+换手≥3%+小盘<100亿+涨停基因+振幅>3%+收阳
+            if 3.0 <= chg <= 9.0 and vr is not None and vr >= 1.5 and to is not None and to >= 3.0:
+                if 0 < tc < 100 and lu_days >= 1 and amp is not None and amp > 3.0 and close > op:
+                    s = "U"; reason = f"涨停追击:涨{chg:.1f}%+{lu_days}板基因+量比{vr:.1f}+换手{to:.1f}%+小盘{tc:.0f}亿"; score = 9
+                    c['_lu_gene'] = lu_days  # 涨停基因标记
+                # 宽松条件：接近涨停(7-9%)+有涨停基因，放量即可
+                elif 7.0 <= chg <= 9.0 and lu_days >= 1 and vr is not None and vr >= 1.2 and close > op:
+                    s = "U"; reason = f"涨停追击(宽松):涨{chg:.1f}%+{lu_days}板基因+量比{vr:.1f}"; score = 7
+                    c['_lu_gene'] = lu_days
         # ── R/S/T 主力共振（v6.10.0: 多因子共振模型，底仓+起爆双重确认）──
         if not s:
             pos_score = compute_main_force_position(kline_data, c)
@@ -2936,6 +2951,7 @@ def step14_scoring(candidates, kline_data=None):
         elif s == 'O': cs = max(0, 1.0 - abs(chg) / 1.5)
         elif s == 'P': cs = max(0, 1.0 - abs(chg - 3) / 4.0)
         elif s == 'Q': cs = max(0, 1.0 - abs(chg - 3) / 3.0)
+        elif s == 'U': cs = max(0, 1.0 - abs(chg - 5) / 5.0)  # v6.16.5: 涨停追击，最优涨幅5%
         else: cs = 0.5
         amp = c.get('amplitude', 0) or 0
         ma_bonus = 0.05 if amp < 3 and vr > 1.2 else 0
@@ -4278,17 +4294,19 @@ def _build_pk_html(pk_results):
     return '\n'.join(html_parts)
 
 # ============================================================
-# v6.16.4: 涨停预测 — 基于多因子评分预测明日涨停概率
+# v6.16.5: 涨停预测 — 从信号过滤池独立筛选，不依赖最终结果
 # ============================================================
-def _predict_limit_up(candidates, kline_data, sector_limit_up, flow_data):
-    """多因子涨停预测模型：对最终候选池评分，返回TOP15预测列表"""
-    if not candidates:
+def _predict_limit_up(signal_pool, kline_data, sector_limit_up, final_candidates):
+    """独立涨停预测：从信号过滤池(~148只)中按涨停潜力评分，不依赖最终筛选结果。
+       同时纳入最终池中的Strategy U标的，返回TOP15预测列表。"""
+    if not signal_pool:
         return []
     
     predictions = []
     sector_heat = sector_limit_up or {}
+    final_codes = {c.get('code') for c in (final_candidates or [])}
     
-    for c in candidates:
+    for c in signal_pool:
         code = c.get('code', '')
         name = c.get('name', '')
         strategy = c.get('strategy', '?')
@@ -4298,49 +4316,91 @@ def _predict_limit_up(candidates, kline_data, sector_limit_up, flow_data):
         turnover = c.get('turnover') or 0
         total_cap = c.get('total_cap') or 0
         industry = _industry_str(c)
-        score = c.get('score', 0)
-        confidence = c.get('confidence', '★')
+        close = c.get('close', 0); op = c.get('open', 0)
         
-        # 因子1: 当日涨幅 — 强势股更容易涨停 (0-30分)
-        chg_factor = min(30, max(0, (change_pct + 3) * 3))  # 涨3%→18分, 涨7%→30分
+        # ── 硬性门槛：必须满足基本条件才进入预测 ──
+        if change_pct < 1.0:    # 涨幅<1%无涨停动能
+            continue
+        if change_pct >= 9.5:   # 已封板不追
+            continue
+        if close <= op:         # 收阴排除
+            continue
+        if total_cap <= 0:      # 无市值数据跳过
+            continue
         
-        # 因子2: 近期涨停天数 — 涨停基因 (0-20分)
+        # ── 因子1: 当日涨幅 (0-30分) —— 涨停核心驱动力 ──
+        chg_factor = min(30, max(0, (change_pct - 1) * 4))  # 涨5%→16分, 涨8.5%→30分
+        
+        # ── 因子2: 涨停基因 (0-25分) —— 近期涨停天数 ──
         kd = kline_data.get(code, {}) if kline_data else {}
         limit_up_days = kd.get('limit_up_days', 0) if isinstance(kd, dict) else 0
-        lu_factor = min(20, limit_up_days * 10)
+        if limit_up_days >= 3: lu_factor = 25
+        elif limit_up_days >= 2: lu_factor = 20
+        elif limit_up_days >= 1: lu_factor = 12
+        else: lu_factor = 0
         
-        # 因子3: 量比 — 放量代表资金关注 (0-15分)
-        vol_factor = min(15, max(0, (volume_ratio - 0.8) * 10))
+        # ── 因子3: 量比 (0-12分) —— 放量程度 ──
+        if volume_ratio >= 3.0: vol_factor = 12
+        elif volume_ratio >= 2.0: vol_factor = 9
+        elif volume_ratio >= 1.5: vol_factor = 6
+        elif volume_ratio >= 1.0: vol_factor = 3
+        else: vol_factor = 0
         
-        # 因子4: 换手率 — 活跃度 (0-10分)
-        to_factor = min(10, max(0, turnover * 2))
+        # ── 因子4: 换手率 (0-8分) —— 活跃度 ──
+        if turnover >= 10: to_factor = 8
+        elif turnover >= 5: to_factor = 6
+        elif turnover >= 3: to_factor = 4
+        elif turnover >= 1: to_factor = 2
+        else: to_factor = 0
         
-        # 因子5: 流通市值 — 小盘更容易涨停 (0-10分)
-        cap_factor = 10 if total_cap > 0 and total_cap < 100 else (7 if total_cap < 300 else (4 if total_cap < 500 else 1))
+        # ── 因子5: 流通市值 (0-10分) —— 小盘易涨停 ──
+        if 0 < total_cap < 50: cap_factor = 10
+        elif total_cap < 100: cap_factor = 8
+        elif total_cap < 200: cap_factor = 5
+        elif total_cap < 500: cap_factor = 2
+        else: cap_factor = 0
         
-        # 因子6: 板块热度 — 板块涨停家数越多越容易联动 (0-10分)
+        # ── 因子6: 板块热度 (0-8分) —— 板块涨停家数联动 ──
         sh = sector_heat.get(industry, 0)
-        heat_factor = min(10, sh * 3)
+        heat_factor = min(8, sh * 2)
         
-        # 因子7: 振幅 — 高振幅代表分歧大但也可能冲板 (0-5分)
-        amp_factor = min(5, max(0, amplitude - 3))
+        # ── 因子7: 振幅 (0-7分) —— 高振幅代表博弈激烈，可能冲板 ──
+        if amplitude >= 8: amp_factor = 7
+        elif amplitude >= 5: amp_factor = 5
+        elif amplitude >= 3: amp_factor = 3
+        else: amp_factor = 1
         
         total_score = chg_factor + lu_factor + vol_factor + to_factor + cap_factor + heat_factor + amp_factor
         
-        # 策略加成: 动量延续、横盘突破更容易涨停
-        strategy_bonus = {'A': 5, 'G': 3, 'I': 2, 'M': 3, 'N': 2}.get(strategy, 0)
-        total_score += strategy_bonus
+        # ── 策略加成 ──
+        if strategy == 'U': total_score += 8         # 涨停追击本身
+        elif strategy == 'A': total_score += 5        # 动量延续
+        elif strategy == 'G': total_score += 3        # 横盘突破
+        elif strategy == 'N': total_score += 3        # 新高突破
+        elif strategy == 'M': total_score += 2        # 涨停回调
         
-        # 构建理由
+        # ── 最终池加成：在最终池中的标的+3分（已通过严格筛选） ──
+        if code in final_codes:
+            total_score += 3
+        
+        # ── 门槛：总分<25不纳入预测 ──
+        if total_score < 25:
+            continue
+        
+        # ── 构建理由 ──
         reasons = []
-        if change_pct >= 5: reasons.append(f"强势+{change_pct:.1f}%")
-        elif change_pct >= 3: reasons.append(f"涨幅+{change_pct:.1f}%")
+        if change_pct >= 7: reasons.append(f"强势+{change_pct:.1f}%")
+        elif change_pct >= 5: reasons.append(f"涨幅+{change_pct:.1f}%")
+        elif change_pct >= 3: reasons.append(f"温和+{change_pct:.1f}%")
         if limit_up_days >= 2: reasons.append(f"近10日{limit_up_days}板")
         elif limit_up_days >= 1: reasons.append("涨停基因")
-        if volume_ratio >= 1.5: reasons.append(f"放量{volume_ratio:.1f}倍")
-        if total_cap > 0 and total_cap < 100: reasons.append(f"小盘{total_cap:.0f}亿")
+        if volume_ratio >= 2.0: reasons.append(f"爆量{volume_ratio:.1f}倍")
+        elif volume_ratio >= 1.5: reasons.append(f"放量{volume_ratio:.1f}倍")
+        if total_cap > 0 and total_cap < 50: reasons.append(f"微盘{total_cap:.0f}亿")
+        elif total_cap < 100: reasons.append(f"小盘{total_cap:.0f}亿")
         if sh >= 3: reasons.append(f"板块{sh}家涨停")
-        if strategy_bonus > 0: reasons.append(f"{_STRATEGY_NAMES.get(strategy, strategy)}策略")
+        if strategy == 'U': reasons.append("涨停追击")
+        elif strategy != '?': reasons.append(f"{_STRATEGY_NAMES.get(strategy, strategy)}")
         
         predictions.append({
             'code': code, 'name': name, 'strategy': strategy,
@@ -4348,12 +4408,13 @@ def _predict_limit_up(candidates, kline_data, sector_limit_up, flow_data):
             'lu_score': total_score, 'lu_reasons': reasons,
             'limit_up_days': limit_up_days, 'volume_ratio': volume_ratio,
             'turnover': turnover, 'total_cap': total_cap,
-            'sector_heat': sh, 'score': score, 'confidence': confidence,
+            'sector_heat': sh, 'in_final': code in final_codes,
         })
     
-    # 排序取TOP15
     predictions.sort(key=lambda x: -x['lu_score'])
-    return predictions[:15]
+    top15 = predictions[:15]
+    log_alert("INFO", "涨停预测", f"从{len(signal_pool)}只信号池中筛选出{len(predictions)}只候选, TOP15")
+    return top15
 
 
 def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report=None, bt_lookup=None, kline_data=None, bt_result=None, pk_results=None, all_stocks=None, lu_predictions=None):
@@ -4711,6 +4772,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
                     <a href="{url}" target="_blank" class="lu-name">{html.escape(p['name'])}</a>
                     <span class="lu-code">{p['code']}</span>
                     <span class="badge {scl}">{p['strategy']}</span>
+                    {'<span class="lu-badge-final">✅最终池</span>' if p.get('in_final') else '<span class="lu-badge-indie">独立筛选</span>'}
                 </div>
                 <div class="lu-reasons">{reasons_str}</div>
                 <div class="lu-bar-track"><div class="lu-bar-fill {bar_cls}" style="width:{bar_pct:.0f}%"></div></div>
@@ -5007,6 +5069,9 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 .lu-bar-fill.lu-warm{{background:linear-gradient(90deg,#3b82f6,#06b6d4)}}
 .lu-stats{{display:flex;gap:.8rem;font-size:.7rem;color:#64748b;flex-wrap:wrap}}
 .lu-stats b{{color:#cbd5e1}}
+/* v6.16.5: 涨停预测独立筛选标签 */
+.lu-badge-final{{background:rgba(34,197,94,.15);color:#22c55e;font-size:.65rem;padding:1px 6px;border-radius:4px;border:1px solid rgba(34,197,94,.3)}}
+.lu-badge-indie{{background:rgba(139,92,246,.12);color:#a78bfa;font-size:.65rem;padding:1px 6px;border-radius:4px;border:1px solid rgba(139,92,246,.3)}}
 </style></head><body>
 <div class="header"><h1>A股短线标的筛选报告</h1><div class="sub">{prediction_date} | 规则版本 {file_version}</div></div>
 <div class="container">
@@ -5018,7 +5083,7 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 <div class="meta-card"><div class="label">建议仓位</div><div class="value">{position_pct}%</div></div>
 <div class="meta-card"><div class="label">最终推荐</div><div class="value">{fc}只</div></div></div>
 {market_overview_html}
-<section><h2>🔥 涨停预测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">多因子概率评分 | 仅供参考</span></h2>
+<section><h2>🔥 涨停预测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">从信号过滤池({asig}只)独立筛选 | 7因子评分 | 仅供参考</span></h2>
 {lu_html}
 </section>
 <section><h2>筛选管道</h2><div class="funnel">{funnel_html}</div></section>
@@ -5440,9 +5505,9 @@ def main():
     print("\n[步骤19B] 同策略PK..."); pk_results = step19b_strategy_pk(final, kline_data, bt_lookup, sector_limit_up, market_condition, index_data)
     record_step_status("步骤19B: 同策略PK", "OK", f"{sum(1 for v in pk_results.values() if v['count']>=2)}组对决")
 
-    # v6.16.4: 涨停预测
-    print("\n[步骤19C] 涨停预测..."); lu_predictions = _predict_limit_up(final, kline_data, sector_limit_up, flow_data)
-    record_step_status("步骤19C: 涨停预测", "OK", f"TOP{len(lu_predictions)}")
+    # v6.16.5: 涨停预测 — 从信号过滤池独立筛选，不依赖最终结果
+    print("\n[步骤19C] 涨停预测..."); lu_predictions = _predict_limit_up(asl, kline_data, sector_limit_up, final)
+    record_step_status("步骤19C: 涨停预测", "OK", f"从{asig}只信号池→TOP{len(lu_predictions)}")
 
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup, pk_results, kline_data)
     record_step_status("步骤20: Markdown", "OK", mp)
