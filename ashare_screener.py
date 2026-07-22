@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.16.8
+A股每日盘前短线标的智能筛选 v6.16.9
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 21策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -73,7 +73,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.8"
+BUILTIN_VERSION = "v6.16.9"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -1835,10 +1835,11 @@ def _fetch_single_kline_tencent(c):
         # 过滤掉非列表元素（如分红信息字典）
         bars = [b for b in qfqday if isinstance(b, list) and len(b) >= 6]
         # v6.13.42: qfq(前复权)对新股可能返回空数据，降级使用不复权数据
-        if not bars or len(bars) < 20:
+        if not bars or len(bars) < 5:
             day_data = data.get('data', {}).get(stock_key, {}).get('day', [])
             bars = [b for b in day_data if isinstance(b, list) and len(b) >= 6]
-        if not bars or len(bars) < 20:
+        # v6.16.9: 门槛从20降至5，新股(如惠科股份18天)可获取K线+计算days_listed触发硬排除
+        if not bars or len(bars) < 5:
             return {}
         # 腾讯格式: [date, open, close, high, low, volume]
         closes = [float(b[2]) for b in bars]
@@ -1889,13 +1890,12 @@ def _fetch_single_kline_tencent(c):
             'high20': high20, 'low20': low20,
             'high60': max(highs[-60:]) if len(highs) >= 60 else (max(highs) if highs else 0),
             'low60': min(lows[-60:]) if len(lows) >= 60 else (min(lows) if lows else 0),
-            'days_listed': 999, 'limit_up_days': 0,
+            'days_listed': len(bars) if bars else 999, 'limit_up_days': 0,  # v6.16.9: 计算真实上市天数
             'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes
         }
     except (urllib.error.URLError, json.JSONDecodeError, OSError,
             ValueError, TypeError, ZeroDivisionError, IndexError):
         return {}
-
 
 def _fetch_single_kline_eastmoney(c):
     """v6.13.42: 东方财富HTTP单股K线降级（腾讯HTTP失败时的单股补救）
@@ -1916,7 +1916,7 @@ def _fetch_single_kline_eastmoney(c):
         with _http_retry(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
         klines = data.get('data', {}).get('klines', [])
-        if not klines or len(klines) < 20:
+        if not klines or len(klines) < 5:  # v6.16.9: 门槛从20降至5
             return {}
         # 东方财富格式: "date,open,close,high,low,volume,amount,amplitude,change_pct,change,turnover"
         bars = []
@@ -1925,7 +1925,7 @@ def _fetch_single_kline_eastmoney(c):
             if len(parts) >= 6:
                 bars.append([parts[0], float(parts[1]), float(parts[2]),
                             float(parts[3]), float(parts[4]), float(parts[5])])
-        if len(bars) < 20:
+        if len(bars) < 5:  # v6.16.9: 门槛从20降至5
             return {}
         closes = [b[2] for b in bars]
         highs = [b[3] for b in bars]
@@ -2000,7 +2000,7 @@ def _fetch_single_kline_axdata(c):
             adjust="qfq",
             limit=60
         )
-        if kline is None or len(kline) < 20:
+        if kline is None or len(kline) < 5:  # v6.16.9: 门槛从20降至5
             return {}
         closes = kline['close'].tolist()
         highs = kline['high'].tolist()
