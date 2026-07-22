@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.16.7
+A股每日盘前短线标的智能筛选 v6.16.8
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 21策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -73,7 +73,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.7"
+BUILTIN_VERSION = "v6.16.8"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -562,21 +562,20 @@ def step0_get_beijing_time():
     log_alert("INFO", "北京时间", f"beijing={beijing_date} data={data_date} pred={prediction_date}")
 
 def _git_with_token(cmd_args, timeout=30, check=True, log_prefix=""):
-    """使用 GIT_ASKPASS 安全传递 Token，避免 Token 出现在进程列表中"""
-    import tempfile
-    askpass_script = None
-    try:
-        fd, askpass_script = tempfile.mkstemp(prefix='git_askpass_', suffix='.sh')
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            f.write('#!/bin/bash\necho "$GIT_TOKEN"\n')
-        os.chmod(askpass_script, 0o700)
-        env = {'PATH': os.environ.get('PATH', ''), 'HOME': os.environ.get('HOME', ''), 'GIT_ASKPASS': askpass_script, 'GIT_TOKEN': GITHUB_TOKEN}
-        result = subprocess.run(cmd_args, capture_output=True, text=True, timeout=timeout, env=env, check=check)
-        return result
-    finally:
-        if askpass_script and os.path.exists(askpass_script):
-            try: os.remove(askpass_script)
-            except OSError: pass
+    """v6.16.8: Token-in-URL直连认证，替代GIT_ASKPASS(沙箱不兼容)。
+    将 clone/push 中的 GitHub URL 替换为 https://TOKEN@github.com/... 格式，
+    修复 GIT_ASKPASS 在沙箱中不可用导致的 step0A/step26 全部失败和回测链接404。"""
+    new_args = []
+    is_push = any('push' in str(a) for a in cmd_args)
+    for arg in cmd_args:
+        # 替换 GitHub URL 为 Token-in-URL（clone/fetch）
+        if arg.startswith("https://github.com/") and "@github.com" not in arg and GITHUB_TOKEN:
+            arg = f"https://{GITHUB_TOKEN}@github.com/{arg.split('github.com/', 1)[1]}"
+        # push 命令中替换 origin 为 Token-in-URL
+        if arg == "origin" and is_push and GITHUB_TOKEN:
+            arg = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
+        new_args.append(arg)
+    return subprocess.run(new_args, capture_output=True, text=True, timeout=timeout, check=check)
 
 # ============================================================
 # 步骤0A：拉取持仓跟踪
