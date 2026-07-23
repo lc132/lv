@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.16.9
+A股每日盘前短线标的智能筛选 v6.16.10
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 21策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -73,7 +73,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.9"
+BUILTIN_VERSION = "v6.16.10"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -4294,131 +4294,7 @@ def _build_pk_html(pk_results):
         html_parts.append('</div></section>')
     return '\n'.join(html_parts)
 
-# ============================================================
-# v6.16.5: 涨停预测 — 从信号过滤池独立筛选，不依赖最终结果
-# ============================================================
-def _predict_limit_up(signal_pool, kline_data, sector_limit_up, final_candidates):
-    """独立涨停预测：从信号过滤池(~148只)中按涨停潜力评分，不依赖最终筛选结果。
-       同时纳入最终池中的Strategy U标的，返回TOP15预测列表。"""
-    if not signal_pool:
-        return []
-    
-    predictions = []
-    sector_heat = sector_limit_up or {}
-    final_codes = {c.get('code') for c in (final_candidates or [])}
-    
-    for c in signal_pool:
-        code = c.get('code', '')
-        name = c.get('name', '')
-        strategy = c.get('strategy', '?')
-        change_pct = c.get('change_pct', 0) or 0
-        amplitude = c.get('amplitude', 0) or 0
-        volume_ratio = c.get('volume_ratio') or 1.0
-        turnover = c.get('turnover') or 0
-        total_cap = c.get('total_cap') or 0
-        industry = _industry_str(c)
-        close = c.get('close', 0); op = c.get('open', 0)
-        
-        # ── 硬性门槛：必须满足基本条件才进入预测 ──
-        if change_pct < 1.0:    # 涨幅<1%无涨停动能
-            continue
-        if change_pct >= 9.5:   # 已封板不追
-            continue
-        if close <= op:         # 收阴排除
-            continue
-        if total_cap <= 0:      # 无市值数据跳过
-            continue
-        
-        # ── 因子1: 当日涨幅 (0-30分) —— 涨停核心驱动力 ──
-        chg_factor = min(30, max(0, (change_pct - 1) * 4))  # 涨5%→16分, 涨8.5%→30分
-        
-        # ── 因子2: 涨停基因 (0-25分) —— 近期涨停天数 ──
-        kd = kline_data.get(code, {}) if kline_data else {}
-        limit_up_days = kd.get('limit_up_days', 0) if isinstance(kd, dict) else 0
-        if limit_up_days >= 3: lu_factor = 25
-        elif limit_up_days >= 2: lu_factor = 20
-        elif limit_up_days >= 1: lu_factor = 12
-        else: lu_factor = 0
-        
-        # ── 因子3: 量比 (0-12分) —— 放量程度 ──
-        if volume_ratio >= 3.0: vol_factor = 12
-        elif volume_ratio >= 2.0: vol_factor = 9
-        elif volume_ratio >= 1.5: vol_factor = 6
-        elif volume_ratio >= 1.0: vol_factor = 3
-        else: vol_factor = 0
-        
-        # ── 因子4: 换手率 (0-8分) —— 活跃度 ──
-        if turnover >= 10: to_factor = 8
-        elif turnover >= 5: to_factor = 6
-        elif turnover >= 3: to_factor = 4
-        elif turnover >= 1: to_factor = 2
-        else: to_factor = 0
-        
-        # ── 因子5: 流通市值 (0-10分) —— 小盘易涨停 ──
-        if 0 < total_cap < 50: cap_factor = 10
-        elif total_cap < 100: cap_factor = 8
-        elif total_cap < 200: cap_factor = 5
-        elif total_cap < 500: cap_factor = 2
-        else: cap_factor = 0
-        
-        # ── 因子6: 板块热度 (0-8分) —— 板块涨停家数联动 ──
-        sh = sector_heat.get(industry, 0)
-        heat_factor = min(8, sh * 2)
-        
-        # ── 因子7: 振幅 (0-7分) —— 高振幅代表博弈激烈，可能冲板 ──
-        if amplitude >= 8: amp_factor = 7
-        elif amplitude >= 5: amp_factor = 5
-        elif amplitude >= 3: amp_factor = 3
-        else: amp_factor = 1
-        
-        total_score = chg_factor + lu_factor + vol_factor + to_factor + cap_factor + heat_factor + amp_factor
-        
-        # ── 策略加成 ──
-        if strategy == 'U': total_score += 8         # 涨停追击本身
-        elif strategy == 'A': total_score += 5        # 动量延续
-        elif strategy == 'G': total_score += 3        # 横盘突破
-        elif strategy == 'N': total_score += 3        # 新高突破
-        elif strategy == 'M': total_score += 2        # 涨停回调
-        
-        # ── 最终池加成：在最终池中的标的+3分（已通过严格筛选） ──
-        if code in final_codes:
-            total_score += 3
-        
-        # ── 门槛：总分<25不纳入预测 ──
-        if total_score < 25:
-            continue
-        
-        # ── 构建理由 ──
-        reasons = []
-        if change_pct >= 7: reasons.append(f"强势+{change_pct:.1f}%")
-        elif change_pct >= 5: reasons.append(f"涨幅+{change_pct:.1f}%")
-        elif change_pct >= 3: reasons.append(f"温和+{change_pct:.1f}%")
-        if limit_up_days >= 2: reasons.append(f"近10日{limit_up_days}板")
-        elif limit_up_days >= 1: reasons.append("涨停基因")
-        if volume_ratio >= 2.0: reasons.append(f"爆量{volume_ratio:.1f}倍")
-        elif volume_ratio >= 1.5: reasons.append(f"放量{volume_ratio:.1f}倍")
-        if total_cap > 0 and total_cap < 50: reasons.append(f"微盘{total_cap:.0f}亿")
-        elif total_cap < 100: reasons.append(f"小盘{total_cap:.0f}亿")
-        if sh >= 3: reasons.append(f"板块{sh}家涨停")
-        if strategy == 'U': reasons.append("涨停追击")
-        elif strategy != '?': reasons.append(f"{_STRATEGY_NAMES.get(strategy, strategy)}")
-        
-        predictions.append({
-            'code': code, 'name': name, 'strategy': strategy,
-            'change_pct': change_pct, 'industry': industry,
-            'lu_score': total_score, 'lu_reasons': reasons,
-            'limit_up_days': limit_up_days, 'volume_ratio': volume_ratio,
-            'turnover': turnover, 'total_cap': total_cap,
-            'sector_heat': sh, 'in_final': code in final_codes,
-        })
-    
-    predictions.sort(key=lambda x: -x['lu_score'])
-    top15 = predictions[:15]
-    log_alert("INFO", "涨停预测", f"从{len(signal_pool)}只信号池中筛选出{len(predictions)}只候选, TOP15")
-    return top15
-
-
-def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report=None, bt_lookup=None, kline_data=None, bt_result=None, pk_results=None, all_stocks=None, lu_predictions=None):
+def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report=None, bt_lookup=None, kline_data=None, bt_result=None, pk_results=None, all_stocks=None):
     hd = f"/workspace/ashare-screening-{pred_yyyymmdd}"
     os.makedirs(hd, exist_ok=True)
     hp = f"{hd}/ashare-screening-{pred_yyyymmdd}.html"
@@ -4753,41 +4629,6 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         except Exception as e:
             log_alert("WARNING", "市场全景", f"图表生成失败: {e}")
 
-    # v6.16.4: 涨停预测HTML
-    lu_html = ''
-    if lu_predictions:
-        lu_html += '<div class="lu-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:.8rem">'
-        for i, p in enumerate(lu_predictions):
-            score = p['lu_score']
-            bar_pct = min(100, score / 60 * 100)  # 60分满分→百分比
-            bar_cls = 'lu-fire' if score >= 40 else ('lu-hot' if score >= 30 else 'lu-warm')
-            reasons_str = ' · '.join(p['lu_reasons'][:4])
-            scl = f"strat_{p['strategy'].lower()}"
-            sn = _STRATEGY_NAMES.get(p['strategy'], p['strategy'])
-            chg_cls = 'up' if p['change_pct'] >= 0 else 'down'
-            url = f"https://quote.eastmoney.com/sh{p['code']}.html" if p['code'].startswith('6') else f"https://quote.eastmoney.com/sz{p['code']}.html"
-            lu_html += f'''<div class="lu-card {bar_cls}">
-            <div class="lu-rank">#{i+1}</div>
-            <div class="lu-body">
-                <div class="lu-header">
-                    <a href="{url}" target="_blank" class="lu-name">{html.escape(p['name'])}</a>
-                    <span class="lu-code">{p['code']}</span>
-                    <span class="badge {scl}">{p['strategy']}</span>
-                    {'<span class="lu-badge-final">✅最终池</span>' if p.get('in_final') else '<span class="lu-badge-indie">独立筛选</span>'}
-                </div>
-                <div class="lu-reasons">{reasons_str}</div>
-                <div class="lu-bar-track"><div class="lu-bar-fill {bar_cls}" style="width:{bar_pct:.0f}%"></div></div>
-                <div class="lu-stats">
-                    <span>涨停评分 <b>{score:.0f}</b></span>
-                    <span>涨幅 <b class="{chg_cls}">{p['change_pct']:+.2f}%</b></span>
-                    <span>量比 <b>{p['volume_ratio']:.1f}</b></span>
-                    <span>换手 <b>{p['turnover']:.1f}%</b></span>
-                </div>
-            </div></div>'''
-        lu_html += '</div>'
-    else:
-        lu_html = '<div style="color:#94a3b8;padding:1rem;text-align:center">暂无涨停预测数据</div>'
-
     html_content = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>A股短线标的筛选 — {prediction_date}</title>
 <style>
@@ -5048,31 +4889,6 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 .metric-label-bt{{color:#94a3b8;font-size:.68rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}}
 .metric-value-bt{{color:#e2e8f0;font-size:1.1rem;font-weight:700}}
 .metric-value-bt.win{{color:#22c55e}}.metric-value-bt.loss{{color:#ef4444}}
-/* v6.16.4: 涨停预测卡片 */
-.lu-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:.8rem}}
-.lu-card{{background:#0f172a;border:1px solid #334155;border-radius:12px;padding:1rem;display:flex;gap:.8rem;transition:border-color .2s,transform .15s;position:relative;overflow:hidden}}
-.lu-card:hover{{border-color:#475569;transform:translateY(-1px)}}
-.lu-card.lu-fire{{border-color:rgba(239,68,68,.4);box-shadow:0 0 12px rgba(239,68,68,.15)}}
-.lu-card.lu-hot{{border-color:rgba(245,158,11,.4);box-shadow:0 0 12px rgba(245,158,11,.1)}}
-.lu-card.lu-warm{{border-color:rgba(59,130,246,.3)}}
-.lu-rank{{font-size:1.5rem;font-weight:900;color:#64748b;min-width:36px;text-align:center;line-height:1.2}}
-.lu-card.lu-fire .lu-rank{{color:#ef4444}}
-.lu-card.lu-hot .lu-rank{{color:#f59e0b}}
-.lu-body{{flex:1;min-width:0}}
-.lu-header{{display:flex;align-items:center;gap:.5rem;margin-bottom:.4rem;flex-wrap:wrap}}
-.lu-name{{font-weight:700;color:#e2e8f0;font-size:.9rem}}
-.lu-code{{color:#64748b;font-size:.75rem}}
-.lu-reasons{{color:#94a3b8;font-size:.72rem;margin-bottom:.5rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-.lu-bar-track{{background:#1e293b;border-radius:4px;height:6px;margin-bottom:.5rem;overflow:hidden}}
-.lu-bar-fill{{height:100%;border-radius:4px;transition:width .3s}}
-.lu-bar-fill.lu-fire{{background:linear-gradient(90deg,#ef4444,#f97316)}}
-.lu-bar-fill.lu-hot{{background:linear-gradient(90deg,#f59e0b,#eab308)}}
-.lu-bar-fill.lu-warm{{background:linear-gradient(90deg,#3b82f6,#06b6d4)}}
-.lu-stats{{display:flex;gap:.8rem;font-size:.7rem;color:#64748b;flex-wrap:wrap}}
-.lu-stats b{{color:#cbd5e1}}
-/* v6.16.5: 涨停预测独立筛选标签 */
-.lu-badge-final{{background:rgba(34,197,94,.15);color:#22c55e;font-size:.65rem;padding:1px 6px;border-radius:4px;border:1px solid rgba(34,197,94,.3)}}
-.lu-badge-indie{{background:rgba(139,92,246,.12);color:#a78bfa;font-size:.65rem;padding:1px 6px;border-radius:4px;border:1px solid rgba(139,92,246,.3)}}
 </style></head><body>
 <div class="header"><h1>A股短线标的筛选报告</h1><div class="sub">{prediction_date} | 规则版本 {file_version}</div></div>
 <div class="container">
@@ -5084,9 +4900,6 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 <div class="meta-card"><div class="label">建议仓位</div><div class="value">{position_pct}%</div></div>
 <div class="meta-card"><div class="label">最终推荐</div><div class="value">{fc}只</div></div></div>
 {market_overview_html}
-<section><h2>🔥 涨停预测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">从信号过滤池({asig}只)独立筛选 | 7因子评分 | 仅供参考</span></h2>
-{lu_html}
-</section>
 <section><h2>筛选管道</h2><div class="funnel">{funnel_html}</div></section>
 <section><h2>数据可视化</h2><div class="chart-grid">
 <div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">策略分布</h3><div class="seg-bar">{seg_html if seg_html else '<div style="color:#94a3b8;text-align:center;padding:1rem">无推荐标的</div>'}</div><div class="legend">{legend_html}</div></div>
@@ -5510,13 +5323,9 @@ def main():
     print("\n[步骤19B] 同策略PK..."); pk_results = step19b_strategy_pk(final, kline_data, bt_lookup, sector_limit_up, market_condition, index_data)
     record_step_status("步骤19B: 同策略PK", "OK", f"{sum(1 for v in pk_results.values() if v['count']>=2)}组对决")
 
-    # v6.16.5: 涨停预测 — 从信号过滤池独立筛选，不依赖最终结果
-    print("\n[步骤19C] 涨停预测..."); lu_predictions = _predict_limit_up(asl, kline_data, sector_limit_up, final)
-    record_step_status("步骤19C: 涨停预测", "OK", f"从{asig}只信号池→TOP{len(lu_predictions)}")
-
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup, pk_results, kline_data)
     record_step_status("步骤20: Markdown", "OK", mp)
-    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report, bt_lookup, kline_data, bt_result, pk_results, all_stocks, lu_predictions); hd = os.path.dirname(hp)
+    print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report, bt_lookup, kline_data, bt_result, pk_results, all_stocks); hd = os.path.dirname(hp)
     record_step_status("步骤20B: HTML报告", "OK", hp)
     print("\n[步骤21] 验证..."); step21_final_verify(mp, fc)
     record_step_status("步骤21: 最终验证", "OK", f"{fc}只通过")
