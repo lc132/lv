@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.16.11
+A股每日盘前短线标的智能筛选 v6.16.12
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 21策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -73,7 +73,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.11"
+BUILTIN_VERSION = "v6.16.12"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -4982,8 +4982,9 @@ def step21_final_verify(mp, fc):
     except FileNotFoundError:
         log_alert("ERROR", "数量校验", "MD文件不存在")
 
-def step22_write_history(candidates):
-    """v6.13.11: 去重写入——按(code,strategy,entry)去重，避免多次运行重复追加"""
+def step22_write_history(candidates, champion_code=None):
+    """v6.13.11: 去重写入——按(code,strategy,entry)去重，避免多次运行重复追加
+    v6.16.12: 新增champion_code参数，标记当日👑冠军标的"""
     hf = f"/workspace/推荐历史_{data_date.replace('-', '')}.json"
     existing = safe_read_json(hf)
     existing_keys = set()
@@ -4997,11 +4998,15 @@ def step22_write_history(candidates):
         if key in existing_keys:
             continue
         existing_keys.add(key)
-        safe_append_json(hf, {"type": "recommendation", "code": c.get('code'), "name": c.get('name'),
+        rec = {"type": "recommendation", "code": c.get('code'), "name": c.get('name'),
             "strategy": c.get('strategy'), "industry": _industry_str(c), "business": c.get('business', ''),
             "score": c.get('score'), "confidence": c.get('confidence'),
             "entry": entry, "change_pct": c.get('change_pct'),
-            "date": data_date, "prediction_date": prediction_date})
+            "date": data_date, "prediction_date": prediction_date}
+        # v6.16.12: 标记当日跨策略冠军
+        if champion_code and c.get('code') == champion_code:
+            rec["is_champion"] = True
+        safe_append_json(hf, rec)
         written += 1
     log_alert("INFO", "推荐历史", f"已追加{written}条(跳过{len(candidates)-written}条重复)")
 
@@ -5337,7 +5342,7 @@ def main():
         print("\n[步骤22] 推荐历史... 周末跳过")
         record_step_status("步骤22: 推荐历史", "SKIP", "周末")
     else:
-        print("\n[步骤22] 推荐历史..."); step22_write_history(final)
+        print("\n[步骤22] 推荐历史..."); champion_code = pk_results.get('__champion__', {}).get('winner_code', '') if pk_results else ''; step22_write_history(final, champion_code)
         record_step_status("步骤22: 推荐历史", "OK", f"{fc}条")
     print("\n" + "=" * 60)
     print("📊 筛选概况")

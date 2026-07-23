@@ -409,6 +409,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         trade['take_profit'] = tp
         trade['prediction_date'] = pred_date
         trade['score'] = h.get('score', 0)
+        trade['is_champion'] = h.get('is_champion', False)  # v6.16.12: 皇冠回测
         trades.append(trade)
 
     metrics = _compute_metrics(trades)
@@ -423,6 +424,13 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         industry_trades[t['industry']].append(t)
     industry_metrics = {i: _compute_metrics(ts) for i, ts in industry_trades.items()}
 
+    # v6.16.12: 皇冠回测——仅统计跨策略冠军标的
+    champion_trades = [t for t in trades if t.get('is_champion')]
+    champion_metrics = _compute_metrics(champion_trades) if champion_trades else None
+    if champion_trades:
+        print(f"  皇冠回测: {champion_metrics['total']}笔 | 胜率{champion_metrics['win_rate']}% | "
+              f"均收{champion_metrics['avg_return']}%")
+
     print(f"  回测结果: {metrics['total']}笔 | 胜率{metrics['win_rate']}% | "
           f"均收{metrics['avg_return']}% | 盈亏比{metrics['profit_factor']} | 夏普{metrics['sharpe']}"
           f" | 限价未成交{metrics.get('no_entry', 0)}笔(不计入胜负)")
@@ -430,6 +438,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     return {
         'all_trades': trades, 'metrics': metrics,
         'strategy_metrics': strategy_metrics, 'industry_metrics': industry_metrics,
+        'champion_trades': champion_trades, 'champion_metrics': champion_metrics,  # v6.16.12
     }
 
 
@@ -565,8 +574,56 @@ def _build_backtest_lookup(bt_result):
     return lookup
 
 
+def _champion_html(champion_trades, champion_metrics):
+    """v6.16.12: 生成皇冠回测HTML板块"""
+    if not champion_trades or not champion_metrics:
+        return '<div style="color:#94a3b8;padding:1rem;text-align:center">暂无皇冠回测数据（历史推荐中尚未标记冠军标的）</div>'
+
+    c = champion_metrics
+    # 指标卡片
+    cards = f'''<div class="metrics-grid">
+    <div class="metric-card"><div class="metric-label">总交易</div><div class="metric-value">{c['total']}笔</div></div>
+    <div class="metric-card"><div class="metric-label">胜率</div><div class="metric-value{" win" if c['win_rate']>=50 else ""}" style="color:{'#22c55e' if c['win_rate']>=50 else '#ef4444'}">{c['win_rate']}%</div></div>
+    <div class="metric-card"><div class="metric-label">平均收益</div><div class="metric-value{" win" if c['avg_return']>=0 else " loss"}" style="color:{'#22c55e' if c['avg_return']>=0 else '#ef4444'}">{c['avg_return']}%</div></div>
+    <div class="metric-card"><div class="metric-label">盈亏比</div><div class="metric-value">{c['profit_factor']}</div></div>
+    <div class="metric-card"><div class="metric-label">夏普</div><div class="metric-value">{c['sharpe']}</div></div>
+    <div class="metric-card"><div class="metric-label">最大回撤</div><div class="metric-value loss">{c['max_drawdown']}%</div></div>
+    <div class="metric-card"><div class="metric-label">平均盈利</div><div class="metric-value win">{c['avg_win']}%</div></div>
+    <div class="metric-card"><div class="metric-label">平均亏损</div><div class="metric-value loss">{c['avg_loss']}%</div></div>
+    <div class="metric-card"><div class="metric-label">平均持仓</div><div class="metric-value">{c['avg_hold']}天</div></div>
+</div>'''
+
+    # 冠军交易明细表
+    rows = ''
+    for t in reversed(sorted(champion_trades, key=lambda x: str(x.get('prediction_date', '')))):
+        name = t.get('name', '')
+        code = t.get('code', '')
+        strategy = t.get('strategy', '')
+        industry = t.get('industry', '')
+        entry = t.get('entry', 0)
+        result = t.get('result', '')
+        exit_price = t.get('exit_price', 0)
+        ret = t.get('return', 0)
+        hold = t.get('hold_days', 0)
+        pred_date = t.get('prediction_date', '')
+        result_cls = 'win' if result == 'win' else ('loss' if result == 'loss' else '')
+        url = f"https://quote.eastmoney.com/sh{code}.html" if str(code).startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
+        rows += f'''<tr class="champion-row">
+        <td>{pred_date}</td><td><a href="{url}" target="_blank">{html.escape(name)}</a></td><td>{code}</td>
+        <td>{strategy}</td><td>{industry}</td><td>{entry:.2f}</td>
+        <td class="{result_cls}">{result}</td><td>{exit_price:.2f}</td>
+        <td class="{result_cls}">{ret:+.2f}%</td><td>{hold}天</td></tr>'''
+
+    return f'''{cards}
+<div class="section"><h3 style="margin-top:1.5rem">冠军交易明细 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">仅展示跨策略PK冠军标的</span></h3>
+<table class="champion-trades"><thead><tr><th>日期</th><th>标的</th><th>代码</th><th>策略</th><th>行业</th><th>进场</th><th>结果</th><th>出场</th><th>收益</th><th>持仓</th></tr></thead>
+<tbody>{rows}</tbody></table>
+</div>'''
+
+
 def generate_backtest_html(bt_result, output_path=None):
-    """生成自包含HTML回测报告（含图表可视化）"""
+    """生成自包含HTML回测报告（含图表可视化）
+    v6.16.12: 新增👑皇冠回测板块"""
     if output_path is None:
         output_path = os.path.join(DATA_DIR, '回测报告.html')
 
@@ -574,6 +631,8 @@ def generate_backtest_html(bt_result, output_path=None):
     strategy_metrics = bt_result.get('strategy_metrics', {})
     industry_metrics = bt_result.get('industry_metrics', {})
     trades = bt_result.get('all_trades', [])
+    champion_trades = bt_result.get('champion_trades', [])  # v6.16.12
+    champion_metrics = bt_result.get('champion_metrics')     # v6.16.12
     today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.10: 北京时间
 
     if not trades:
@@ -668,6 +727,10 @@ tr:hover td{{background:rgba(56,189,248,0.05)}}
 .badge{{display:inline-block;background:#334155;color:#38bdf8;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600}}
 .win{{color:#22c55e}}
 .loss{{color:#ef4444}}
+/* v6.16.12: 皇冠回测 */
+.champion-row{{background:rgba(234,179,8,0.06);border-left:3px solid #eab308}}
+.champion-row:hover{{background:rgba(234,179,8,0.12)}}
+.champion-trades th{{background:linear-gradient(135deg,#5c3d0e,#4c2e0e);color:#eab308}}
 .nodata{{color:#94a3b8}}
 .footer{{text-align:center;color:#64748b;font-size:12px;padding:20px;margin-top:20px}}
 @media(max-width:600px){{.metrics-grid{{grid-template-columns:repeat(3,1fr)}}table{{font-size:11px}}}}
@@ -692,6 +755,12 @@ tr:hover td{{background:rgba(56,189,248,0.05)}}
 <div class="note-card"><b>指标说明</b><br>胜率为盈利样本占有效样本比例；盈亏比为总盈利绝对值/总亏损绝对值；夏普为单笔收益均值相对波动的简化指标。</div>
 <div class="note-card"><b>局限性</b><br>未计入滑点、手续费、涨跌停无法成交、真实排队成交、资金容量和盘中流动性冲击。</div>
 </div>
+</div>
+
+<div class="section">
+<h2>👑 皇冠回测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">跨策略冠军PK胜者独立统计</span></h2>{
+_champion_html(champion_trades, champion_metrics)
+}
 </div>
 
 <div class="section">
