@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.16.10
+A股每日盘前短线标的智能筛选 v6.16.11
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 21策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -73,7 +73,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.10"
+BUILTIN_VERSION = "v6.16.11"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -4687,9 +4687,9 @@ tbody tr:nth-child(even){{background:rgba(255,255,255,.01)}}
 /* badges */
 .badge{{padding:2px 9px;border-radius:4px;font-size:.68rem;font-weight:700;letter-spacing:.03em}}
 .strat_a{{background:#14532d;color:#22c55e}}.strat_b{{background:#1e3a5f;color:#3b82f6}}.strat_c{{background:#3b1f6e;color:#8b5cf6}}
-.strat_d{{background:#5c3d0e;color:#f59e0b}}.strat_e{{background:#5c1648;color:#ec4899}}.strat_f{{background:#0f4c5c;color:#06b6d4}}.strat_g{{background:#0e4c3d;color:#10b981}}.strat_h{{background:#4c1d0e;color:#f97316}}.strat_i{{background:#0e3d3d;color:#14b8a6}}.strat_j{{background:#5c1515;color:#ef4444}}.strat_k{{background:#3b1f3b;color:#a855f7}}.strat_l{{background:#4c3d0e;color:#eab308}}.strat_m{{background:#4c1d3b;color:#f472b6}}.strat_n{{background:#1e3d0e;color:#84cc16}}.strat_o{{background:#0e2e4c;color:#38bdf8}}.strat_p{{background:#4c2e0e;color:#fb923c}}.strat_q{{background:#0e3e4c;color:#22d3ee}}
+.strat_d{{background:#5c3d0e;color:#f59e0b}}.strat_e{{background:#5c1648;color:#ec4899}}.strat_f{{background:#0f4c5c;color:#06b6d4}}.strat_g{{background:#0e4c3d;color:#10b981}}.strat_h{{background:#4c1d0e;color:#f97316}}.strat_i{{background:#0e3d3d;color:#14b8a6}}.strat_j{{background:#5c1515;color:#ef4444}}.strat_k{{background:#3b1f3b;color:#a855f7}}.strat_l{{background:#4c3d0e;color:#eab308}}.strat_m{{background:#4c1d3b;color:#f472b6}}.strat_n{{background:#1e3d0e;color:#84cc16}}.strat_o{{background:#0e2e4c;color:#38bdf8}}.strat_p{{background:#4c2e0e;color:#fb923c}}.strat_q{{background:#0e3e4c;color:#22d3ee}}.strat_r{{background:#4c1515;color:#dc2626}}.strat_s{{background:#4c2e0e;color:#f97316}}.strat_t{{background:#334155;color:#94a3b8}}.strat_u{{background:#5c1010;color:#ff3b3b}}
 tr.strat_a{{background:rgba(34,197,94,0.05)}}tr.strat_b{{background:rgba(59,130,246,0.05)}}tr.strat_c{{background:rgba(139,92,246,0.05)}}
-tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72,153,0.05)}}tr.strat_f{{background:rgba(6,182,212,0.05)}}tr.strat_g{{background:rgba(16,185,129,0.05)}}tr.strat_h{{background:rgba(249,115,22,0.05)}}tr.strat_i{{background:rgba(20,184,166,0.05)}}tr.strat_j{{background:rgba(239,68,68,0.05)}}tr.strat_k{{background:rgba(168,85,247,0.05)}}tr.strat_l{{background:rgba(234,179,8,0.05)}}tr.strat_m{{background:rgba(244,114,182,0.05)}}tr.strat_n{{background:rgba(132,204,22,0.05)}}tr.strat_o{{background:rgba(56,189,248,0.05)}}tr.strat_p{{background:rgba(251,146,60,0.05)}}tr.strat_q{{background:rgba(34,211,238,0.05)}}
+tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72,153,0.05)}}tr.strat_f{{background:rgba(6,182,212,0.05)}}tr.strat_g{{background:rgba(16,185,129,0.05)}}tr.strat_h{{background:rgba(249,115,22,0.05)}}tr.strat_i{{background:rgba(20,184,166,0.05)}}tr.strat_j{{background:rgba(239,68,68,0.05)}}tr.strat_k{{background:rgba(168,85,247,0.05)}}tr.strat_l{{background:rgba(234,179,8,0.05)}}tr.strat_m{{background:rgba(244,114,182,0.05)}}tr.strat_n{{background:rgba(132,204,22,0.05)}}tr.strat_o{{background:rgba(56,189,248,0.05)}}tr.strat_p{{background:rgba(251,146,60,0.05)}}tr.strat_q{{background:rgba(34,211,238,0.05)}}tr.strat_r{{background:rgba(220,38,38,0.05)}}tr.strat_s{{background:rgba(249,115,22,0.05)}}tr.strat_t{{background:rgba(148,163,184,0.06)}}tr.strat_u{{background:rgba(255,59,59,0.05)}}
 /* conf / entry */
 .conf{{font-weight:700}}.conf.high{{color:#22c55e}}.conf.mid{{color:#f59e0b}}.conf.low{{color:#ef4444}}
 .entry{{color:#38bdf8;font-weight:700}}
@@ -4944,6 +4944,10 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 <tr><td><span class="badge strat_o">O回踩均线</span></td><td style="white-space:normal;word-break:break-all">60日涨>15%+回踩MA20±3%+缩量vr<1.0收阳+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
 <tr><td><span class="badge strat_p">P地量反弹</span></td><td style="white-space:normal;word-break:break-all">连续3日缩量至地量+当日放量vr≥1.2+涨1.0-5%阳线+弱市跳过</td><td>6-8%</td><td>3-5%</td></tr>
 <tr><td><span class="badge strat_q">Q W底突破</span></td><td style="white-space:normal;word-break:break-all">20日内两底相差<5%+放量vr≥1.2突破颈线+阳线+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_r">R 主力共振(强)</span></td><td style="white-space:normal;word-break:break-all">底仓≥3分+起爆≥4分双重共振+多因子同步确认+弱市不折扣</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_s">S 主力共振(弱)</span></td><td style="white-space:normal;word-break:break-all">底仓≥2分+起爆≥3分双重共振+弱市降仓位</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_t">T 主力观察</span></td><td style="white-space:normal;word-break:break-all">底仓≥2分+起爆≥2分预共振+待确认信号+弱市不推荐</td><td>3-5%</td><td>0%(关闭)</td></tr>
+<tr><td><span class="badge strat_u">U 涨停追击</span></td><td style="white-space:normal;word-break:break-all">涨3-9%+量比≥1.5+换手≥3%+小盘<100亿+涨停基因+振幅>3%+收阳</td><td>5-8%</td><td>3-5%</td></tr>
 </tbody></table></section>
 <section><h2>资金去向（行业主力净流入排名）</h2>
 <div class="capital-flow">{capital_flow_html if capital_flow_html else '<div style="color:#94a3b8;padding:1rem">暂无资金流向数据</div>'}</div></section>
