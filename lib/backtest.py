@@ -1,7 +1,8 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.13.38
+# A股短线筛选 — 历史回测模块 v6.16.14
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
+# v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
 # v6.13.38: no_entry改为独立结果类型——限价单未成交不计入loss，独立标记⚪，显示理论收益但不计入胜率统计
 # v6.13.30: no_entry直接标记失败——限价单未成交视为策略失效，计入loss不再排除
 # v6.13.24: _try_tencent增加Referer头(修复无数据) + 解析过滤非列表元素 + 超时10s + max_drawdown改用复合收益率
@@ -458,10 +459,14 @@ def generate_backtest_report(bt_result, output_path=None):
         return output_path
 
     today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.10: 北京时间
+    # v6.16.14: 计算样本日期范围
+    sample_dates = sorted(set(t.get('prediction_date', '') for t in trades if t.get('prediction_date')))
+    date_range = f"{sample_dates[0]} ~ {sample_dates[-1]}" if len(sample_dates) >= 2 else (sample_dates[0] if sample_dates else 'N/A')
     lines = [
         f"# A股短线筛选 — 历史回测报告",
         f"",
         f"- **生成日期**: {today_str}",
+        f"- **样本日期范围**: {date_range}（{len(sample_dates)}个交易日）",
         f"- **回测周期**: 最近90天",
         f"- **最大持仓**: 10个交易日",
         f"",
@@ -512,9 +517,17 @@ def generate_backtest_report(bt_result, output_path=None):
     lines.extend([
         "", "## 四、最近交易明细", "",
         "| 日期 | 标的 | 代码 | 策略 | 行业 | 进场 | 结果 | 出场 | 收益 | 持仓 |",
-        "|------|------|------|------|------|------|------|------|------|------|",
+        "|------|------|------|------|------|------|------|------|------|------|
     ])
-    recent = sorted(trades, key=lambda x: x.get('prediction_date', ''), reverse=True)[:20]
+    # v6.16.14: 按日期均匀采样，每日期最多10条，确保多日数据均可见
+    recent = []
+    for date_key in sorted(set(t.get('prediction_date', '') for t in trades), reverse=True):
+        day_trades = [t for t in trades if t.get('prediction_date') == date_key]
+        day_trades_sorted = sorted(day_trades, key=lambda x: abs(x.get('return_pct', 0)), reverse=True)
+        recent.extend(day_trades_sorted[:10])
+        if len(recent) >= 20:
+            break
+    recent = recent[:20]
     for t in recent:
         if t['result'] == 'win':
             res_emoji = '\U0001f7e2'
@@ -681,7 +694,15 @@ def generate_backtest_html(bt_result, output_path=None):
 
     # 交易明细表
     trade_rows = ''
-    recent = sorted(trades, key=lambda x: x.get('prediction_date', ''), reverse=True)[:30]
+    # v6.16.14: 按日期均匀采样，每日期最多15条，确保多日数据均可见
+    recent = []
+    for date_key in sorted(set(t.get('prediction_date', '') for t in trades), reverse=True):
+        day_trades = [t for t in trades if t.get('prediction_date') == date_key]
+        day_trades_sorted = sorted(day_trades, key=lambda x: abs(x.get('return_pct', 0)), reverse=True)
+        recent.extend(day_trades_sorted[:15])
+        if len(recent) >= 30:
+            break
+    recent = recent[:30]
     for t in recent:
         if t['result'] == 'win':
             res_cls = 'win'
