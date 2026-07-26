@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.16.14
+# A股短线筛选 — 历史回测模块 v6.16.15
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
@@ -13,6 +13,7 @@ import urllib.request
 import urllib.error
 import json
 import ssl
+import html
 import time
 import os
 from collections import defaultdict, Counter
@@ -517,7 +518,7 @@ def generate_backtest_report(bt_result, output_path=None):
     lines.extend([
         "", "## 四、最近交易明细", "",
         "| 日期 | 标的 | 代码 | 策略 | 行业 | 进场 | 结果 | 出场 | 收益 | 持仓 |",
-        "|------|------|------|------|------|------|------|------|------|------|
+        "|------|------|------|------|------|------|------|------|------|------|"
     ])
     # v6.16.14: 按日期均匀采样，每日期最多10条，确保多日数据均可见
     recent = []
@@ -603,7 +604,7 @@ def _champion_html(champion_trades, champion_metrics):
     <div class="metric-card"><div class="metric-label">最大回撤</div><div class="metric-value loss">{c['max_drawdown']}%</div></div>
     <div class="metric-card"><div class="metric-label">平均盈利</div><div class="metric-value win">{c['avg_win']}%</div></div>
     <div class="metric-card"><div class="metric-label">平均亏损</div><div class="metric-value loss">{c['avg_loss']}%</div></div>
-    <div class="metric-card"><div class="metric-label">平均持仓</div><div class="metric-value">{c['avg_hold']}天</div></div>
+    <div class="metric-card"><div class="metric-label">平均持仓</div><div class="metric-value">{c['avg_hold_days']}天</div></div>
 </div>'''
 
     # 冠军交易明细表
