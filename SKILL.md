@@ -1,3 +1,4 @@
+- **v6.16.16**: 新闻筛查修复——(1)_check_mairui_ann新增30日日期过滤，仅检查近30日公告防止历史公告误触发利空排除 (2)新增安全阀: mairui_ann为唯一可用源且排除>80%标的时自动回退，防止误排除 (3)修复后12只标的正常通过新闻筛查，不再全部被mairui_ann排除。
 - **v6.16.15**: Bug修复——(1)lib/backtest.py第520行字符串缺少闭合引号导致SyntaxError (2)lib/backtest.py缺少`import html`导入导致_champion_html中NameError (3)修复后回测HTML报告正常生成，皇冠回测板块正常显示
 - **v6.16.13**: 行业缓存修正——南网能源(003035)行业分类修正: 食品饮料→公用事业，二级行业补充为电力行业。HARDCODED_INDUSTRY新增003035修正。
 - **v6.16.12**: 回测报告新增皇冠回测板块——(1)step22推荐历史标记is_champion冠军标的 (2)run_backtest传递is_champion并独立计算皇冠指标(胜率/均收/盈亏比/夏普等) (3)generate_backtest_html新增👑皇冠回测区域含9指标卡片+冠军交易明细表 (4)新增_champion_html辅助函数+CSS冠军行高亮样式 (5)皇冠数据从跨策略PK冠军PK胜者追溯。
@@ -34,9 +35,9 @@
 - **v6.13.23**: 修复回测"无数据"标的 — _fetch_kline_range增加重试(2次)+三级兜底(宽泛日期lmt=30)，run_backtest增加跨日期K线复用逻辑，4只无数据标的全部消除
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.16.15)。基于前一日收盘数据，通过37步筛选流程，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
+description: A股每日盘前短线标的智能筛选(v6.16.16)。基于前一日收盘数据，通过37步筛选流程，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
 ---
-# A股盘前短线标的筛选 v6.16.15
+# A股盘前短线标的筛选 v6.16.16
 
 ## 版本历史
 - **v6.13.23**: 修复HTML回测数据显示为0的Bug — metrics从bt["metrics"]读取(原错误从bt顶层读取)，profit_factor键名修正，strategy_metrics从dict迭代(原错误用list)  

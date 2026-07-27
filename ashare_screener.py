@@ -73,7 +73,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.15"
+BUILTIN_VERSION = "v6.16.16"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -3229,13 +3229,18 @@ def step18_news_screening(candidates):
         except Exception: return None
     
     def _check_mairui_ann(code, name):
-        """v6.16.0: 麦蕊公告利空检测"""
+        """v6.16.0: 麦蕊公告利空检测 — v6.16.15: 仅检查近30日公告，防止历史公告误触发"""
         if not MAIRUI_LICENCE: return None
         try:
             anns = _mairui_announcements(code)
             if not anns: return None
+            cutoff_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
             for ann in anns:
                 title = str(ann.get('zt', '') or ann.get('title', '') or '')
+                ann_date = str(ann.get('date', '') or ann.get('rq', '') or ann.get('ggrq', '') or '')
+                # v6.16.15: 日期过滤，仅检查近30日公告
+                if ann_date and ann_date < cutoff_date:
+                    continue
                 for kw in NEGATIVE_KW:
                     if kw in title and not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
                         return ('mairui_ann', kw)
@@ -3358,6 +3363,21 @@ def step18_news_screening(candidates):
         unchecked_names = ', '.join(f"{c.get('name','?')}({c.get('code','?')})" for c in unchecked[:5])
         if len(unchecked) > 5: unchecked_names += f" 等{len(unchecked)}只"
         log_alert("WARNING", "新闻筛查", f"⚠️ {len(unchecked)}只标的未通过任何新闻源检查: {unchecked_names}")
+    
+    # v6.16.15: 安全阀——mairui_ann为唯一可用源且排除超过80%标的时，回退排除
+    mairui_excluded = [c for c in excluded if c.get('_news_reason', '').startswith('mairui_ann')]
+    if len(mairui_excluded) > 0 and len(mairui_excluded) >= len(to_check) * 0.8:
+        other_sources_ok = any(
+            _src_status.get(src, {}).get('ok', 0) > 0
+            for src in ['bing', 'baidu', 'cninfo', 'cls']
+        )
+        if not other_sources_ok:
+            for c in mairui_excluded:
+                excluded.remove(c)
+                passed.append(c)
+                c['_news_reason'] = ''
+                c['_news_checked'] = False
+            log_alert("WARNING", "新闻筛查", f"安全阀: 回退{len(mairui_excluded)}只mairui_ann排除(唯一源且排除率>{len(mairui_excluded)/max(len(to_check),1)*100:.0f}%)")
     
     nex = len(excluded)
     if nex > 0:
