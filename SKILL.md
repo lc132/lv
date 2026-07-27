@@ -1,11 +1,12 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.16.16)。基于前一日收盘数据，通过37步筛选流程，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
+description: A股每日盘前短线标的智能筛选(v6.16.17)。基于前一日收盘数据，通过37步筛选流程，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
 ---
-# A股盘前短线标的筛选 v6.16.16
+# A股盘前短线标的筛选 v6.16.17
 
 ## 版本历史
 
+- **v6.16.17**: 漏洞修复——(1)_git_with_token改用GIT_ASKPASS主方案+Token-in-URL降级，避免Token出现在进程列表/日志中，提升安全性 (2)_fetch_single_kline_axdata将裸except Exception替换为7种具体异常类型，防止吞掉KeyboardInterrupt等非预期异常 (3)安全审计：无eval/exec、无裸except、无可变默认参数、无未关闭文件句柄、无除零风险、无硬编码凭据，整体代码质量优秀。
 - **v6.16.16**: 新闻筛查修复——(1)_check_mairui_ann新增30日日期过滤，仅检查近30日公告防止历史公告误触发利空排除 (2)新增安全阀: mairui_ann为唯一可用源且排除>80%标的时自动回退，防止误排除 (3)修复后12只标的正常通过新闻筛查，不再全部被mairui_ann排除。
 - **v6.16.15**: Bug修复——(1)lib/backtest.py第520行字符串缺少闭合引号导致SyntaxError (2)lib/backtest.py缺少`import html`导入导致_champion_html中NameError (3)修复后回测HTML报告正常生成，皇冠回测板块正常显示。
 - **v6.16.13**: 行业缓存修正——南网能源(003035)行业分类修正: 食品饮料→公用事业，二级行业补充为电力行业。HARDCODED_INDUSTRY新增003035修正。
