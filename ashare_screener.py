@@ -73,7 +73,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.17"
+BUILTIN_VERSION = "v6.16.20"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -148,10 +148,29 @@ def _fetch_cls_telegraphs(pages=3):
     _cls_telegraph_cache = all_items
     return all_items
 
+# v6.16.20: 涨跌停精确判定（按板块区分阈值，排除北交所/新股/ST等伪涨停）
+def _is_limit_up(code, chg):
+    """精确判断涨停：主板±10%→≥9.5%, 创业板/科创±20%→≥19.5%, 北交所±30%→≥29.5%"""
+    if chg is None: return False
+    code = str(code)
+    if code.startswith(('8', '4')): return chg >= 29.5       # 北交所±30%
+    if code.startswith(('300', '301', '688')): return chg >= 19.5  # 创业板/科创±20%
+    return chg >= 9.5  # 主板/中小板±10%
+
+def _is_limit_down(code, chg):
+    """精确判断跌停：主板±10%→≤-9.5%, 创业板/科创±20%→≤-19.5%, 北交所±30%→≤-29.5%"""
+    if chg is None: return False
+    code = str(code)
+    if code.startswith(('8', '4')): return chg <= -29.5      # 北交所±30%
+    if code.startswith(('300', '301', '688')): return chg <= -19.5  # 创业板/科创±20%
+    return chg <= -9.5  # 主板/中小板±10%
+
 # v6.16.0: 麦蕊智数API封装
 # 跌停/涨停股池缓存（单次运行内复用）
 _mairui_dt_cache = None
 _mairui_zt_cache = None
+# v6.16.20: 自算跌停池缓存（从all_stocks构建，替代残缺的麦蕊API）
+_self_dt_cache = None
 
 def _mairui_fetch_dt_pool(date_str=None, licence=None):
     """获取跌停股池（利空检测用）"""
@@ -3236,7 +3255,11 @@ def step18_news_screening(candidates):
             return None
     
     def _check_mairui_dt(code, name):
-        """v6.16.1: 麦蕊跌停股池检测 — 个股是否在今日跌停列表中"""
+        """v6.16.1: 麦蕊跌停股池检测。v6.16.20: 麦蕊API残缺时改用自算跌停池兜底"""
+        # v6.16.20: 优先使用自算跌停池（从all_stocks构建，准确率更高）
+        if _self_dt_cache and code in _self_dt_cache:
+            return ('self_dt', '跌停(自算)')
+        # 麦蕊API作为辅助源（仅当自算跌停池为空时使用）
         if not MAIRUI_LICENCE: return None
         try:
             dt_pool = _mairui_fetch_dt_pool()
@@ -4051,8 +4074,9 @@ def _generate_market_overview(all_stocks, index_data, output_dir):
     up_count = sum(1 for s in all_stocks if (s.get('change_pct') or 0) > 0)
     down_count = sum(1 for s in all_stocks if (s.get('change_pct') or 0) < 0)
     flat_count = sum(1 for s in all_stocks if (s.get('change_pct') or 0) == 0)
-    limit_up = sum(1 for s in all_stocks if (s.get('change_pct') or 0) >= 9.5)
-    limit_down = sum(1 for s in all_stocks if (s.get('change_pct') or 0) <= -9.5)
+    # v6.16.20: 使用_is_limit_up/_is_limit_down精确判定，排除伪涨停/跌停
+    limit_up = sum(1 for s in all_stocks if _is_limit_up(s.get('code', ''), s.get('change_pct')))
+    limit_down = sum(1 for s in all_stocks if _is_limit_down(s.get('code', ''), s.get('change_pct')))
     total = len(all_stocks)
     
     # 资金流向（用change_pct方向作为代理）
@@ -5338,11 +5362,20 @@ def main():
         c['_tier_cls'] = tier_cls
     
     # v6.12.4: 构建涨停板块分布（供AI板块深度研判使用）
+    # v6.16.20: 使用_is_limit_up精确判定，排除北交所(30%)/创业板科创(20%)/ST伪涨停
+    # 同时构建自算跌停池供新闻筛查兜底
+    global _self_dt_cache
     sector_limit_up = {}
+    _self_dt_cache = set()
     for s in all_stocks:
-        if s.get('change_pct') is not None and s['change_pct'] >= 9.5:
-            ind = lookup_industry(s.get('code', ''))
-            sector_limit_up[ind] = sector_limit_up.get(ind, 0) + 1
+        code = s.get('code', '')
+        chg = s.get('change_pct')
+        if chg is not None:
+            if _is_limit_up(code, chg):
+                ind = lookup_industry(code)
+                sector_limit_up[ind] = sector_limit_up.get(ind, 0) + 1
+            if _is_limit_down(code, chg):
+                _self_dt_cache.add(code)
     # v6.12.10: 预计算盈亏比（板块热度→盈亏比排序，供AI和TOP10使用）
     _compute_pl_ratios(final, sector_limit_up)
     # v6.12.5: 主力资金流向批量获取（东方财富API，仅对最终股票池）
