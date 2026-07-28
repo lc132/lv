@@ -617,16 +617,26 @@ def _champion_html(champion_trades, champion_metrics):
         entry = t.get('entry', 0)
         result = t.get('result', '')
         exit_price = t.get('exit_price', 0)
-        ret = t.get('return', 0)
+        ret = t.get('return_pct', 0)
         hold = t.get('hold_days', 0)
         pred_date = t.get('prediction_date', '')
-        result_cls = 'win' if result == 'win' else ('loss' if result == 'loss' else '')
+        # 结果标签和样式：与主交易明细表一致（中文+no_entry/no_data处理）
+        if result == 'win':
+            result_cls = 'win'
+            result_label = '\u76c8\u5229'
+        elif result == 'no_entry':
+            result_cls = 'nodata'
+            result_label = '\u672a\u6210\u4ea4'
+        else:
+            result_cls = 'loss' if result == 'loss' else 'nodata'
+            result_label = '\u4e8f\u635f' if result == 'loss' else '\u65e0\u6570\u636e'
+        ret_sign = '+' if ret >= 0 else ''
         url = f"https://quote.eastmoney.com/sh{code}.html" if str(code).startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
         rows += f'''<tr class="champion-row">
         <td>{pred_date}</td><td><a href="{url}" target="_blank">{html.escape(name)}</a></td><td>{code}</td>
         <td>{strategy}</td><td>{industry}</td><td>{entry:.2f}</td>
-        <td class="{result_cls}">{result}</td><td>{exit_price:.2f}</td>
-        <td class="{result_cls}">{ret:+.2f}%</td><td>{hold}天</td></tr>'''
+        <td class="{result_cls}">{result_label}</td><td>{exit_price:.2f}</td>
+        <td class="{result_cls}">{ret_sign}{ret:.2f}%</td><td>{hold}天</td></tr>'''
 
     return f'''{cards}
 <div class="section"><h3 style="margin-top:1.5rem">冠军交易明细 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">仅展示跨策略PK冠军标的</span></h3>
