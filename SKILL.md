@@ -1,14 +1,16 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.16.17)。基于前一日收盘数据，通过37步筛选流程，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
+description: A股每日盘前短线标的智能筛选(v6.16.20)。基于前一日收盘数据，通过37步筛选流程，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
 ---
-# A股盘前短线标的筛选 v6.16.17
+# A股盘前短线标的筛选 v6.16.20
 
 ## 版本历史
 
 - **v6.16.19**: 冠军交易明细修复——(1)_champion_html中ret读取键名从return修正为return_pct，修复收益率始终显示+0.00%的Bug (2)结果列从英文win/loss改为中文盈利/亏损，与主交易明细表一致 (3)新增no_entry/no_data标签处理，鲁棒性增强。
 
-- **v6.16.17**: 漏洞修复——(1)_git_with_token改用GIT_ASKPASS主方案+Token-in-URL降级，避免Token出现在进程列表/日志中，提升安全性 (2)_fetch_single_kline_axdata将裸except Exception替换为7种具体异常类型，防止吞掉KeyboardInterrupt等非预期异常 (3)安全审计：无eval/exec、无裸except、无可变默认参数、无未关闭文件句柄、无除零风险、无硬编码凭据，整体代码质量优秀。
+- **v6.16.20**: 涨跌停数据源修复(严重)——(1)新增_is_limit_up/_is_limit_down辅助函数，按板块区分阈值:主板±10%→9.5%,创业板/科创±20%→19.5%,北交所±30%→29.5% (2)修复sector_limit_up涨停板块分布计数，排除北交所(30%涨停)/创业板科创(20%涨停)/ST等伪涨停 (3)market_overview图表limit_up/limit_down采用精确判定 (4)修复_check_mairui_dt跌停检测:麦蕊API仅返回21只(实际49-52只)，新增自算跌停池_self_dt_cache兜底，从all_stocks构建精确跌停集合 (5)预期效果:涨停计数从77→61家(接近东方财富61家)，跌停检测从21→49只完整覆盖。
+
+- **v6.16.20**: 漏洞修复——(1)_git_with_token改用GIT_ASKPASS主方案+Token-in-URL降级，避免Token出现在进程列表/日志中，提升安全性 (2)_fetch_single_kline_axdata将裸except Exception替换为7种具体异常类型，防止吞掉KeyboardInterrupt等非预期异常 (3)安全审计：无eval/exec、无裸except、无可变默认参数、无未关闭文件句柄、无除零风险、无硬编码凭据，整体代码质量优秀。
 - **v6.16.16**: 新闻筛查修复——(1)_check_mairui_ann新增30日日期过滤，仅检查近30日公告防止历史公告误触发利空排除 (2)新增安全阀: mairui_ann为唯一可用源且排除>80%标的时自动回退，防止误排除 (3)修复后12只标的正常通过新闻筛查，不再全部被mairui_ann排除。
 - **v6.16.15**: Bug修复——(1)lib/backtest.py第520行字符串缺少闭合引号导致SyntaxError (2)lib/backtest.py缺少`import html`导入导致_champion_html中NameError (3)修复后回测HTML报告正常生成，皇冠回测板块正常显示。
 - **v6.16.13**: 行业缓存修正——南网能源(003035)行业分类修正: 食品饮料→公用事业，二级行业补充为电力行业。HARDCODED_INDUSTRY新增003035修正。
