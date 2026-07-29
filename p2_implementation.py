@@ -157,7 +157,7 @@ def _check_mairui_lhb(code, name):
             net_amt = item.get('net', item.get('jme', 0)) or 0
             if isinstance(net_amt, str):
                 try: net_amt = float(net_amt)
-                except: net_amt = 0
+                except (ValueError, TypeError): net_amt = 0
             if net_amt < 0 and abs(net_amt) > 10000000:
                 return ('mairui_lhb', f'龙虎榜净卖出{abs(net_amt)/1e8:.1f}亿')
             explanation = str(item.get('explanation', '') or item.get('sm', '') or '')
@@ -211,7 +211,7 @@ def _mairui_longhubang_for_top10(code, name):
             net_amt = item.get('net', item.get('jme', 0)) or 0
             if isinstance(net_amt, str):
                 try: net_amt = float(net_amt)
-                except: net_amt = 0
+                except (ValueError, TypeError): net_amt = 0
             lh_dir = '净买入' if net_amt > 0 else '净卖出'
             lh_abs = abs(net_amt)
             if lh_abs >= 100000000:

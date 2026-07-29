@@ -96,7 +96,7 @@ def _load_watchlist():
                                 'name': r.get('name', ''),
                                 'prev_close': r.get('close', 0),
                             })
-            except:
+            except (json.JSONDecodeError, KeyError, FileNotFoundError):
                 pass
     return watchlist
 

@@ -220,7 +220,7 @@ def generate_report(results, stats):
         total_returns.extend(st["returns"])
         
         win_rate = round(st["win"] / st["total"] * 100, 1)
-        avg_ret = round(sum(st["returns"]) / len(st["returns"]), 2)
+        avg_ret = round(sum(st["returns"]) / len(st["returns"]), 2) if st["returns"] else 0
         tp_rate = round(st["hit_tp"] / st["total"] * 100, 1)
         sl_rate = round(st["hit_sl"] / st["total"] * 100, 1)
         entry_rate = round(st["hit_entry"] / st["total"] * 100, 1)
@@ -230,7 +230,7 @@ def generate_report(results, stats):
     
     if total_all > 0:
         total_win_rate = round(total_win / total_all * 100, 1)
-        total_avg = round(sum(total_returns) / len(total_returns), 2)
+        total_avg = round(sum(total_returns) / len(total_returns), 2) if total_returns else 0
         lines.append(f"| **合计** | **{total_all}** | **{total_win_rate}%** | **{total_avg:+.2f}%** | | | | | |")
     
     lines.append("")
