@@ -33,7 +33,8 @@ MAIRUI_BASE = 'https://api.mairuiapi.com'
 CNINFO_BASE = 'http://www.cninfo.com.cn'
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 
-# 利空关键词
+# 利空关键词（高置信度，避免误杀）
+# 注："关联交易"和"资金占用"在日常公告中过于常见，已移除避免误杀
 NEGATIVE_KEYWORDS = [
     'ST警示', '风险警示', '退市', '终止上市', '暂停上市',
     '重大亏损', '巨额亏损', '业绩预亏', '净利润为负',
@@ -43,8 +44,8 @@ NEGATIVE_KEYWORDS = [
     '商誉减值', '资产减值', '计提减值',
     '审计否定', '无法表示意见', '保留意见',
     '停产', '停工', '重大事故',
-    '违规担保', '关联交易', '资金占用',
-    '重组失败', '终止重组',
+    '违规担保', '重组失败', '终止重组',
+    '非经营性资金占用', '控股股东占用',
 ]
 
 def _http_get(url, headers=None, timeout=10, encoding='utf-8', binary=False):
