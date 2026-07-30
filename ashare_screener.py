@@ -100,7 +100,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.29"
+BUILTIN_VERSION = "v6.16.30"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -2329,7 +2329,7 @@ def step10C_fetch_klines_itick(candidates):
         total = len(candidates)
         codes = [c.get('code', '') for c in candidates if c.get('code')]
         total_start = time.time()
-        _ITICK_MAX_WAIT = 300  # v6.16.29: 总等待上限300s(5分钟)，超时熔断
+        _ITICK_MAX_WAIT = 120  # v6.16.30: 300→120s(总等待上限2分钟)，超时熔断
         for batch_start in range(0, len(codes), batch_size):
             # v6.16.29: 总等待超时熔断
             if time.time() - total_start > _ITICK_MAX_WAIT:
@@ -5284,7 +5284,7 @@ def step26_github_sync(mp, hd, candidates):
         subprocess.run(["git", "-C", rd, "config", "user.name", "ashare-screener"], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", rd, "add", "."], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", rd, "commit", "-m", f"筛选结果 {prediction_date} (v{file_version})", "--allow-empty"], capture_output=True, timeout=15)
-        result = _git_with_token(["git", "-C", rd, "push", "origin", "main"], timeout=60, check=False)
+        result = _git_with_token(["git", "-C", rd, "push", "origin", "main"], timeout=30, check=False)  # v6.16.30: 60→30s
         if result.returncode == 0: log_alert("INFO", "GitHub同步", f"✅ {prediction_date} 已推送")
         else: log_alert("WARNING", "GitHub同步", f"推送失败: {result.stderr[:100]}")
     except Exception as e: log_alert("WARNING", "GitHub同步", f"失败: {str(e)[:100]}")
@@ -5347,6 +5347,22 @@ def update_data_source_monitor(ds):
 # ============================================================
 # 主流程
 # ============================================================
+def _step_timer(label, func, *args, **kwargs):
+    """v6.16.30: 步骤级耗时监控 — 自动打印每个步骤的执行时间"""
+    t0 = time.time()
+    try:
+        result = func(*args, **kwargs)
+        elapsed = time.time() - t0
+        if elapsed > 5:
+            print(f"  ⏱ {label}: {elapsed:.1f}s")
+        elif elapsed > 1:
+            print(f"  ⏱ {label}: {elapsed:.1f}s")
+        return result
+    except Exception:
+        elapsed = time.time() - t0
+        print(f"  ⏱ {label}: {elapsed:.1f}s (失败)")
+        raise
+
 def main():
     global market_condition, position_pct, _step_status
     # v6.13.48: 重试时清除旧步骤状态，防止累积
@@ -5356,6 +5372,27 @@ def main():
     print("=" * 60)
     print(f"A股每日盘前短线标的筛选 {BUILTIN_VERSION}")
     print("=" * 60)
+
+    # v6.16.30: 整体超时熔断 — 平台沙箱对全局执行时间有限制(4051错误)
+    # 使用 watchdog 线程，600s 后自动触发 KeyboardInterrupt，避免平台超时杀进程
+    _MAIN_TIMEOUT = int(os.environ.get("LV_MAIN_TIMEOUT", "600"))
+    _main_start = time.time()
+    _main_timed_out = [False]
+
+    def _watchdog():
+        while not _main_timed_out[0]:
+            time.sleep(5)
+            if time.time() - _main_start > _MAIN_TIMEOUT:
+                _main_timed_out[0] = True
+                print(f"\n⏰ 整体超时({_MAIN_TIMEOUT}s)，触发熔断...")
+                log_alert("CRITICAL", "超时熔断", f"整体执行超{_MAIN_TIMEOUT}s,已执行{time.time()-_main_start:.0f}s")
+                # 发送 SIGINT 到主线程，触发 KeyboardInterrupt
+                os.kill(os.getpid(), 2)  # SIGINT
+                break
+
+    import threading
+    _wd = threading.Thread(target=_watchdog, daemon=True)
+    _wd.start()
     
     # v6.13.47: 环境自检 — 凭证缺失时提前告警
     env_issues = []
@@ -5472,16 +5509,27 @@ def main():
         if rescued > 0:
             valid_kline += rescued
             log_alert("INFO", "K线降级", f"东方财富HTTP补救{rescued}只({','.join(failed_kline[:5])})")
-        # 三级：axdata腾讯K线（需要Python 3.11+）
+        # 三级：axdata腾讯K线（需要Python 3.11+）v6.16.30: 串行→并发
         if still_failed and _axdata_available:
             rescued2 = 0
-            for code in still_failed:
-                c = next((x for x in raw_pool if x.get('code') == code), None)
-                if c:
-                    akd = _fetch_single_kline_axdata(c)
-                    if akd and akd.get('closes'):
-                        kline_data[code] = akd
-                        rescued2 += 1
+            _AX_BATCH = 10
+            for ax_start in range(0, len(still_failed), _AX_BATCH):
+                ax_batch = still_failed[ax_start:ax_start + _AX_BATCH]
+                with ThreadPoolExecutor(max_workers=_AX_BATCH) as executor:
+                    ax_futures = {}
+                    for code in ax_batch:
+                        c = next((x for x in raw_pool if x.get('code') == code), None)
+                        if c:
+                            ax_futures[executor.submit(_fetch_single_kline_axdata, c)] = code
+                    for f in as_completed(ax_futures):
+                        code = ax_futures[f]
+                        try:
+                            akd = f.result()
+                            if akd and akd.get('closes'):
+                                kline_data[code] = akd
+                                rescued2 += 1
+                        except Exception:
+                            pass
             if rescued2 > 0:
                 valid_kline += rescued2
                 log_alert("INFO", "K线降级", f"axdata补救{rescued2}只({','.join(still_failed[:5])})")
@@ -5613,6 +5661,10 @@ def main():
     summary = finish_session()
     print(f"\n📝 {summary}")
     
+    # v6.16.30: 输出总耗时
+    _total_elapsed = time.time() - _main_start
+    print(f"\n⏱ 总耗时: {_total_elapsed:.0f}s ({_total_elapsed/60:.1f}分钟)")
+    
     print(f"\n✅ 完成！ {mp}")
     return final, mp
 
@@ -5623,16 +5675,28 @@ _SCREENING_RETRY = 3
 _SCREENING_BACKOFF = [5, 10, 20]  # v6.16.29: [10,20,40]→[5,10,20] 退避等待秒数
 
 def _run_screening_with_retry():
-    """带重试的筛选主入口。抓取网络/超时/JSON解析等瞬时错误自动重试"""
+    """带重试的筛选主入口。抓取网络/超时/JSON解析等瞬时错误自动重试
+    v6.16.30: 新增KeyboardInterrupt捕获(超时熔断不重试) + 累计耗时检查"""
     last_error = None
+    _retry_total_start = time.time()
+    _RETRY_MAX_TOTAL = 900  # v6.16.30: 累计总耗时上限900s(15分钟)，含重试
     for attempt in range(_SCREENING_RETRY):
         try:
             main()
             return  # 成功则退出
+        except KeyboardInterrupt:
+            # v6.16.30: 超时熔断发出的SIGINT，不重试
+            print(f"\n⏰ 超时熔断中断，不重试")
+            raise
         except (socket.timeout, urllib.error.URLError, ConnectionResetError,
                 TimeoutError, json.JSONDecodeError) as e:
             last_error = e
             if attempt < _SCREENING_RETRY - 1:
+                # v6.16.30: 累计耗时检查 — 重试前先判断总耗时是否已超限
+                total_elapsed = time.time() - _retry_total_start
+                if total_elapsed > _RETRY_MAX_TOTAL:
+                    print(f"\n⏰ 累计耗时{total_elapsed:.0f}s超{_RETRY_MAX_TOTAL}s,放弃重试")
+                    break
                 wait = _SCREENING_BACKOFF[attempt]
                 print(f"\n{'='*60}")
                 print(f"⚠️ 筛选失败(瞬时错误)，{wait}秒后自动重试({attempt+1}/{_SCREENING_RETRY-1})")
@@ -5643,6 +5707,11 @@ def _run_screening_with_retry():
             if 'RemoteDisconnected' in type(e).__name__ or 'BrokenPipe' in type(e).__name__:
                 last_error = e
                 if attempt < _SCREENING_RETRY - 1:
+                    # v6.16.30: 累计耗时检查
+                    total_elapsed = time.time() - _retry_total_start
+                    if total_elapsed > _RETRY_MAX_TOTAL:
+                        print(f"\n⏰ 累计耗时{total_elapsed:.0f}s超{_RETRY_MAX_TOTAL}s,放弃重试")
+                        break
                     wait = _SCREENING_BACKOFF[attempt]
                     print(f"\n{'='*60}")
                     print(f"⚠️ 筛选失败(OS网络错误)，{wait}秒后自动重试({attempt+1}/{_SCREENING_RETRY-1})")
