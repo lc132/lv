@@ -32,11 +32,12 @@ _SSL_CTX = ssl._create_unverified_context()
 # 实际使用 _http_retry(urlopen) 而非连接池，清理避免维护混淆
 # ============================================================
 _HTTP_RETRY_DEFAULT = 2  # v6.13.49: 3→2(任务级重试已覆盖)
-_HTTP_RETRY_BACKOFF_BASE = 1.0  # v6.13.49: 1.5→1.0
+_HTTP_RETRY_BACKOFF_BASE = 1.5  # v6.16.29: 1.0→1.5（1.0导退避恒为1s，指数退避失效）
 
 def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
     """HTTP请求超时自动重试+指数退避。v6.13.52: 连接池改用urlopen(沙箱兼容)
-    v6.16.24: 新增HTTP错误码(403/429/502/503)重试"""
+    v6.16.24: 新增HTTP错误码(403/429/502/503)重试
+    v6.16.29: 退避底数恢复1.5(指数递增) + 429解析Retry-After头"""
     import http.client as _hc
     last_error = None
     for attempt in range(retries):
@@ -44,9 +45,19 @@ def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
             resp = urllib.request.urlopen(url, timeout=timeout, context=_SSL_CTX)
             status = resp.getcode()
             if 400 <= status < 600:
-                # v6.16.24: HTTP错误码重试（403/429/502/503等临时性错误）
                 if attempt < retries - 1:
-                    wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
+                    # v6.16.29: 429限流时优先使用服务端Retry-After，否则指数退避
+                    if status == 429:
+                        retry_after = resp.getheader('Retry-After')
+                        if retry_after:
+                            try:
+                                wait = float(retry_after)
+                            except ValueError:
+                                wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
+                        else:
+                            wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
+                    else:
+                        wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
                     print(f"  ⏳ {label}重试{attempt+1}/{retries-1}({wait:.1f}s): HTTP {status}")
                     time.sleep(wait)
                     continue
@@ -89,7 +100,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.28"
+BUILTIN_VERSION = "v6.16.29"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -517,7 +528,7 @@ def fetch_tencent_stocks(codes):
                         "main_inflow": None,  # v6.13.43: 腾讯API无主力净流入字段，由step10C单独获取
                     })
                 except (ValueError, TypeError, IndexError, AttributeError): pass
-            time.sleep(0.05)
+            time.sleep(0.01)  # v6.16.29: 0.05→0.01s(减少排队等待)
         except Exception as e: log_alert("WARNING", "腾讯个股", f"批次失败: {str(e)[:40]}")
     return result
 
@@ -2303,21 +2314,27 @@ def _fetch_single_kline_itick(code, api_key, base_url):
 
 
 def step10C_fetch_klines_itick(candidates):
-    """v6.16.28: iTick HTTP备选K线拉取（三级降级，批次内并发）
+    """v6.16.29: iTick HTTP备选K线拉取（三级降级，批次内并发+超时熔断）
     返回格式与 step10C_fetch_klines 完全一致
-    免费套餐限制: 5次/分钟，A股热门产品（非全覆盖）
-    """
+    免费套餐限制: 默认10次/分钟，通过ITICK_RATE_LIMIT环境变量覆盖
+    v6.16.29: 默认rate_limit 5→10 + 总等待超时熔断(300s)"""
     kline_data = {}
     if not _ITICK_API_KEY:
         log_alert("WARNING", "K线iTick", "未配置ITICK_API_KEY环境变量，跳过")
         return kline_data
     try:
-        rate_limit = int(os.environ.get("ITICK_RATE_LIMIT", "5"))
-        batch_size = min(rate_limit, 10)
+        rate_limit = int(os.environ.get("ITICK_RATE_LIMIT", "10"))  # v6.16.29: 默认5→10
+        batch_size = min(max(rate_limit // 2, 1), 10)  # 每批用一半配额，留余量防429
         wait_seconds = 60 / max(rate_limit / batch_size, 1)
         total = len(candidates)
         codes = [c.get('code', '') for c in candidates if c.get('code')]
+        total_start = time.time()
+        _ITICK_MAX_WAIT = 300  # v6.16.29: 总等待上限300s(5分钟)，超时熔断
         for batch_start in range(0, len(codes), batch_size):
+            # v6.16.29: 总等待超时熔断
+            if time.time() - total_start > _ITICK_MAX_WAIT:
+                log_alert("WARNING", "K线iTick", f"总等待超{_ITICK_MAX_WAIT}s,已获取{len(kline_data)}只,提前退出")
+                break
             batch_codes = codes[batch_start:batch_start + batch_size]
             batch_start_time = time.time()
             with ThreadPoolExecutor(max_workers=len(batch_codes)) as executor:
@@ -5425,22 +5442,33 @@ def main():
         valid_kline = sum(1 for v in kline_data.values() if v and v.get('closes'))
         log_alert("WARNING", "K线降级", f"腾讯HTTP仅{valid_kline}只有效，已切换iTick")
     # v6.13.42: 单股K线降级——腾讯HTTP失败时，东方财富HTTP补救
-    # v6.13.42: 新增axdata三级降级链（腾讯HTTP→东方财富HTTP→axdata）
+    # v6.16.29: 串行→ThreadPoolExecutor并发(max_workers=10)
     failed_kline = [c.get('code') for c in raw_pool
                     if not kline_data.get(c.get('code', ''), {}).get('closes')]
     if failed_kline:
-        # 二级：东方财富HTTP
+        # 二级：东方财富HTTP（并发）
         rescued = 0
         still_failed = []
-        for code in failed_kline:
-            c = next((x for x in raw_pool if x.get('code') == code), None)
-            if c:
-                ekd = _fetch_single_kline_eastmoney(c)
-                if ekd and ekd.get('closes'):
-                    kline_data[code] = ekd
-                    rescued += 1
-                else:
-                    still_failed.append(code)
+        _EM_BATCH = 10
+        for em_start in range(0, len(failed_kline), _EM_BATCH):
+            em_batch = failed_kline[em_start:em_start + _EM_BATCH]
+            with ThreadPoolExecutor(max_workers=_EM_BATCH) as executor:
+                em_futures = {}
+                for code in em_batch:
+                    c = next((x for x in raw_pool if x.get('code') == code), None)
+                    if c:
+                        em_futures[executor.submit(_fetch_single_kline_eastmoney, c)] = code
+                for f in as_completed(em_futures):
+                    code = em_futures[f]
+                    try:
+                        ekd = f.result()
+                        if ekd and ekd.get('closes'):
+                            kline_data[code] = ekd
+                            rescued += 1
+                        else:
+                            still_failed.append(code)
+                    except Exception:
+                        still_failed.append(code)
         if rescued > 0:
             valid_kline += rescued
             log_alert("INFO", "K线降级", f"东方财富HTTP补救{rescued}只({','.join(failed_kline[:5])})")
@@ -5592,7 +5620,7 @@ def main():
 # v6.13.46: 筛选任务超时自动重试 — 指数退避，最多3次
 # ============================================================
 _SCREENING_RETRY = 3
-_SCREENING_BACKOFF = [10, 20, 40]  # 退避等待秒数
+_SCREENING_BACKOFF = [5, 10, 20]  # v6.16.29: [10,20,40]→[5,10,20] 退避等待秒数
 
 def _run_screening_with_retry():
     """带重试的筛选主入口。抓取网络/超时/JSON解析等瞬时错误自动重试"""
