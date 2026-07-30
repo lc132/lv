@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.16.17
+# A股短线筛选 — 历史回测模块 v6.16.28
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
@@ -160,7 +160,7 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
                 'exit_reason': 'no_data', 'return_pct': 0, 'hold_days': 0,
                 'max_drawdown_pct': 0, 'max_profit_pct': 0}
 
-    max_drawdown = 0.0
+    max_floating_loss = 0.0  # v6.16.27: 重命名，更准确反映单笔最大浮亏
     max_profit = 0.0
     kl = klines[:hold_days]
 
@@ -180,7 +180,7 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
         high_pct = (k['high'] - entry) / entry * 100
         low_pct = (k['low'] - entry) / entry * 100
         max_profit = max(max_profit, high_pct)
-        max_drawdown = min(max_drawdown, low_pct)
+        max_floating_loss = min(max_floating_loss, low_pct)
 
         # v6.12.12: A股T+1规则 — 当日买入不可卖出，i=0跳过止盈止损检查
         if i == 0:
@@ -200,7 +200,7 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
                     'exit_date': k['date'], 'exit_reason': 'time_stop',
                     'return_pct': round((k['close'] - entry) / entry * 100, 2),
                     'hold_days': i + 1,
-                    'max_drawdown_pct': round(max_drawdown, 2),
+                    'max_drawdown_pct': round(max_floating_loss, 2),
                     'max_profit_pct': round(max_profit, 2),
                 }
 
@@ -211,7 +211,7 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
                 'exit_date': k['date'], 'exit_reason': 'take_profit',
                 'return_pct': round((take_profit - entry) / entry * 100, 2),
                 'hold_days': i + 1,
-                'max_drawdown_pct': round(max_drawdown, 2),
+                'max_drawdown_pct': round(max_floating_loss, 2),
                 'max_profit_pct': round(max_profit, 2),
             }
 
@@ -221,7 +221,7 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
                 'result': 'win', 'exit_price': trailing_stop,
                 'exit_date': k['date'], 'exit_reason': 'trailing_stop',
                 'return_pct': 0.0, 'hold_days': i + 1,
-                'max_drawdown_pct': round(max_drawdown, 2),
+                'max_drawdown_pct': round(max_floating_loss, 2),
                 'max_profit_pct': round(max_profit, 2),
             }
 
@@ -231,7 +231,7 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
                 'exit_date': k['date'], 'exit_reason': 'stop_loss',
                 'return_pct': round((stop_loss - entry) / entry * 100, 2),
                 'hold_days': i + 1,
-                'max_drawdown_pct': round(max_drawdown, 2),
+                'max_drawdown_pct': round(max_floating_loss, 2),
                 'max_profit_pct': round(max_profit, 2),
             }
 
@@ -244,7 +244,7 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
         'exit_reason': 'hold_expire',
         'return_pct': round(ret_pct, 2),
         'hold_days': len(kl),
-        'max_drawdown_pct': round(max_drawdown, 2),
+        'max_drawdown_pct': round(max_floating_loss, 2),
         'max_profit_pct': round(max_profit, 2),
     }
 
@@ -545,7 +545,7 @@ def generate_backtest_report(bt_result, output_path=None):
     lines.extend([
         "",
         f"> \u26a0\ufe0f 免责声明：回测结果不代表未来表现，仅供参考。",
-        f"> 版本: v6.13.38 | 生成: {today_str}",
+        f"> 版本: v6.16.28 | 生成: {today_str}",
     ])
 
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -577,7 +577,13 @@ def _build_backtest_lookup(bt_result):
         no_entry_count = sum(1 for t in ts if t['result'] == 'no_entry')
         valid = [t for t in ts if t['result'] not in ('no_data', 'no_entry')]
         avg_ret = sum(t['return_pct'] for t in valid) / len(valid) if valid else 0
-        last = valid[-1] if valid else ts[-1]
+        # v6.16.27: 从后往前找最后一个有效交易，避免fallback到no_data/no_entry失真
+        last_valid = None
+        for t in reversed(ts):
+            if t['result'] not in ('no_data', 'no_entry'):
+                last_valid = t
+                break
+        last = last_valid if last_valid else ts[-1]
         lookup[code] = {
             'total': total, 'wins': wins, 'losses': losses, 'no_data': no_data,
             'no_entry': no_entry_count,
@@ -662,7 +668,7 @@ def generate_backtest_html(bt_result, output_path=None):
     if not trades:
         html = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>历史回测报告</title>
 <style>body{{font-family:"Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif;max-width:900px;margin:40px auto;padding:20px;background:#f8fafc;color:#1e293b}}h1{{color:#2563eb}}</style></head>
-<body><h1>历史回测报告</h1><p>暂无回测数据。</p><h2>回测说明</h2><ul><li>回测使用最近90天推荐历史。</li><li>单笔最大持仓10个交易日。</li><li>按推荐时的进场、止损、止盈价格进行模拟。</li><li>遵循A股T+1规则，买入当日不检查止盈止损出场。</li><li>回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。</li><li>v6.13.14新增：移动止损(盈利达TP50%保本)、时间止损(持仓3天仍亏损离场)。</li></ul><p style="color:#94a3b8">版本: v6.13.24 | 生成: {today_str}</p></body></html>'''
+<body><h1>历史回测报告</h1><p>暂无回测数据。</p><h2>回测说明</h2><ul><li>回测使用最近90天推荐历史。</li><li>单笔最大持仓10个交易日。</li><li>按推荐时的进场、止损、止盈价格进行模拟。</li><li>遵循A股T+1规则，买入当日不检查止盈止损出场。</li><li>回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。</li><li>v6.13.14新增：移动止损(盈利达TP50%保本)、时间止损(持仓3天仍亏损离场)。</li></ul><p style="color:#94a3b8">版本: v6.16.27 | 生成: {today_str}</p></body></html>'''
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(html)
         return output_path
@@ -815,7 +821,7 @@ _champion_html(champion_trades, champion_metrics)
 
 <div class="footer">
 <p>\u26a0\ufe0f \u514d\u8d23\u58f0\u660e\uff1a\u56de\u6d4b\u7ed3\u679c\u4e0d\u4ee3\u8868\u672a\u6765\u8868\u73b0\uff0c\u4ec5\u4f9b\u53c2\u8003\u3002</p>
-<p>\u7248\u672c: v6.13.38 | \u751f\u6210: {today_str}</p>
+<p>\u7248\u672c: v6.16.28 | \u751f\u6210: {today_str}</p>
 </div>
 </div>
 </body>

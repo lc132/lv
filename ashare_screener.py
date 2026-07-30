@@ -35,11 +35,23 @@ _HTTP_RETRY_DEFAULT = 2  # v6.13.49: 3→2(任务级重试已覆盖)
 _HTTP_RETRY_BACKOFF_BASE = 1.0  # v6.13.49: 1.5→1.0
 
 def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
-    """HTTP请求超时自动重试+指数退避。v6.13.52: 连接池改用urlopen(沙箱兼容)"""
+    """HTTP请求超时自动重试+指数退避。v6.13.52: 连接池改用urlopen(沙箱兼容)
+    v6.16.24: 新增HTTP错误码(403/429/502/503)重试"""
+    import http.client as _hc
     last_error = None
     for attempt in range(retries):
         try:
-            return urllib.request.urlopen(url, timeout=timeout, context=_SSL_CTX)
+            resp = urllib.request.urlopen(url, timeout=timeout, context=_SSL_CTX)
+            status = resp.getcode()
+            if 400 <= status < 600:
+                # v6.16.24: HTTP错误码重试（403/429/502/503等临时性错误）
+                if attempt < retries - 1:
+                    wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
+                    print(f"  ⏳ {label}重试{attempt+1}/{retries-1}({wait:.1f}s): HTTP {status}")
+                    time.sleep(wait)
+                    continue
+                raise urllib.error.URLError(f"HTTP {status} (max retries)")
+            return resp
         except (socket.timeout, urllib.error.URLError, ConnectionResetError, TimeoutError) as e:
             last_error = e
             if attempt < retries - 1:
@@ -47,9 +59,7 @@ def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
                 print(f"  ⏳ {label}重试{attempt+1}/{retries-1}({wait:.1f}s): {str(e)[:40]}")
                 time.sleep(wait)
         except OSError as e:
-            # v6.13.55: 使用 isinstance 替代字符串匹配（更健壮）
-            import http.client as _hc
-            if isinstance(e, (BrokenPipeError, _hc.RemoteDisconnected, ConnectionResetError)):
+            if isinstance(e, (BrokenPipeError, ConnectionResetError)):
                 last_error = e
                 if attempt < retries - 1:
                     wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
@@ -57,11 +67,17 @@ def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
                     time.sleep(wait)
             else:
                 raise
-        except http.client.CannotSendRequest as e:
+        except _hc.CannotSendRequest as e:
             last_error = e
             if attempt < retries - 1:
                 wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
                 print(f"  ⏳ {label}重试{attempt+1}/{retries-1}({wait:.1f}s): CannotSendRequest")
+                time.sleep(wait)
+        except _hc.BadStatusLine as e:
+            last_error = e
+            if attempt < retries - 1:
+                wait = _HTTP_RETRY_BACKOFF_BASE ** (attempt + 1)
+                print(f"  ⏳ {label}重试{attempt+1}/{retries-1}({wait:.1f}s): BadStatusLine")
                 time.sleep(wait)
     raise last_error
 
@@ -73,7 +89,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.20"
+BUILTIN_VERSION = "v6.16.28"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -144,7 +160,8 @@ def _fetch_cls_telegraphs(pages=3):
                 data = json.loads(resp.read().decode('utf-8'))
                 items = data.get('data', [])
                 if isinstance(items, list): all_items.extend(items)
-        except Exception: pass
+        except Exception as e:
+                log_alert("DEBUG", "CLS电报", f"第{page}页失败: {type(e).__name__}")
     _cls_telegraph_cache = all_items
     return all_items
 
@@ -153,7 +170,8 @@ def _is_limit_up(code, chg):
     """精确判断涨停：主板±10%→≥9.5%, 创业板/科创±20%→≥19.5%, 北交所±30%→≥29.5%"""
     if chg is None: return False
     code = str(code)
-    if code.startswith(('8', '4')): return chg >= 29.5       # 北交所±30%
+    # v6.16.23: 收紧北交所前缀，使用精确的82/83/87/88/92/43替代泛化的'8'/'4'
+    if code.startswith(('82', '83', '87', '88', '92', '43')): return chg >= 29.5  # 北交所/老三板±30%
     if code.startswith(('300', '301', '688')): return chg >= 19.5  # 创业板/科创±20%
     return chg >= 9.5  # 主板/中小板±10%
 
@@ -161,7 +179,8 @@ def _is_limit_down(code, chg):
     """精确判断跌停：主板±10%→≤-9.5%, 创业板/科创±20%→≤-19.5%, 北交所±30%→≤-29.5%"""
     if chg is None: return False
     code = str(code)
-    if code.startswith(('8', '4')): return chg <= -29.5      # 北交所±30%
+    # v6.16.23: 收紧北交所前缀，与_is_limit_up保持一致
+    if code.startswith(('82', '83', '87', '88', '92', '43')): return chg <= -29.5  # 北交所/老三板±30%
     if code.startswith(('300', '301', '688')): return chg <= -19.5  # 创业板/科创±20%
     return chg <= -9.5  # 主板/中小板±10%
 
@@ -358,7 +377,7 @@ _STRATEGY_ORDER = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 
 _STRATEGY_NAMES = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破', 'R': '主力共振(强)', 'S': '主力共振(弱)', 'T': '主力观察', 'U': '涨停追击'}
 _STRATEGY_COLORS = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4', 'G': '#10b981', 'H': '#f97316', 'I': '#14b8a6', 'J': '#ef4444', 'K': '#a855f7', 'L': '#eab308', 'M': '#f472b6', 'N': '#84cc16', 'O': '#38bdf8', 'P': '#fb923c', 'Q': '#22d3ee', 'R': '#dc2626', 'S': '#f97316', 'T': '#94a3b8', 'U': '#ff3b3b'}
 _STRATEGY_STOP_LOSS = {'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965, 'F': 0.965, 'G': 0.95, 'H': 0.94, 'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95, 'R': 0.95, 'S': 0.95, 'T': 0.94, 'U': 0.93}
-_STRATEGY_TAKE_PROFIT = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06, 'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05, 'R': 1.05, 'S': 1.04, 'T': 1.04}
+_STRATEGY_TAKE_PROFIT = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06, 'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05, 'R': 1.05, 'S': 1.04, 'T': 1.04, 'U': 1.06}
 
 def _tie_key(c):
     """模块级平局打破键：策略优先级→评分→平局分→量比→换手偏离"""
@@ -812,8 +831,8 @@ def step3A_domestic_index_check():
         if chg < -1:
             log_alert("WARNING", "大盘代理", f"深成指跌{chg:.1f}%>1%，偏空降档")
             position_pct = max(position_pct - 15, MIN_POSITION_PCT)
-            if market_condition == "强市": market_condition = "震荡"
-            elif market_condition == "震荡": market_condition = "弱市"
+            if "强市" in market_condition: market_condition = "震荡"
+            elif "震荡" in market_condition: market_condition = "弱市"
     except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError): log_alert("INFO", "大盘代理", "数据不可得，跳过")
 
 # ============================================================
@@ -925,6 +944,108 @@ def step4C_crisis_check(holdings):
     return alerts
 
 # ============================================================
+# v6.16.24: 回撤断路器+兑现率闭环（从pipeline.py集成到主流程）
+# ============================================================
+def step9B_circuit_breaker():
+    """回撤断路器：任一持仓当日亏损>threshold%触发"""
+    global position_pct
+    threshold = params.get('circuit_breaker_threshold_pct', 3.0)
+    # 从推荐历史文件读取持仓（与step4_holdings_sync一致）
+    holdings = []
+    for fname in sorted(os.listdir('/workspace')):
+        if fname.startswith('推荐历史_') and fname.endswith('.json'):
+            for r in safe_read_json(os.path.join('/workspace', fname)):
+                if r.get('type') == 'holding':
+                    holdings.append(r)
+    if not holdings:
+        return
+    triggered_today = False
+    for h in holdings:
+        cur = h.get('current', 0); prev = h.get('prev_close')
+        if prev and prev > 0 and cur > 0:
+            drop = (cur - prev) / prev * 100
+            if drop < -threshold:
+                triggered_today = True
+                log_alert("WARNING", "回撤断路器", f"{h.get('code')} {h.get('name')} 当日跌{drop:.1f}%>{threshold}%")
+                break
+    if not triggered_today:
+        return
+    # 检查昨日是否已触发
+    yesterday = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
+    yesterday_triggered = False
+    for fname in sorted(os.listdir('/workspace')):
+        if fname.startswith('推荐历史_') and fname.endswith('.json'):
+            for r in safe_read_json(os.path.join('/workspace', fname)):
+                if r.get('type') == 'strategy_check' and r.get('date') == yesterday:
+                    if r.get('checks', {}).get('circuit_breaker_triggered'):
+                        yesterday_triggered = True
+                    break
+    if yesterday_triggered:
+        position_pct = 30
+        log_alert("WARNING", "回撤断路器", f"连续2日触发，仓位降至30%")
+    else:
+        position_pct = max(20, int(position_pct * 0.5))
+        log_alert("WARNING", "回撤断路器", f"首次触发，仓位降至{position_pct}%")
+    # 记录当日触发
+    hf = f"/workspace/推荐历史_{prediction_date.replace('-', '')}.json"
+    safe_append_json(hf, {"type": "strategy_check", "date": data_date, "checks": {"circuit_breaker_triggered": triggered_today}})
+
+def step9C_conversion_rate():
+    """T+1兑现率闭环：最近window_days兑现率<阈值→降仓位"""
+    global position_pct
+    window_days = params.get('conversion_rate_window_days', 10)
+    threshold = params.get('conversion_rate_threshold', 0.3)
+    restore_threshold = params.get('conversion_rate_restore', 0.6)
+    consecutive_days = params.get('conversion_rate_consecutive_days', 3)
+    # 收集所有推荐记录
+    all_recos = []
+    for fname in sorted(os.listdir('/workspace')):
+        if fname.startswith('推荐历史_') and fname.endswith('.json'):
+            for r in safe_read_json(os.path.join('/workspace', fname)):
+                if r.get('type') == 'recommendation':
+                    all_recos.append(r)
+    if len(all_recos) < 10:
+        print(f"  兑现率: 推荐记录不足10条({len(all_recos)}条)，跳过")
+        return
+    # 按日期分组
+    data_dt = datetime.strptime(data_date, '%Y-%m-%d')
+    window_start = data_dt - timedelta(days=window_days)
+    recos_by_date = {}
+    for r in all_recos:
+        rd = r.get('date', '')
+        if not rd: continue
+        try: r_dt = datetime.strptime(rd, '%Y-%m-%d')
+        except ValueError: continue
+        if r_dt < window_start or r_dt >= data_dt: continue
+        recos_by_date.setdefault(rd, []).append(r)
+    total_checked = 0; total_converted = 0
+    for rd, day_recos in recos_by_date.items():
+        r_dt = datetime.strptime(rd, '%Y-%m-%d')
+        t1 = (r_dt + timedelta(days=1)).strftime('%Y-%m-%d')
+        for rec in day_recos:
+            entry = rec.get('close') or rec.get('entry')
+            if not entry or entry <= 0: continue
+            for r2 in all_recos:
+                if r2.get('type') == 'recommendation' and r2.get('date') == t1 and r2.get('code') == rec.get('code'):
+                    t1_close = r2.get('close') or r2.get('entry')
+                    if t1_close and t1_close > 0:
+                        total_checked += 1
+                        if (t1_close - entry) / entry > 0.02:
+                            total_converted += 1
+                    break
+    if total_checked < 5:
+        print(f"  兑现率: 可检查记录不足5条({total_checked}条)，跳过")
+        return
+    rate = total_converted / total_checked
+    print(f"  兑现率: {total_converted}/{total_checked} = {rate:.1%}")
+    if rate < threshold:
+        position_pct = max(20, position_pct - 10)
+        log_alert("WARNING", "兑现率闭环", f"兑现率{rate:.1%}<{threshold:.0%}，仓位降至{position_pct}%")
+    elif rate >= restore_threshold:
+        position_pct = min(75, position_pct + 5)
+        log_alert("INFO", "兑现率闭环", f"兑现率{rate:.1%}>={restore_threshold:.0%}，仓位恢复至{position_pct}%")
+
+# ============================================================
 # 步骤5-8：清理 + 初始化 + 财报 + 大盘
 # ============================================================
 def step5_history_clean():
@@ -1025,7 +1146,8 @@ def step8_market_environment():
         elif chg < -1: market_condition = "弱市"; position_pct = 35
         else: market_condition = "震荡"; position_pct = 55
     # 保护前置步骤的保守设置：不覆盖更弱的条件
-    if pre_condition == "弱市" and market_condition != "弱市":
+    # v6.16.24: 保护前置步骤的保守设置，用"弱市" in覆盖子类型
+    if "弱市" in pre_condition and "弱市" not in market_condition:
         market_condition = "弱市"
         position_pct = min(position_pct, pre_position)
         log_alert("INFO", "大盘环境", f"保护前置弱市: {market_condition} 仓位{position_pct}%")
@@ -2111,8 +2233,77 @@ def _fetch_single_kline_axdata(c):
 _ITICK_API_KEY = os.environ.get("ITICK_API_KEY", "")  # v6.13.5: 移除硬编码默认值
 _ITICK_BASE_URL = "https://api-free.itick.org"  # 生产环境；免费版可用 https://api-free.itick.org
 
+def _fetch_single_kline_itick(code, api_key, base_url):
+    """v6.16.28: 单只股票iTick K线拉取+指标计算（供并发调用）"""
+    try:
+        region = 'SH' if code.startswith('6') else 'SZ'
+        url = (f'{base_url}/stock/kline?'
+               f'region={region}&code={code}&kType=8&limit=60')
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0',
+            'accept': 'application/json',
+            'token': api_key})
+        with _http_retry(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        bars = data.get('data', [])
+        if not bars or len(bars) < 20:
+            return (code, {})
+        bars.sort(key=lambda b: b.get('t', 0))
+        closes = [b['c'] for b in bars]
+        highs = [b['h'] for b in bars]
+        lows = [b['l'] for b in bars]
+        volumes = [b['v'] for b in bars]
+        ma5 = sum(closes[-5:]) / 5 if len(closes) >= 5 else 0
+        ma10 = sum(closes[-10:]) / 10 if len(closes) >= 10 else 0
+        ma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else 0
+        ema12 = closes[0]; ema26 = closes[0]
+        difs = [0.0]
+        for pr in closes[1:]:
+            ema12 = ema12 * 11/13 + pr * 2/13
+            ema26 = ema26 * 25/27 + pr * 2/27
+            difs.append(ema12 - ema26)
+        dea = difs[0]
+        macd_hists = [0.0]
+        for d in difs[1:]:
+            dea = dea * 8/10 + d * 2/10
+            macd_hists.append((d - dea) * 2)
+        dif = difs[-1]; dea_val = dea; macd_hist = macd_hists[-1]
+        k_val = 50.0; d_val = 50.0; j_val = 50.0
+        if len(closes) >= 9:
+            for i in range(8, len(closes)):
+                h9 = max(highs[i-8:i+1]); l9 = min(lows[i-8:i+1])
+                rsv = (closes[i] - l9) / (h9 - l9) * 100 if h9 > l9 else 50
+                k_val = 2/3 * k_val + 1/3 * rsv
+                d_val = 2/3 * d_val + 1/3 * k_val
+            j_val = 3 * k_val - 2 * d_val
+        boll_mid = ma20; boll_upper = boll_mid; boll_lower = boll_mid
+        if len(closes) >= 20 and boll_mid > 0:
+            variance = sum((c - boll_mid) ** 2 for c in closes[-20:]) / 20
+            std = variance ** 0.5
+            boll_upper = boll_mid + 2 * std; boll_lower = boll_mid - 2 * std
+        high20 = max(highs[-20:]) if len(highs) >= 20 else max(highs)
+        low20 = min(lows[-20:]) if len(lows) >= 20 else min(lows)
+        boll_width = (boll_upper - boll_lower) / boll_mid if boll_mid > 0 else 999
+        return (code, {
+            'ma5': ma5, 'ma10': ma10, 'ma20': ma20,
+            'dif': dif, 'dea': dea_val, 'macd_hist': macd_hist,
+            'rsi14': 50.0, 'k': k_val, 'd': d_val, 'j': j_val,
+            'boll_upper': boll_upper, 'boll_mid': boll_mid, 'boll_lower': boll_lower,
+            'boll_width': boll_width, 'wr14': 50.0, 'obv': 0,
+            'pdi': 0.0, 'mdi': 0.0, 'adx': 0.0,
+            'high20': high20, 'low20': low20,
+            'high60': max(highs[-60:]) if len(highs) >= 60 else (max(highs) if highs else 0),
+            'low60': min(lows[-60:]) if len(lows) >= 60 else (min(lows) if lows else 0),
+            'days_listed': 999, 'limit_up_days': 0,
+            'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes
+        })
+    except (urllib.error.URLError, json.JSONDecodeError, OSError,
+            ValueError, TypeError, ZeroDivisionError, IndexError):
+        return (code, {})
+
+
 def step10C_fetch_klines_itick(candidates):
-    """v6.12.15: iTick HTTP备选K线拉取（三级降级）
+    """v6.16.28: iTick HTTP备选K线拉取（三级降级，批次内并发）
     返回格式与 step10C_fetch_klines 完全一致
     免费套餐限制: 5次/分钟，A股热门产品（非全覆盖）
     """
@@ -2121,93 +2312,25 @@ def step10C_fetch_klines_itick(candidates):
         log_alert("WARNING", "K线iTick", "未配置ITICK_API_KEY环境变量，跳过")
         return kline_data
     try:
-        # 探测套餐速率: 试用期(7天) = 120次/分钟, 免费版 = 5次/分钟
-        # 默认保守使用5次/分钟，可通过 ITICK_RATE_LIMIT 环境变量覆盖
         rate_limit = int(os.environ.get("ITICK_RATE_LIMIT", "5"))
-        batch_size = min(rate_limit, 10)  # 每批最多10只，避免单请求耗时过长
-        wait_seconds = 60 / max(rate_limit / batch_size, 1)  # 每批间隔
+        batch_size = min(rate_limit, 10)
+        wait_seconds = 60 / max(rate_limit / batch_size, 1)
         total = len(candidates)
-        for batch_start in range(0, total, batch_size):
-            batch = candidates[batch_start:batch_start + batch_size]
+        codes = [c.get('code', '') for c in candidates if c.get('code')]
+        for batch_start in range(0, len(codes), batch_size):
+            batch_codes = codes[batch_start:batch_start + batch_size]
             batch_start_time = time.time()
-            for c in batch:
-                code = c.get('code', '')
-                if not code:
-                    continue
-                try:
-                    region = 'SH' if code.startswith('6') else 'SZ'
-                    url = (f'{_ITICK_BASE_URL}/stock/kline?'
-                           f'region={region}&code={code}&kType=8&limit=60')
-                    time.sleep(0.5)  # 请求间隔，避免429（试用期120/min → 2/sec）
-                    req = urllib.request.Request(url, headers={
-                        'User-Agent': 'Mozilla/5.0',
-                        'accept': 'application/json',
-                        'token': _ITICK_API_KEY})
-                    with _http_retry(req, timeout=10) as resp:
-                        data = json.loads(resp.read().decode())
-                    bars = data.get('data', [])
-                    if not bars or len(bars) < 20:
-                        kline_data[code] = {}
-                        continue
-                    # iTick返回: [{o, h, l, c, v, tu, t}, ...] 按时间升序
-                    bars.sort(key=lambda b: b.get('t', 0))
-                    closes = [b['c'] for b in bars]
-                    highs = [b['h'] for b in bars]
-                    lows = [b['l'] for b in bars]
-                    volumes = [b['v'] for b in bars]
-                    ma5 = sum(closes[-5:]) / 5 if len(closes) >= 5 else 0
-                    ma10 = sum(closes[-10:]) / 10 if len(closes) >= 10 else 0
-                    ma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else 0
-                    # MACD (12,26,9)
-                    ema12 = closes[0]; ema26 = closes[0]
-                    difs = [0.0]
-                    for pr in closes[1:]:
-                        ema12 = ema12 * 11/13 + pr * 2/13
-                        ema26 = ema26 * 25/27 + pr * 2/27
-                        difs.append(ema12 - ema26)
-                    dea = difs[0]
-                    macd_hists = [0.0]
-                    for d in difs[1:]:
-                        dea = dea * 8/10 + d * 2/10
-                        macd_hists.append((d - dea) * 2)
-                    dif = difs[-1]; dea_val = dea; macd_hist = macd_hists[-1]
-                    # KDJ(9,3,3)
-                    k_val = 50.0; d_val = 50.0; j_val = 50.0
-                    if len(closes) >= 9:
-                        for i in range(8, len(closes)):
-                            h9 = max(highs[i-8:i+1]); l9 = min(lows[i-8:i+1])
-                            rsv = (closes[i] - l9) / (h9 - l9) * 100 if h9 > l9 else 50
-                            k_val = 2/3 * k_val + 1/3 * rsv
-                            d_val = 2/3 * d_val + 1/3 * k_val
-                        j_val = 3 * k_val - 2 * d_val
-                    # 布林带(20,2)
-                    boll_mid = ma20; boll_upper = boll_mid; boll_lower = boll_mid
-                    if len(closes) >= 20 and boll_mid > 0:
-                        variance = sum((c - boll_mid) ** 2 for c in closes[-20:]) / 20
-                        std = variance ** 0.5
-                        boll_upper = boll_mid + 2 * std; boll_lower = boll_mid - 2 * std
-                    high20 = max(highs[-20:]) if len(highs) >= 20 else max(highs)
-                    low20 = min(lows[-20:]) if len(lows) >= 20 else min(lows)
-                    boll_width = (boll_upper - boll_lower) / boll_mid if boll_mid > 0 else 999
-                    kline_data[code] = {
-                        'ma5': ma5, 'ma10': ma10, 'ma20': ma20,
-                        'dif': dif, 'dea': dea_val, 'macd_hist': macd_hist,
-                        'rsi14': 50.0, 'k': k_val, 'd': d_val, 'j': j_val,
-                        'boll_upper': boll_upper, 'boll_mid': boll_mid, 'boll_lower': boll_lower,
-                        'boll_width': boll_width, 'wr14': 50.0, 'obv': 0,
-                        'pdi': 0.0, 'mdi': 0.0, 'adx': 0.0,
-                        'high20': high20, 'low20': low20,
-                        'high60': max(highs[-60:]) if len(highs) >= 60 else (max(highs) if highs else 0),
-                        'low60': min(lows[-60:]) if len(lows) >= 60 else (min(lows) if lows else 0),
-                        'days_listed': 999, 'limit_up_days': 0,
-                        'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes
-                    }
-                except (urllib.error.URLError, json.JSONDecodeError, OSError,
-                        ValueError, TypeError, ZeroDivisionError, IndexError):
-                    kline_data[code] = {}
-            # 速率限制: 试用期120次/分钟(ITICK_RATE_LIMIT=120), 免费版5次/分钟(默认)
+            with ThreadPoolExecutor(max_workers=len(batch_codes)) as executor:
+                futures = {executor.submit(_fetch_single_kline_itick, code, _ITICK_API_KEY, _ITICK_BASE_URL): code
+                          for code in batch_codes}
+                for f in as_completed(futures):
+                    try:
+                        code, data = f.result()
+                        kline_data[code] = data
+                    except Exception:
+                        kline_data[futures[f]] = {}
             elapsed = time.time() - batch_start_time
-            if elapsed < wait_seconds and batch_start + batch_size < total:
+            if elapsed < wait_seconds and batch_start + batch_size < len(codes):
                 wait = max(1, wait_seconds - elapsed)
                 time.sleep(wait)
         valid_count = sum(1 for v in kline_data.values() if v and v.get('closes'))
@@ -2262,65 +2385,80 @@ def step10D_fetch_financials():
 # v6.9.15: 替代已废弃的datacenter-web批量API，使用F10单股API逐只拉取。
 # 仅在step11硬排除后调用，对通过候选标的拉取最新财报ROE和净利润。
 # ============================================================
-def step10E_fetch_fundamentals(candidates):
-    """使用F10单股API拉取ROE/净利润/净利润同比，仅对通过硬排除的候选标的"""
-    fundamental_data = {}
+def _fetch_single_f10(code):
+    """v6.16.28: 单只股票F10财务数据拉取（供并发调用）"""
     headers = {'User-Agent': 'Mozilla/5.0'}
+    prefix = 'SH' if code.startswith('6') else 'SZ'
+    secode = f'{prefix}{code}'
+    try:
+        url = f'https://emweb.securities.eastmoney.com/PC_HSF10/NewFinanceAnalysis/ZYZBAjaxNew?type=0&code={secode}'
+        req = urllib.request.Request(url, headers=headers)
+        with _http_retry(req, timeout=8) as resp:
+            raw = resp.read()
+        if raw[:2] == b'\x1f\x8b':
+            raw = gzip.decompress(raw)
+        r = json.loads(raw.decode('utf-8'))
+        items = r.get('data', [])
+        if items:
+            latest = items[0]
+            fd = {
+                'roe': latest.get('ROEJQ'),
+                'net_profit': latest.get('PARENTNETPROFIT'),
+                'revenue': latest.get('TOTALOPERATEREVE'),
+                'eps': latest.get('EPSJB'),
+                'report_date': latest.get('REPORT_DATE', ''),
+                'pledge_ratio': latest.get('PLEDGERATIO'),
+                'goodwill_ratio': latest.get('GOODWILLRATIO'),
+                'revenue_yoy': latest.get('TOTALOPERATEREVETZ'),
+                'net_profit_yoy': latest.get('PARENTNETPROFITTZ'),
+                'deduct_np_yoy': latest.get('DJD_DEDUCTDPNP_YOY'),
+                'gross_margin': latest.get('XSMLL'),
+                'net_margin': latest.get('XSJLL'),
+                'debt_ratio': latest.get('ZCFZL'),
+                'ocf_to_revenue': latest.get('JYXJLYYSR'),
+                'roic': latest.get('ROIC'),
+            }
+            if len(items) >= 5:
+                prev_year = items[4]
+                try:
+                    cur_np = float(latest.get('PARENTNETPROFIT', 0) or 0)
+                    prev_np = float(prev_year.get('PARENTNETPROFIT', 0) or 0)
+                    if prev_np != 0:
+                        fd['net_profit_yoy'] = (cur_np - prev_np) / abs(prev_np) * 100
+                except (ValueError, TypeError):
+                    pass
+            return (code, fd, True)
+        return (code, None, False)
+    except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError):
+        return (code, None, False)
+
+
+def step10E_fetch_fundamentals(candidates):
+    """v6.16.28: 并发拉取F10财务数据（ThreadPoolExecutor max_workers=20）"""
+    fundamental_data = {}
     fetched = 0; errors = 0
-    for c in candidates:
-        code = c.get('code', '')
-        if not code: continue
-        # 确定市场前缀: 6开头→SH, 0/3开头→SZ
-        prefix = 'SH' if code.startswith('6') else 'SZ'
-        secode = f'{prefix}{code}'
-        try:
-            url = f'https://emweb.securities.eastmoney.com/PC_HSF10/NewFinanceAnalysis/ZYZBAjaxNew?type=0&code={secode}'
-            req = urllib.request.Request(url, headers=headers)
-            with _http_retry(req, timeout=8) as resp:
-                raw = resp.read()
-            # v6.9.21: 处理gzip压缩响应
-            if raw[:2] == b'\x1f\x8b':
-                raw = gzip.decompress(raw)
-            r = json.loads(raw.decode('utf-8'))
-            items = r.get('data', [])
-            if items:
-                latest = items[0]  # 最新一期报告
-                fd = {
-                    'roe': latest.get('ROEJQ'),
-                    'net_profit': latest.get('PARENTNETPROFIT'),
-                    'revenue': latest.get('TOTALOPERATEREVE'),
-                    'eps': latest.get('EPSJB'),
-                    'report_date': latest.get('REPORT_DATE', ''),
-                    'pledge_ratio': latest.get('PLEDGERATIO'),        # v6.9.43: 质押比例
-                    'goodwill_ratio': latest.get('GOODWILLRATIO'),   # v6.9.43: 商誉占比
-                    # v6.14.0: 基本面PK维度 — 新增6个字段
-                    'revenue_yoy': latest.get('TOTALOPERATEREVETZ'),   # 营收同比(%)
-                    'net_profit_yoy': latest.get('PARENTNETPROFITTZ'), # 净利同比(%)
-                    'deduct_np_yoy': latest.get('DJD_DEDUCTDPNP_YOY'), # 扣非净利同比(%)
-                    'gross_margin': latest.get('XSMLL'),               # 销售毛利率(%)
-                    'net_margin': latest.get('XSJLL'),                 # 销售净利率(%)
-                    'debt_ratio': latest.get('ZCFZL'),                 # 资产负债率(%)
-                    'ocf_to_revenue': latest.get('JYXJLYYSR'),         # 经营现金流/营收
-                    'roic': latest.get('ROIC'),                        # ROIC(%)
-                }
-                # v6.9.39: 计算净利润同比（与4期前同季度对比）
-                if len(items) >= 5:
-                    prev_year = items[4]  # 4期前=同季度去年
-                    try:
-                        cur_np = float(latest.get('PARENTNETPROFIT', 0) or 0)
-                        prev_np = float(prev_year.get('PARENTNETPROFIT', 0) or 0)
-                        if prev_np != 0:
-                            fd['net_profit_yoy'] = (cur_np - prev_np) / abs(prev_np) * 100
-                    except (ValueError, TypeError):
-                        pass
-                fundamental_data[code] = fd
-                fetched += 1
-        except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError) as e:
-            errors += 1
-            continue
-        # 每50只短暂休息，避免被限流
-        if fetched % 50 == 0 and fetched > 0:
-            time.sleep(0.3)
+    codes = [c.get('code', '') for c in candidates if c.get('code')]
+    if not codes:
+        return fundamental_data
+
+    _F10_BATCH = 20
+    for batch_start in range(0, len(codes), _F10_BATCH):
+        batch_codes = codes[batch_start:batch_start + _F10_BATCH]
+        with ThreadPoolExecutor(max_workers=_F10_BATCH) as executor:
+            futures = {executor.submit(_fetch_single_f10, code): code for code in batch_codes}
+            for f in as_completed(futures):
+                try:
+                    code, fd, ok = f.result()
+                    if ok and fd:
+                        fundamental_data[code] = fd
+                        fetched += 1
+                    else:
+                        errors += 1
+                except Exception:
+                    errors += 1
+        if batch_start + _F10_BATCH < len(codes):
+            time.sleep(0.3)  # 批次间间隔，避免限流
+
     log_alert("INFO", "财务数据", f"F10基本面: {fetched}只成功, {errors}只失败")
     return fundamental_data
 
@@ -2336,29 +2474,36 @@ def step10F_fetch_risk_events():
     
     end_date = (datetime.strptime(prediction_date, '%Y-%m-%d') + timedelta(days=15)).strftime('%Y-%m-%d')
     
-    # 1. 限售解禁数据 — qqjjsj.com 结构化解析
+    # 1. 限售解禁数据 — 东财datacenter RPT_LIFT_STAGE (v6.16.21: 原qqjjsj.com已404)
     try:
-        url = 'https://www.qqjjsj.com/show13a446260'
-        req = urllib.request.Request(url, headers={
+        # 拉取prediction_date之后的解禁数据，升序排列，前500条即为最近解禁
+        filter_str = f"(FREE_DATE>='{prediction_date}')"
+        unlock_url = ('https://datacenter-web.eastmoney.com/api/data/v1/get'
+                      '?reportName=RPT_LIFT_STAGE'
+                      '&columns=SECURITY_CODE,SECURITY_NAME_ABBR,FREE_DATE,FREE_SHARES,FREE_RATIO,'
+                      'FREE_SHARES_TYPE,ABLE_FREE_SHARES,LIFT_MARKET_CAP'
+                      '&pageNumber=1&pageSize=500'
+                      '&sortColumns=FREE_DATE&sortTypes=1'
+                      '&source=WEB&client=WEB'
+                      f'&filter={urllib.parse.quote(filter_str, safe="")}')
+        req = urllib.request.Request(unlock_url, headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'text/html'
-        })
-        with _http_retry(req, timeout=12) as resp:
-            raw = resp.read().decode('utf-8', errors='ignore')
-        # 解析表格: <td>代码</td><td>名称</td><td>日期</td>...<td>占总股本比例</td>
-        rows = re.findall(
-            r'<td[^>]*>(\d{6})</td>\s*<td[^>]*>([^<]+)</td>\s*<td[^>]*>(\d{4}-\d{2}-\d{2})</td>'
-            r'(?:.*?</tr>|.*?<td[^>]*>([^<]*)</td>\s*<td[^>]*>([^<]*)</td>\s*<td[^>]*>([^<]*)</td>\s*<td[^>]*>([\d.]+)</td>)',
-            raw, re.DOTALL
-        )
-        for code, _, date, *rest in rows:
-            if not (prediction_date <= date <= end_date): continue
-            ratio = 0
-            if rest and len(rest) >= 4:
-                try: ratio = float(rest[3])
-                except (ValueError, TypeError): pass
+            'Referer': 'https://data.eastmoney.com/'})
+        with _http_retry(req, timeout=15) as resp:
+            unlock_data = json.loads(resp.read().decode('utf-8'))
+        unlock_rows = unlock_data.get('result', {}).get('data', []) if unlock_data.get('result') else []
+        for row in unlock_rows:
+            code = row.get('SECURITY_CODE', '')
+            free_date = (row.get('FREE_DATE', '') or '')[:10]
+            if not code or not free_date:
+                continue
+            if not (prediction_date <= free_date <= end_date):
+                continue
+            ratio = row.get('FREE_RATIO', 0) or 0
             if ratio > 0:
-                unlock_events[code] = {'date': date, 'ratio': ratio}
+                # FREE_RATIO 是小数形式(如0.4904=49.04%), 转换为百分比
+                ratio_pct = ratio * 100 if ratio < 1 else ratio
+                unlock_events[code] = {'date': free_date, 'ratio': ratio_pct}
         if unlock_events:
             log_alert("INFO", "风险事件", f"解禁: {len(unlock_events)}只未来15日内有限售解禁(>0%)")
     except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError, ssl.SSLError) as e:
@@ -2410,65 +2555,77 @@ def step10F_fetch_risk_events():
 # ============================================================
 # 步骤10G：拥挤度数据拉取（v6.9.28：机构持仓+融资过热代理）
 # ============================================================
+def _fetch_single_crowding(code):
+    """v6.16.28: 单只股票机构持仓数据拉取（供并发调用）"""
+    headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://emweb.securities.eastmoney.com/'}
+    prefix = 'SH' if code.startswith('6') else 'SZ'
+    secode = f'{prefix}{code}'
+    try:
+        url = f'https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={secode}'
+        req = urllib.request.Request(url, headers=headers)
+        with _http_retry(req, timeout=8) as resp:
+            raw = resp.read()
+        if raw[:2] == b'\x1f\x8b':
+            raw = gzip.decompress(raw)
+        data = json.loads(raw.decode('utf-8'))
+        jjcg = data.get('jjcg', [])
+        total_fund_ratio = sum(float(item.get('FREESHARES_RATIO') or 0) for item in jjcg)
+        sdltgd = data.get('sdltgd', [])
+        inst_types = {'基金', '保险公司', '券商', '社保基金', 'QFII', '信托', '银行', '企业年金', '财务公司'}
+        reduce_count = 0
+        for item in sdltgd:
+            if item.get('HOLDER_TYPE', '') in inst_types:
+                change = item.get('HOLD_NUM_CHANGE', '')
+                if change and '减' in str(change):
+                    reduce_count += 1
+        return (code, True, {
+            'total_fund_ratio': total_fund_ratio,
+            'reduce_count': reduce_count,
+            'fund_count': len(jjcg),
+        })
+    except (urllib.error.URLError, json.JSONDecodeError, OSError, KeyError, IndexError, ValueError):
+        return (code, False, {'total_fund_ratio': 0, 'reduce_count': 0, 'fund_count': 0})
+
+
 def step10G_fetch_crowding_data(candidates):
-    """v6.9.28: 拉取机构持仓数据，计算融资过热代理指标。
+    """v6.16.28: 并发拉取机构持仓数据（ThreadPoolExecutor max_workers=20）
     返回: {inst_holding: {code: {total_fund_ratio, reduce_count}}, margin_overheat: {code: bool}}"""
     inst_holding = {}
     margin_overheat = {}
-    headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://emweb.securities.eastmoney.com/'}
     fetched = 0; errors = 0
-    
+
+    codes = [c.get('code', '') for c in candidates if c.get('code')]
+    if not codes:
+        return inst_holding, margin_overheat
+
+    _CROWD_BATCH = 20
+    for batch_start in range(0, len(codes), _CROWD_BATCH):
+        batch_codes = codes[batch_start:batch_start + _CROWD_BATCH]
+        with ThreadPoolExecutor(max_workers=_CROWD_BATCH) as executor:
+            futures = {executor.submit(_fetch_single_crowding, code): code for code in batch_codes}
+            for f in as_completed(futures):
+                try:
+                    code, ok, data = f.result()
+                    inst_holding[code] = data
+                    if ok:
+                        fetched += 1
+                    else:
+                        errors += 1
+                except Exception:
+                    errors += 1
+                    inst_holding[futures[f]] = {'total_fund_ratio': 0, 'reduce_count': 0, 'fund_count': 0}
+        if batch_start + _CROWD_BATCH < len(codes):
+            time.sleep(0.2)
+
+    # 融资过热代理 — 基于已有行情数据（无需API，直接从candidates计算）
     for c in candidates:
         code = c.get('code', '')
         if not code: continue
-        
-        # 1. 机构持仓数据 — F10 ShareholderResearch API
-        prefix = 'SH' if code.startswith('6') else 'SZ'
-        secode = f'{prefix}{code}'
-        try:
-            url = f'https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={secode}'
-            req = urllib.request.Request(url, headers=headers)
-            with _http_retry(req, timeout=8) as resp:
-                raw = resp.read()
-            if raw[:2] == b'\x1f\x8b':
-                raw = gzip.decompress(raw)
-            data = json.loads(raw.decode('utf-8'))
-            
-            # 计算基金持仓总占比
-            jjcg = data.get('jjcg', [])
-            total_fund_ratio = sum(float(item.get('FREESHARES_RATIO') or 0) for item in jjcg)
-            
-            # 统计前十大股东中机构减持数量
-            sdltgd = data.get('sdltgd', [])
-            inst_types = {'基金', '保险公司', '券商', '社保基金', 'QFII', '信托', '银行', '企业年金', '财务公司'}
-            reduce_count = 0
-            for item in sdltgd:
-                if item.get('HOLDER_TYPE', '') in inst_types:
-                    change = item.get('HOLD_NUM_CHANGE', '')
-                    if change and '减' in str(change):
-                        reduce_count += 1
-            
-            inst_holding[code] = {
-                'total_fund_ratio': total_fund_ratio,
-                'reduce_count': reduce_count,
-                'fund_count': len(jjcg),
-            }
-            fetched += 1
-        except (urllib.error.URLError, json.JSONDecodeError, OSError, KeyError, IndexError, ValueError):
-            errors += 1
-            inst_holding[code] = {'total_fund_ratio': 0, 'reduce_count': 0, 'fund_count': 0}
-        
-        # 2. 融资过热代理 — 基于已有行情数据
-        # 代理人: 换手率>20% + 量比>2.5 = 融资买入过热的强信号
-        # 逻辑: 融资买入→成交量激增→换手率+量比双双飙升
         to = c.get('turnover', 0) or 0
         vr = c.get('volume_ratio', 0) or 0
         if to > 20 and vr > 2.5:
             margin_overheat[code] = True
-        
-        if fetched % 100 == 0 and fetched > 0:
-            time.sleep(0.2)
-    
+
     n_oh = sum(1 for v in margin_overheat.values() if v)
     n_reduce = sum(1 for v in inst_holding.values() if v.get('reduce_count', 0) >= 2)
     log_alert("INFO", "拥挤度", f"机构持仓: {fetched}只成功/{errors}只失败, 减持≥2家: {n_reduce}只, 融资过热代理: {n_oh}只")
@@ -2531,12 +2688,13 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
         if code in all_holdings_codes:
             reason = "当前持仓"
         elif code.startswith('688'): reason = "科创板"
-        elif code.startswith(('82', '83', '87', '88', '92')): reason = "北交所"
+        elif code.startswith(('82', '83', '87', '88', '92', '43')): reason = "北交所/老三板"
         elif code.startswith(('300', '301')): reason = "创业板"
         elif close < 5: reason = f"股价<5元"
         elif close > 100: reason = f"股价>100元"
         elif (c.get('name') or '').startswith('ST') or (c.get('name') or '').startswith('*ST'): reason = "ST/*ST"
-        elif chg > 7: reason = f"涨幅>7%"
+        # v6.16.22: 改用_is_limit_up精确涨停判定替代裸chg>7%，为策略U涨停追击保留7-9.5%区间
+        elif _is_limit_up(code, chg): reason = f"涨停({chg:.1f}%)"
         elif close <= 0: reason = "停牌"
         # v6.9.22: PE<0已迁移至信号过滤，与F10净利润亏损合并判断
         elif c.get('total_cap') and c.get('total_cap') > 0 and c.get('total_cap') < 1_000_000_000: reason = "市值<10亿"
@@ -2648,7 +2806,10 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         # 18. 放量滞跌（v6.9.22: 量比>1.5+微跌+收阴+振幅>2%→放量滞跌，下跌中继，振幅辅助减少误杀）
         if vr is not None and vr > 1.5 and -1 < chg < 0 and close < op and amp is not None and amp > 2: reasons.append("放量滞跌")
         # 19. 高位长上影线（v6.9.11: 涨>5%+上影线>实体2倍→高位抛压）
-        if chg > 5 and high > max(close, op) and low > 0:
+        # v6.16.22: 策略U豁免——有涨停基因+5-9%涨幅的标的，上影线可能是冲板过程中的正常波动
+        lu_days_sig = (kd.get('limit_up_days', 0) or 0) if isinstance(kd, dict) else 0
+        is_u_candidate = (5 < chg <= 9.0 and lu_days_sig >= 1)
+        if not is_u_candidate and chg > 5 and high > max(close, op) and low > 0:
             body = abs(close - op); upper_shadow = high - max(close, op)
             if close > 0 and upper_shadow > body * 2 and upper_shadow / close > 0.03:
                 reasons.append("长上影线")
@@ -2723,7 +2884,7 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
     return passed, excluded
 
 # ============================================================
-# 步骤13：二十策略匹配（ABCDEFGHIJKLMNOPQ + RST主力共振，F为E子策略升级，v6.10.0新增RST）
+# 步骤13：二十一策略匹配（ABCDEFGHIJKLMNOPQ + RST主力共振 + U涨停追击，v6.10.0新增RST）
 # ============================================================
 def step13_strategy_match(candidates, kline_data=None):
     if kline_data is None: kline_data = {}
@@ -2747,7 +2908,9 @@ def step13_strategy_match(candidates, kline_data=None):
         # ── A 动量延续 (v6.8.8: 极端上涨市关闭+读取strategy_a_weak_market参数) ──
         a_weak_closed = params.get('strategy_a_weak_market', 'closed') == 'closed'
         a_extreme = market_condition == "强市(极端上涨/降仓防追高)"
-        if (not a_weak_closed or market_condition != "弱市") and not a_extreme and 3 <= chg <= 7:
+        # v6.16.24: 用"弱市" in market_condition替代精确比较，覆盖弱市子类型
+        # v6.16.24: A上限从7%降至5%，避免与U(涨停追击)在5-7%区间重叠——有涨停基因的标的应由U捕捉
+        if (not a_weak_closed or "弱市" not in market_condition) and not a_extreme and 3 <= chg <= 5:
             if vr is not None and 1.5 <= vr <= 5.0:
                 s = "A"; reason = f"动量延续:涨{chg:.1f}%+量比{vr:.1f}"; score = 10
                 # v6.6.38: 假突破过滤 — 上影线:下影线>2:1 → 降置信减3分
@@ -2763,10 +2926,11 @@ def step13_strategy_match(candidates, kline_data=None):
         if not s and -9.5 <= chg <= -2.5:
             if amp > 3 and low > 0 and close > low * 1.01:
                 s = "B"; reason = f"超跌反弹:跌{chg:.1f}%+振幅{amp:.1f}%+反弹确认"; score = 7
-            elif amp > 8 and low > 0 and close > low * 1.02:  # v6.9.39: 宽幅反弹也需确认
+            # v6.16.24: 修复elif→if，宽幅反弹独立判断，不再被amp>3分支截断
+            if amp > 8 and low > 0 and close > low * 1.02:
                 s = "B"; reason = f"超跌反弹(宽幅):跌{chg:.1f}%+振幅{amp:.1f}%"; score = 6
         # ── C 事件驱动 (v6.9.17: 弱市关闭，追涨风险大) ──
-        if not s and 1 <= chg < 2 and market_condition != "弱市":
+        if not s and 1 <= chg < 2 and "弱市" not in market_condition:
             is_earnings = beijing_now.month in (1, 3, 4, 8, 10)
             if is_earnings:
                 s = "C"; reason = f"事件驱动(财报季):涨{chg:.1f}%"; score = 8
@@ -2775,14 +2939,14 @@ def step13_strategy_match(candidates, kline_data=None):
             elif vr is None and to is not None and to >= 2 and close > op:
                 s = "C"; reason = f"事件驱动(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 6
         # ── D 回调企稳 (v6.9.21: 放宽amp≥1.5%+弱市不折扣，低吸策略) ──
-        if not s and 3 <= chg <= (7 if market_condition == "弱市" else 6):
+        if not s and 3 <= chg <= (7 if "弱市" in market_condition else 6):
             if 1.5 <= amp <= 10 and close > op:
                 s = "D"; reason = f"回调企稳:涨{chg:.1f}%+阳线+振幅{amp:.1f}%"; score = 8
         # ── E 资金埋伏 (v6.9.25: 弱市不折扣，代理base=6与H看齐) ──
         if not s and 0 <= chg <= 1:
             mi = c.get('main_inflow')
-            if mi is not None and mi > 3000:
-                s = "E"; reason = f"资金埋伏:涨{chg:.1f}%+主力流入{mi:.0f}万"; score = 6
+            if mi is not None and mi > 30_000_000:  # v6.16.24: 修正阈值从3000→3000万，与R/S/T一致
+                s = "E"; reason = f"资金埋伏:涨{chg:.1f}%+主力流入{mi/1e4:.0f}万"; score = 6
             elif mi is None and close > op:
                 # 代理兜底：阳线+放量或高换手
                 if vr is not None and vr >= 0.6 and to is not None and to >= 0.5:
@@ -2792,10 +2956,10 @@ def step13_strategy_match(candidates, kline_data=None):
         # ── F 北向资金（v6.9.39: 预计算recent_5d字典，避免循环内重复IO）──
         if s == "E":
             mi = c.get('main_inflow')
-            if mi is not None and mi > 5000:
+            if mi is not None and mi > 50_000_000:  # v6.16.24: 修正阈值从5000→5000万，与R/S/T一致
                 nb_days = recent_5d.get(c.get('code', ''), 0)
                 if nb_days >= 3:
-                    s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi:.0f}万+持续{nb_days}日"; score = 6
+                    s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi/1e4:.0f}万+持续{nb_days}日"; score = 7
             elif mi is None and vr is not None and vr >= 0.8 and to is not None and to >= 1.5:
                 nb_days = recent_5d.get(c.get('code', ''), 0)
                 if nb_days >= 2:
@@ -2813,14 +2977,16 @@ def step13_strategy_match(candidates, kline_data=None):
             if high > low and low > 0:
                 body = abs(close - op)
                 lower_shadow = min(close, op) - low
-                min_shadow = max(body * 1.5, 0.01 * close)  # v6.9.39: body=0时至少1%影线，避免过于宽松
+                min_shadow = max(body * 1.5, 0.025 * close)  # v6.16.24: 十字星时下影线≥2.5%收盘价，收紧过于宽松的1%
                 if lower_shadow >= min_shadow:
                     is_hammer = True
             vr_ok = (vr is not None and vr < 1.0) or (vr is None and to is not None and to < 1.0)
             if vr_ok and (is_hammer or (close > 0 and body / close < 0.008)):
                 s = "H"; reason = f"地量见底:{chg:+.1f}%+量比{vr or 0:.1f}+锤子线"; score = 6
         # ── I-Q 形态策略（v6.9.22: 弱市跳过，仅强/震荡市匹配）──
-        if market_condition != "弱市" and not s:
+        # v6.16.23: chg>7%未封板标的仅策略U可匹配，I-Q形态策略在7%以上高位风险过高，跳过
+        # v6.16.24: 用"弱市" in market_condition替代精确比较
+        if "弱市" not in market_condition and not s and chg <= 7.0:
             # I 均线粘合突破
             kd = kline_data.get(c.get('code', ''), {})
             ma5 = kd.get('ma5', 0); ma10 = kd.get('ma10', 0); ma20 = kd.get('ma20', 0)
@@ -2928,14 +3094,16 @@ def step13_strategy_match(candidates, kline_data=None):
             tc = c.get('total_cap', 0) or 0
             kd_u = kline_data.get(c.get('code', ''), {})
             lu_days = kd_u.get('limit_up_days', 0) if isinstance(kd_u, dict) else 0
-            # 涨停追击条件：涨幅3-9%(未封板)+量比≥1.5+换手≥3%+小盘<100亿+涨停基因+振幅>3%+收阳
-            if 3.0 <= chg <= 9.0 and vr is not None and vr >= 1.5 and to is not None and to >= 3.0:
+            # 涨停追击条件：涨幅3-9.5%(未封板)+量比≥1.5+换手≥3%+小盘<100亿+涨停基因+振幅>3%+收阳
+            # v6.16.24: 上限从9%→9.5%，覆盖未封板但接近涨停的标的
+            if 3.0 <= chg < 9.5 and vr is not None and vr >= 1.5 and to is not None and to >= 3.0:
                 if 0 < tc < 100 and lu_days >= 1 and amp is not None and amp > 3.0 and close > op:
                     s = "U"; reason = f"涨停追击:涨{chg:.1f}%+{lu_days}板基因+量比{vr:.1f}+换手{to:.1f}%+小盘{tc:.0f}亿"; score = 9
                     c['_lu_gene'] = lu_days  # 涨停基因标记
-                # 宽松条件：接近涨停(7-9%)+有涨停基因，放量即可
-                elif 7.0 <= chg <= 9.0 and lu_days >= 1 and vr is not None and vr >= 1.2 and close > op:
-                    s = "U"; reason = f"涨停追击(宽松):涨{chg:.1f}%+{lu_days}板基因+量比{vr:.1f}"; score = 7
+                # 宽松条件：接近涨停(7-9.5%)+有涨停基因+放量+换手+收阳
+                # v6.16.24: 新增换手≥2%+振幅>2%要求，收紧宽松条件门槛
+                elif 7.0 <= chg < 9.5 and lu_days >= 1 and vr is not None and vr >= 1.2 and to is not None and to >= 2.0 and amp is not None and amp > 2.0 and close > op:
+                    s = "U"; reason = f"涨停追击(宽松):涨{chg:.1f}%+{lu_days}板基因+量比{vr:.1f}+换手{to:.1f}%"; score = 7
                     c['_lu_gene'] = lu_days
         # ── R/S/T 主力共振（v6.10.0: 多因子共振模型，底仓+起爆双重确认）──
         if not s:
@@ -3047,7 +3215,8 @@ def step17_industry_limit(candidates):
     limited = []
     elastic_added = 0
     # v6.9.22: 弱市行业上限3→4，增加标的多样性
-    industry_limit = 4 if market_condition == "弱市" else 3
+    # v6.16.24: 用"弱市" in覆盖子类型
+    industry_limit = 4 if "弱市" in market_condition else 3
     for g in ig.values():
         g.sort(key=_tie_key)
         limited.extend(g[:industry_limit])
@@ -3055,7 +3224,7 @@ def step17_industry_limit(candidates):
         if len(g) >= industry_limit + 1:
             tn = g[industry_limit - 1].get('_tie_score', 0)
             tn1 = g[industry_limit].get('_tie_score', 0)
-            elastic_threshold = 0.90 if market_condition == "弱市" else 0.95
+            elastic_threshold = 0.90 if "弱市" in market_condition else 0.95
             if tn > 0 and tn1 / tn >= elastic_threshold:
                 limited.append(g[industry_limit])
                 elastic_added += 1
@@ -3081,7 +3250,7 @@ def step18_news_screening(candidates):
         '重大诉讼', '债务违约', '暂停上市', '终止上市', '限售股解禁',
         '业绩变脸', '财务造假', '信披违规', '内幕交易', '操纵市场',
         '强制退市', '破产重整', '资不抵债', '审计非标',
-        '违规担保', '资金占用', '重组失败', '定增终止', 'ST warning',
+        '违规担保', '资金占用', '重组失败', '定增终止', 'ST警示', '风险警示',
         '净利润下滑', '营收下滑', '毛利率下滑', '评级下调', '目标价下调',
         '应收账款', '坏账计提', '存货跌价', '资产减值', '内控缺陷', '证监会立案', '通报批评'
     ]
@@ -3096,51 +3265,9 @@ def step18_news_screening(candidates):
     # v6.13.11: 源级别状态追踪
     # v6.16.3: 精简源状态，移除废弃的eastmoney和xueqiu
     _src_status = {'bing': {'ok': 0, 'fail': 0},
-                   'baidu': {'ok': 0, 'fail': 0}, 'cninfo': {'ok': 0, 'fail': 0},
+                   'baidu': {'ok': 0, 'fail': 0}, 'cninfo': {'ok': 0, 'fail': 0, 'hit': 0},
                    'cls': {'ok': 0, 'fail': 0},
                    'mairui': {'ok': 0, 'fail': 0}}
-    
-    def _check_eastmoney(code, name):
-        try:
-            market = '1' if code.startswith('6') else '0'
-            url = f'https://push2.eastmoney.com/api/qt/stock/news/get?secid={market}.{code}&pageNum=1&pageSize=5&_={int(time.time()*1000)}'
-            req = urllib.request.Request(url, headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                'Referer': 'https://www.eastmoney.com/'
-            })
-            with _http_retry(req, timeout=4) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
-                news_list = data.get('data', {}).get('list', []) if isinstance(data, dict) else []
-                for news in news_list:
-                    title = news.get('title', '') + news.get('summary', '')
-                    for kw in NEGATIVE_KW:
-                        if kw not in title: continue
-                        if not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
-                            return ('eastmoney', kw)
-        except Exception:
-            _src_status['eastmoney']['fail'] += 1
-        return None
-    
-    def _check_eastmoney_jsonp(code, name):
-        """v6.13.11: 东方财富JSONP备选接口（替代push2 API）"""
-        try:
-            market = '1' if code.startswith('6') else '0'
-            url = f'https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&page_size=5&page_index=1&ann_type=A&client_source=web&stock_list={market},{code}'
-            req = urllib.request.Request(url, headers={
-                'User-Agent': 'Mozilla/5.0',
-                'Referer': 'https://data.eastmoney.com/'
-            })
-            with _http_retry(req, timeout=5) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
-                items = data.get('data', {}).get('list', [])
-                for item in items:
-                    title = (item.get('title', '') or '') + (item.get('summary', '') or '')
-                    for kw in NEGATIVE_KW:
-                        if kw in title and not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
-                            return ('eastmoney_v2', kw)
-        except Exception:
-            _src_status['eastmoney']['fail'] += 1
-        return None
     
     def _check_bing(code, name):
         try:
@@ -3152,6 +3279,7 @@ def step18_news_screening(candidates):
             })
             with _http_retry(req, timeout=4) as resp:
                 html_text = resp.read().decode('utf-8', errors='ignore')
+                _src_status['bing']['ok'] += 1  # v6.16.24: 安全阀修复，更新ok计数
                 for kw in NEGATIVE_KW:
                     if kw not in html_text: continue
                     kw_pos = html_text.find(kw)
@@ -3174,6 +3302,7 @@ def step18_news_screening(candidates):
             })
             with _http_retry(req, timeout=4) as resp:
                 html_text = resp.read().decode('utf-8', errors='ignore')
+                _src_status['baidu']['ok'] += 1  # v6.16.24: 安全阀修复，更新ok计数
                 for kw in NEGATIVE_KW:
                     if kw not in html_text: continue
                     kw_pos = html_text.find(kw)
@@ -3182,11 +3311,12 @@ def step18_news_screening(candidates):
                     if not any(neg in ctx for neg in FALSE_POSITIVE_NEGATORS):
                         return ('baidu', kw)
         except Exception:
-            pass
+            _src_status['baidu']['fail'] += 1
         return None
     
     def _check_cninfo(code, name):
         """巨潮资讯网 — 法定信息披露平台，搜索风险提示/监管函/退市等公告"""
+        _got_response = False
         try:
             org_id = f'gssz{code}' if code.startswith('0') else f'gssh{code}'
             stock_param = f'{code},{org_id}'
@@ -3207,10 +3337,13 @@ def step18_news_screening(candidates):
                 req = urllib.request.Request('http://www.cninfo.com.cn/new/hisAnnouncement/query', data=params, headers=headers)
                 with _http_retry(req, timeout=5) as resp:
                     data = json.loads(resp.read().decode('utf-8'))
-                    for ann in (data.get('announcements') or []):
+                    anns = data.get('announcements') or []
+                    if anns: _got_response = True
+                    for ann in anns:
                         title = ann.get('title', '')
                         for kw in NEGATIVE_KW:
                             if kw in title and not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
+                                _src_status['cninfo']['hit'] += 1
                                 return ('cninfo', kw)
             # 关键字搜索
             for search_kw in ['退市', 'ST', '减持', '违规', '监管']:
@@ -3224,13 +3357,20 @@ def step18_news_screening(candidates):
                 req = urllib.request.Request('http://www.cninfo.com.cn/new/hisAnnouncement/query', data=params, headers=headers)
                 with _http_retry(req, timeout=5) as resp:
                     data = json.loads(resp.read().decode('utf-8'))
-                    for ann in (data.get('announcements') or []):
+                    anns = data.get('announcements') or []
+                    if anns: _got_response = True
+                    for ann in anns:
                         title = ann.get('title', '')
                         for kw in NEGATIVE_KW:
                             if kw in title and not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
+                                _src_status['cninfo']['hit'] += 1
                                 return ('cninfo', kw)
-        except Exception:
+        except Exception as e:
             _src_status['cninfo']['fail'] += 1
+            log_alert("DEBUG", "cninfo", f"{code} {name} 异常: {type(e).__name__}")
+        else:
+            if _got_response:
+                _src_status['cninfo']['ok'] += 1  # v6.16.25: 仅在有实际响应数据时标记ok
         return None
     
     def _check_cls(code, name):
@@ -3241,7 +3381,10 @@ def step18_news_screening(candidates):
         """v6.16.0: CLS电报搜索 — 在90条电报中搜索个股名称+利空关键词"""
         try:
             telegraphs = _fetch_cls_telegraphs(pages=3)
-            if not telegraphs: return None
+            if not telegraphs:
+                _src_status['cls']['fail'] += 1  # v6.16.25: 空列表=源不可用
+                return None
+            _src_status['cls']['ok'] += 1  # v6.16.24: 安全阀修复，批量拉取成功即标记ok
             for item in telegraphs:
                 title = (item.get('title', '') or '') + ' ' + (item.get('brief', '') or '')
                 if name not in title and code not in title: continue
@@ -3272,7 +3415,10 @@ def step18_news_screening(candidates):
                     lbc_str = f'连续{lbc}天' if lbc and lbc > 1 else ''
                     return ('mairui_dt', f'跌停{zf:.1f}%{lbc_str}')
             return None
-        except Exception: return None
+        except Exception as e:
+            _src_status['mairui']['fail'] += 1
+            log_alert("WARNING", "麦蕊API", f"跌停检测异常: {type(e).__name__}")
+        return None
     
     def _check_mairui_ann(code, name):
         """v6.16.0: 麦蕊公告利空检测 — v6.16.15: 仅检查近30日公告，防止历史公告误触发"""
@@ -3291,57 +3437,9 @@ def step18_news_screening(candidates):
                     if kw in title and not any(neg in title for neg in FALSE_POSITIVE_NEGATORS):
                         return ('mairui_ann', kw)
             return None
-        except Exception: return None
-    
-    def _check_bing_fallback(code, name):
-        """v6.13.42: Bing search fallback when xueqiu cache miss"""
-        try:
-            query = f'{name} {code} 利空 公告 减持'
-            url = f'https://www.bing.com/search?q={urllib.parse.quote(query)}&count=5'
-            req = urllib.request.Request(url, headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            })
-            with _http_retry(req, timeout=5) as resp:
-                html = resp.read().decode('utf-8', errors='ignore')
-                for kw in NEGATIVE_KW:
-                    if kw in html.lower() and not any(neg in html.lower() for neg in FALSE_POSITIVE_NEGATORS):
-                        return ('xueqiu_bing_fb', kw)
-        except Exception:
-            pass
-        return None
-    
-    def _check_xueqiu(code, name):
-        """v6.13.13: 雪球个股讨论 — 搜索近期讨论中的利空关键词"""
-        try:
-            # 雪球页面通过WebFetch预缓存 — 读取缓存文件
-            cache_path = os.path.join('/workspace', 'xueqiu_news_cache.json')
-            if not os.path.exists(cache_path):
-                _src_status['xueqiu'] = _src_status.get('xueqiu', {'ok': 0, 'fail': 0})
-                _src_status['xueqiu']['fail'] += 1
-                return None
-            
-            with open(cache_path, 'r', encoding='utf-8') as f:
-                cache = json.loads(f.read())
-            
-            if code not in cache:
-                # v6.13.42: cache miss, try Bing search fallback
-                _src_status['xueqiu'] = _src_status.get('xueqiu', {'ok': 0, 'fail': 0})
-                _src_status['xueqiu']['fail'] += 1
-                return _check_bing_fallback(code, name)
-            
-            posts = cache.get(code, [])
-            _src_status['xueqiu'] = _src_status.get('xueqiu', {'ok': 0, 'fail': 0})
-            _src_status['xueqiu']['ok'] += 1
-            
-            for post in posts:
-                text = post.get('title', '') + ' ' + post.get('text', '')
-                for kw in NEGATIVE_KW:
-                    if kw in text and not any(neg in text for neg in FALSE_POSITIVE_NEGATORS):
-                        return ('xueqiu', kw)
-            return None
-        except Exception:
-            _src_status['xueqiu'] = _src_status.get('xueqiu', {'ok': 0, 'fail': 0})
-            _src_status['xueqiu']['fail'] += 1
+        except Exception as e:
+            _src_status['mairui']['fail'] += 1
+            log_alert("WARNING", "麦蕊API", f"公告检测异常: {type(e).__name__}")
         return None
     
     excluded = []
@@ -3414,7 +3512,7 @@ def step18_news_screening(candidates):
     mairui_excluded = [c for c in excluded if c.get('_news_reason', '').startswith('mairui_ann')]
     if len(mairui_excluded) > 0 and len(mairui_excluded) >= len(to_check) * 0.8:
         other_sources_ok = any(
-            _src_status.get(src, {}).get('ok', 0) > 0
+            (_src_status.get(src, {}).get('ok', 0) + _src_status.get(src, {}).get('hit', 0)) > 0
             for src in ['bing', 'baidu', 'cninfo', 'cls']
         )
         if not other_sources_ok:
@@ -3477,27 +3575,32 @@ def step18B_top10_enrichment(candidates):
         c['_news_positive'] = ''
         c['_announcement'] = ''
         
-        # ── 涨停/龙虎榜 (v6.16.1: 麦蕊涨停股池优先, datacenter-web备选) ──
+        # ── 涨停/龙虎榜 (v6.16.21: 同花顺HTML解析, 原datacenter-web已鉴权) ──
         try:
             lh_result = ''
             # v6.16.1: 优先使用麦蕊智数涨停股池API
             if MAIRUI_LICENCE:
                 lh_result = _mairui_longhubang_for_top10(code)
-            # 备选: datacenter-web (原datacenter已失效)
+            # v6.16.21: 备选改为同花顺龙虎榜页面(零鉴权, 东财datacenter已加鉴权9501)
             if not lh_result:
-                lh_url = f'http://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_DAILY_BILLBOARDTRADING&columns=TRADE_DATE,BILLBOARD_NET_AMT,BILLBOARD_BUY_AMT,BILLBOARD_SELL_AMT,EXPLANATION&filter=(SECUCODE="{code}")&pageNumber=1&pageSize=3&sortTypes=-1&sortColumns=TRADE_DATE'
+                lh_url = f'https://data.10jqka.com.cn/market/lhbgg/code/{code}/'
                 req = urllib.request.Request(lh_url, headers={
-                    'User-Agent': 'Mozilla/5.0', 'Referer': 'https://data.eastmoney.com/'})
-                with _http_retry(req, timeout=4) as resp:
-                    lh_data = json.loads(resp.read().decode('utf-8'))
-                    lh_rows = lh_data.get('result', {}).get('data', []) if lh_data.get('result') else []
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Referer': 'https://data.10jqka.com.cn/'})
+                with _http_retry(req, timeout=8) as resp:
+                    lh_raw = resp.read().decode('gbk', errors='ignore')
+                    # 解析表格: 日期/类型/收盘价/涨跌幅/买入金额/卖出金额/净额
+                    lh_rows = re.findall(
+                        r'<tr[^>]*>\s*<td[^>]*>(\d{4}-\d{2}-\d{2})</td>\s*<td[^>]*>([^<]+)</td>\s*<td[^>]*>([\d.]+)</td>\s*<td[^>]*>([\d.-]+)</td>\s*<td[^>]*>([\d,]+\.\d+)</td>\s*<td[^>]*>([\d,]+\.\d+)</td>\s*<td[^>]*>([\d,-]+\.\d+)</td>',
+                        lh_raw, re.DOTALL
+                    )
                     if lh_rows:
                         latest = lh_rows[0]
-                        lh_date = latest.get('TRADE_DATE', '')[:10]
-                        lh_net = latest.get('BILLBOARD_NET_AMT', 0) or 0
-                        lh_net_wan = lh_net / 10000
-                        lh_dir = '净买入' if lh_net_wan > 0 else '净卖出'
-                        lh_abs = abs(lh_net_wan)
+                        lh_date = latest[0]
+                        lh_type = latest[1][:30] if len(latest[1]) > 30 else latest[1]
+                        lh_net_val = float(latest[6].replace(',', ''))
+                        lh_dir = '净买入' if lh_net_val > 0 else '净卖出'
+                        lh_abs = abs(lh_net_val)
                         if lh_abs >= 10000:
                             lh_amt_str = f'{lh_abs/10000:.1f}亿'
                         else:
@@ -3506,7 +3609,7 @@ def step18B_top10_enrichment(candidates):
             if lh_result:
                 c['_longhu'] = lh_result
                 tot_lh += 1
-        except (urllib.error.URLError, json.JSONDecodeError, OSError):
+        except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError, IndexError):
             _news_fail_count += 1
         
         # ── 正面新闻（v6.16.3: push2已废弃，改用Bing搜索）──
@@ -3716,7 +3819,8 @@ def calc_entry_price(c):
     
     elif strategy == 'G':
         # 横盘突破(v6.9.18): 弱市不追涨，在收盘价下方进场；强/震荡市追涨
-        if market_condition == "弱市":
+        # v6.16.24: 用"弱市" in覆盖子类型
+        if "弱市" in market_condition:
             if low > 0 and close > low:
                 entry = low + (close - low) * 0.4  # 弱市低吸
             else:
@@ -3818,7 +3922,7 @@ def _compute_pl_ratios(candidates, sector_limit_up=None):
         s = c.get('strategy', '?')
         entry = calc_entry_price(c)
         if s not in _STRATEGY_STOP_LOSS:
-            log_alert("WARNING", "策略参数", f"{code} 未知策略{s!r}，使用默认止损/止盈")
+            log_alert("WARNING", "策略参数", f"{c.get('code', '?')} 未知策略{s!r}，使用默认止损/止盈")
         sl = round(entry * _STRATEGY_STOP_LOSS.get(s, 0.96), 2)
         tp = round(entry * _STRATEGY_TAKE_PROFIT.get(s, 1.05), 2)
         pl_ratio = round((tp - entry) / max(entry - sl, 0.01), 2)
@@ -3959,8 +4063,30 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
                 for w in winners:
                     w['_pk_score'] += 0.5
         
-        # 总分最高者获胜；平局时综合评分高者胜
+        # v6.16.26: 降级PK — 当7维度全0时，切换为技术面3维度PK（涨跌幅+量比+换手率）
         max_pk = max(c['_pk_score'] for c in group)
+        if max_pk == 0:
+            # 技术面3维度：涨跌幅(动量) / 量比(放量意愿) / 换手率(活跃度)
+            tech_dims = {
+                'chg': lambda c: c.get('change_pct', 0) or 0,        # 涨跌幅，越高越好
+                'vol_ratio': lambda c: c.get('volume_ratio', 0) or 0, # 量比，越高越好
+                'turnover': lambda c: c.get('turnover_rate', 0) or 0, # 换手率，越高越好
+            }
+            for dim_name, getter in tech_dims.items():
+                values = [(c, getter(c)) for c in group]
+                max_val = max(v for _, v in values)
+                if max_val == 0:
+                    continue
+                winners = [c for c, v in values if v == max_val]
+                if len(winners) == 1:
+                    winners[0]['_pk_score'] += 1
+                else:
+                    for w in winners:
+                        w['_pk_score'] += 0.5
+            max_pk = max(c['_pk_score'] for c in group)
+            pk_dim_label = '3'  # 降级PK用3维度标注
+        else:
+            pk_dim_label = '7'
         top_scorers = [c for c in group if c['_pk_score'] == max_pk]
         if len(top_scorers) == 1:
             winner = top_scorers[0]
@@ -3970,13 +4096,14 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
         for c in group:
             c['_pk_winner'] = (c is winner)
             c['_pk_champion'] = False  # v6.13.33: 初始化，后续冠军PK覆盖
-            c['_pk_note'] = f"PK:{c['_pk_score']}/7"
+            c['_pk_note'] = f"PK:{c['_pk_score']}/{pk_dim_label}"
         
         pk_results[strat] = {
             'count': len(group),
             'winner_code': winner.get('code'),
             'winner_name': winner.get('name'),
             'winner_score': winner['_pk_score'],
+            'dim_label': pk_dim_label,  # v6.16.26: 7=基本面PK, 3=技术面降级PK
             'losers': [(c.get('code'), c.get('name'), c['_pk_score']) for c in group if c is not winner]
         }
     
@@ -4157,11 +4284,11 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         f"| ①原始标的池 | {total_raw} | - | 全市场活跃TOP500 |",
         f"| ②硬排除 | {ae} | {total_raw - ae} | 13项(持仓/科创/北交/低价/高价/ST/涨幅/停牌/市值/成交额/上市天数/质押商誉解禁已废弃) |",
         f"| ③信号过滤 | {asig} | {ae - asig} | 27项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉/涨停次日高开低走/布林突破失败/20日涨幅>45%/放量不涨/放量滞跌/长上影线/连续缩量/净利润亏损/冲击成本/限售解禁/可转债/业绩预告/机构减持/融资过热) |",
-        f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKLMNOPQRST二十策略 |",
+        f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKLMNOPQRSTU二十一策略 |",
         f"| ⑤微观结构过滤 | {amicro} | {astr - amicro} | 流动性(换手率/Amihud)+消息敏感度(波动性) |",
         f"| ⑥行业+同策略限制 | {aind} | {amicro - aind} | 同行业≤4只(弱市)/3只(强/震荡)+同策略≤30% |",
         f"| ⑦新闻筛查 | {aind - anew} | {anew} | 东方财富/Bing/巨潮资讯网/财联社四源并行利空检测 |",
-        f"| ★最终推荐 | {len(candidates)} | {aind - anew - len(candidates)} | 评分门控+降级 |", "",
+        f"| ★最终推荐 | {len(candidates)} | {max(aind - anew - len(candidates), 0)} | 评分门控+降级 |", "",
     ]
     if candidates:
         _top10_codes = _compute_pl_ratios(candidates)
@@ -4186,10 +4313,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
             else: l60_str = "-"
             tier_label = c.get('_tier_label', '-')
             chg_e = "🔴" if chg >= 0 else "🟢"
-            entry = calc_entry_price(c)
-            sl = round(entry * _STRATEGY_STOP_LOSS.get(s, 0.96), 2)
-            tp = round(entry * _STRATEGY_TAKE_PROFIT.get(s, 1.05), 2)
-            pl_ratio = c.get('_pl_ratio', round((tp - entry) / max(entry - sl, 0.01), 2))
+            entry = c.get('_entry', 0); sl = c.get('_stop', 0); tp = c.get('_target', 0)
+            pl_ratio = c.get('_pl_ratio', 0)
             top10_mark = "⭐" if code in _top10_codes else ""
             # v6.13.33: 同策略PK标记 — 👑=跨策略冠军 🏆=同策略获胜者
             if c.get('_pk_champion'): pk_mark = "👑"
@@ -4229,17 +4354,19 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                 lines.append(f"- 👑 **最强标的**: **{champion_info['winner_name']}**({champion_info['winner_code']}) — 冠军得分 {champion_info['winner_score']}/7")
                 loser_names = ', '.join(f'{name}({code})' for code, name, score in champion_info['losers'])
                 lines.append(f"- 挑战者: {loser_names}")
-                lines.append("- **PK规则**：所有策略获胜者(含独苗)在7个维度（成长性/盈利能力/估值水位/资产质量/现金流/筹码/板块热度）对决，总分最高者加冕👑冠军")
+                lines.append("- **PK规则**：所有策略获胜者(含独苗)在7维度（成长性/盈利能力/估值水位/资产质量/现金流/筹码/板块热度）对决，总分最高者加冕👑冠军")
             if pk_strats:
                 lines.append("\n## 同策略PK\n")
-                lines.append("- **PK规则**：同策略标的在7个维度对决，总分最高者获胜")
+                lines.append("- **PK规则**：同策略标的在7维度对决，总分最高者获胜；全0时自动降级为技术面3维度(涨跌幅/量比/换手率)")
                 lines.append("- **PK标记**：👑 = 跨策略冠军 | 🏆 = 同策略获胜者 | 空格 = 败方 | - = 无对手")
                 for strat, info in pk_strats:
                     score = info.get('winner_score', 0)
+                    dim_label = info.get('dim_label', '7')
+                    dim_note = '(技术面PK)' if dim_label == '3' else ''
                     loser_str = ''
                     if info.get('losers'):
                         loser_str = ' | 败方: ' + '、'.join(f'{name}({code}){s:.1f}分' for code, name, s in info['losers'])
-                    lines.append(f"  - **{strat}策略** ({info['count']}只): 🏆 **{info['winner_name']}**({info['winner_code']}) — {score:.1f}/7分{loser_str}\n")
+                    lines.append(f"  - **{strat}策略** ({info['count']}只): 🏆 **{info['winner_name']}**({info['winner_code']}) — {score:.1f}/{dim_label}分{dim_note}{loser_str}\n")
         lines.append("\n## 回测说明\n")
         lines.append("- **回测列格式**：`图标 + 胜/样本`，例如 `🟢2/2` 表示历史同标的样本2笔、盈利2笔。")
         lines.append("- **图标含义**：🟢 最近一次样本盈利；🔴 最近一次样本亏损；⚪ 后续K线不足或未形成有效胜负；⚠️ 历史有限价单未成交（当日最低价>进场价）；空白表示无可匹配历史样本。")
@@ -4335,6 +4462,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
 # ============================================================
 def _build_pk_html(pk_results):
     """v6.13.33: 构建同策略PK + 跨策略冠军PK HTML片段"""
+    if not pk_results:
+        return ''
     champion_info = pk_results.get('__champion__')
     pk_strats = [(s, info) for s, info in pk_results.items() if s != '__champion__' and info['count'] >= 2]
     if not champion_info and not pk_strats:
@@ -4352,11 +4481,13 @@ def _build_pk_html(pk_results):
     # 同策略PK区域
     if pk_strats:
         html_parts.append('<section><h2>同策略PK</h2><div class="pk-summary">')
-        html_parts.append('<p style="color:#94a3b8;font-size:.85rem;margin-bottom:1rem">同策略标的在7个维度对决，🏆为组内获胜者</p>')
+        html_parts.append('<p style="color:#94a3b8;font-size:.85rem;margin-bottom:1rem">同策略标的在7维度对决，全0时自动降级为技术面3维度(涨跌幅/量比/换手率)，🏆为组内获胜者</p>')
         for strat, info in pk_strats:
+            dim_label = info.get('dim_label', '7')
+            dim_note = ' <span style="color:#f59e0b;font-size:.75rem">(技术面PK)</span>' if dim_label == '3' else ''
             html_parts.append(f'<div class="pk-card" style="background:#1e293b;border-radius:12px;padding:1rem;margin-bottom:.75rem;border-left:4px solid #38bdf8">')
             html_parts.append(f'<div style="font-weight:bold;color:#e2e8f0;margin-bottom:.5rem"><span class="badge strat_{strat.lower()}" style="display:inline-block;margin-right:.5rem">{strat}</span> {info["count"]}只同策略对决</div>')
-            html_parts.append(f'<div style="color:#38bdf8;font-size:1.1rem;margin-bottom:.25rem">🏆 <strong>{info["winner_name"]}</strong> ({info["winner_code"]}) — PK得分 {info["winner_score"]}/7</div>')
+            html_parts.append(f'<div style="color:#38bdf8;font-size:1.1rem;margin-bottom:.25rem">🏆 <strong>{info["winner_name"]}</strong> ({info["winner_code"]}) — PK得分 {info["winner_score"]}/{dim_label}{dim_note}</div>')
             loser_names = ', '.join(f'{name}({code}){s:.1f}分' for code, name, s in info['losers'])
             html_parts.append(f'<div style="color:#94a3b8;font-size:.8rem">败方: {loser_names}</div>')
             html_parts.append('</div>')
@@ -4390,7 +4521,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
     
     rows_html = ""
     # v6.13.17: 基于已计算的_pl_ratio排序TOP10，移除重复调用
-    _top10_codes = set(c['code'] for c in sorted(candidates, key=lambda x: -(x.get('_pl_ratio', 0) or 0))[:10])
+    _top10_codes = _compute_pl_ratios(candidates)
     for idx, c in enumerate(candidates, 1):
         code = c.get('code', ''); name = c.get('name', ''); s = c.get('strategy', '?')
         ind = _industry_str(c); biz = c.get('business', ''); chg = c.get('change_pct', 0)
@@ -4461,7 +4592,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         bar_html += f'<div class="bar-row"><div class="bar-label">{r}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%">{cnt}</div></div></div>'
     
     stages = [("原始标的池", total_raw), ("硬排除(13项)", ae), ("信号过滤(27项)", asig),
-              ("策略匹配(17策略)", astr), ("微观结构过滤", amicro), ("行业+同策略限制", aind), ("新闻筛查", aind - anew), ("最终推荐", fc)]
+              ("策略匹配(21策略)", astr), ("微观结构过滤", amicro), ("行业+同策略限制", aind), ("新闻筛查", aind - anew), ("最终推荐", fc)]
     max_f = max(s[1] for s in stages)
     funnel_html = ""
     for i, (name, count) in enumerate(stages):
@@ -5255,6 +5386,12 @@ def main():
     print("\n[步骤8] 大盘环境..."); step8_market_environment()
     print(f"  环境: {market_condition} | 仓位: {position_pct}%")
     record_step_status("步骤8: 大盘环境", "OK", f"{market_condition} {position_pct}%")
+    
+    # v6.16.24: 新增回撤断路器和兑现率闭环（从pipeline.py集成）
+    print("\n[步骤9B] 回撤断路器..."); step9B_circuit_breaker()
+    print(f"  仓位: {position_pct}%")
+    print("\n[步骤9C] 兑现率闭环..."); step9C_conversion_rate()
+    print(f"  仓位: {position_pct}%")
     
     print("\n[步骤10A] 全市场拉取..."); all_stocks, ds = step10A_fetch_all_stocks()
     update_data_source_monitor(ds)
