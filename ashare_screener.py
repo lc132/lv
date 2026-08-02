@@ -100,7 +100,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.30"
+BUILTIN_VERSION = "v6.16.33"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -1081,13 +1081,13 @@ def step6_file_init():
     global file_version, params
     adj = safe_read_json('/workspace/策略调整记录.json')
     if adj and len(adj) > 0:
-        file_version = adj[-1].get('version', BUILTIN_VERSION); params = adj[-1].get('params', {})
+        file_version = adj[0].get('version', BUILTIN_VERSION); params = adj[0].get('params', {})
     else: file_version = BUILTIN_VERSION; params = {}
     # v6.9.53: 若内置版本比策略记录版本新，以内置版本为准并更新记录
     if _version_cmp(file_version) < _version_cmp(BUILTIN_VERSION):
         file_version = BUILTIN_VERSION
         if adj and len(adj) > 0:
-            adj[-1]['version'] = BUILTIN_VERSION
+            adj[0]['version'] = BUILTIN_VERSION
             safe_write_json('/workspace/策略调整记录.json', adj)
     for k, v in DEFAULT_PARAMS.items():
         if k not in params: params[k] = v
