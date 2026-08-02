@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.16.34
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 21策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1) | 新闻筛查修复(v6.16.16) | 五项整改(v6.16.34)
+A股每日盘前短线标的智能筛选 v6.16.35
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1) | 新闻筛查修复(v6.16.16) | 五项整改(v6.16.35)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -100,7 +100,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.34"
+BUILTIN_VERSION = "v6.16.35"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -2387,15 +2387,116 @@ def step10C_flow_fetch_main_inflow(candidates):
     return flow_data
 
 # ============================================================
-# 步骤10D：东方财富财务数据拉取（质押/商誉/解禁 — API已废弃，降级跳过）
-# v6.9.15: 质押/商誉/解禁API全部废弃，返回空字典。
-# ROE/净利润已迁移至step10E（F10单股API，仅在step11后对候选标的拉取）。
+# 步骤10D：东方财富批量质押/商誉数据拉取（v6.16.35: 新API替代已废弃dcfm）
+# v6.9.15: 旧dcfm.eastmoney.com API全部废弃。
+# v6.16.35: 迁移至datacenter-web新API:
+#   - 质押比例: RPT_CSDC_LIST (字段PLEDGE_RATIO)
+#   - 商誉占比: RPT_GOODWILL_STOCKDETAILS (字段SUMSHEQUITY_RATIO)
+# 解禁数据已由step10F独立处理(RPT_LIFT_STAGE)，不再由step10D负责。
+# ROE/净利润由step10E（F10单股API）处理。
 # ============================================================
 def step10D_fetch_financials():
-    """质押/商誉/解禁 — API已废弃，降级跳过"""
-    pledge_data = {}; goodwill_data = {}; unlock_data = {}
-    log_alert("WARNING", "财务数据", "质押/商誉/解禁API已废弃，硬排除规则13-15降级跳过")
-    return pledge_data, goodwill_data, unlock_data
+    """v6.16.35: 批量拉取全市场质押比例和商誉占比数据。
+    返回: pledge_data{code: ratio_pct}, goodwill_data{code: ratio_decimal}
+    """
+    pledge_data = {}; goodwill_data = {}
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://data.eastmoney.com/'}
+
+    # 1. 质押比例 — RPT_CSDC_LIST (数据来源：中登公司)
+    try:
+        # 先获取最新交易日
+        date_url = ('https://datacenter-web.eastmoney.com/api/data/v1/get'
+                    '?reportName=RPT_CSDC_LIST_ALLDATE'
+                    '&columns=TRADE_DATE'
+                    '&pageNumber=1&pageSize=5'
+                    '&sortColumns=TRADE_DATE&sortTypes=-1'
+                    '&source=WEB&client=WEB')
+        req = urllib.request.Request(date_url, headers=headers)
+        with _http_retry(req, timeout=10) as resp:
+            date_r = json.loads(resp.read().decode('utf-8'))
+        latest_date = (date_r.get('result', {}).get('data', [{}])[0].get('TRADE_DATE', '') or '')[:10]
+        if latest_date:
+            pledge_data_raw = {}
+            page = 1
+            while True:
+                pledge_url = ('https://datacenter-web.eastmoney.com/api/data/v1/get'
+                              '?reportName=RPT_CSDC_LIST'
+                              '&columns=SECURITY_CODE,PLEDGE_RATIO'
+                              f'&pageNumber={page}&pageSize=500'
+                              '&sortColumns=PLEDGE_RATIO&sortTypes=-1'
+                              '&source=WEB&client=WEB'
+                              f"&filter=(TRADE_DATE='{latest_date}')")
+                req = urllib.request.Request(pledge_url, headers=headers)
+                with _http_retry(req, timeout=15) as resp:
+                    p_r = json.loads(resp.read().decode('utf-8'))
+                result = p_r.get('result')
+                if not result:
+                    break
+                for row in (result.get('data') or []):
+                    code = row.get('SECURITY_CODE', '')
+                    ratio = row.get('PLEDGE_RATIO')
+                    if code and ratio is not None:
+                        pledge_data_raw[code] = float(ratio)
+                total_pages = result.get('pages', 1)
+                if page >= total_pages:
+                    break
+                page += 1
+                time.sleep(0.1)
+            pledge_data = pledge_data_raw
+            log_alert("INFO", "质押数据", f"RPT_CSDC_LIST({latest_date}): {len(pledge_data)}只")
+        else:
+            log_alert("WARNING", "质押数据", "无法获取最新交易日")
+    except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError, ssl.SSLError) as e:
+        log_alert("WARNING", "质押数据", f"RPT_CSDC_LIST不可达: {str(e)[:60]}")
+
+    # 2. 商誉占比 — RPT_GOODWILL_STOCKDETAILS
+    try:
+        # 获取最新报告期（取最近一个季度末）
+        bj = datetime.strptime(beijing_date, '%Y-%m-%d')
+        # 计算最近报告期：Q1=03-31, Q2=06-30, Q3=09-30, Q4=12-31
+        if bj.month <= 3:
+            report_date = f'{bj.year-1}-12-31'
+        elif bj.month <= 6:
+            report_date = f'{bj.year}-03-31'
+        elif bj.month <= 9:
+            report_date = f'{bj.year}-06-30'
+        else:
+            report_date = f'{bj.year}-09-30'
+        goodwill_data_raw = {}
+        page = 1
+        while True:
+            gw_url = ('https://datacenter-web.eastmoney.com/api/data/v1/get'
+                      '?reportName=RPT_GOODWILL_STOCKDETAILS'
+                      '&columns=SECURITY_CODE,SUMSHEQUITY_RATIO'
+                      f'&pageNumber={page}&pageSize=500'
+                      '&sortColumns=NOTICE_DATE,SECURITY_CODE&sortTypes=-1,-1'
+                      '&source=WEB&client=WEB'
+                      '&token=894050c76af8597a853f5b408b759f5d'
+                      f"&filter=(REPORT_DATE='{report_date}')")
+            req = urllib.request.Request(gw_url, headers=headers)
+            with _http_retry(req, timeout=15) as resp:
+                g_r = json.loads(resp.read().decode('utf-8'))
+            result = g_r.get('result')
+            if not result:
+                break
+            for row in (result.get('data') or []):
+                code = row.get('SECURITY_CODE', '')
+                ratio = row.get('SUMSHEQUITY_RATIO')
+                if code and ratio is not None:
+                    goodwill_data_raw[code] = float(ratio)
+            total_pages = result.get('pages', 1)
+            if page >= total_pages:
+                break
+            page += 1
+            time.sleep(0.1)
+        goodwill_data = goodwill_data_raw
+        log_alert("INFO", "商誉数据", f"RPT_GOODWILL_STOCKDETAILS({report_date}): {len(goodwill_data)}只")
+    except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError, ssl.SSLError) as e:
+        log_alert("WARNING", "商誉数据", f"RPT_GOODWILL_STOCKDETAILS不可达: {str(e)[:60]}")
+
+    return pledge_data, goodwill_data
 
 # ============================================================
 # 步骤10E：F10财务数据拉取（ROE/净利润 — 单股逐只API）
@@ -2727,12 +2828,14 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, fundame
 # ============================================================
 # 步骤12：信号过滤
 # ============================================================
-def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, risk_data=None, crowding_data=None):
-    """v6.9.28: 27项信号过滤（新增#26机构持仓变化/#27融资过热代理）"""
+def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, risk_data=None, crowding_data=None, pledge_data=None, goodwill_data=None):
+    """v6.16.35: 29项信号过滤（新增#28质押过高/#29商誉占比，整合step10D新API数据）"""
     if kline_data is None: kline_data = {}
     if fundamental_data is None: fundamental_data = {}
     if risk_data is None: risk_data = ({}, {}, False)
     if crowding_data is None: crowding_data = ({}, {})
+    if pledge_data is None: pledge_data = {}
+    if goodwill_data is None: goodwill_data = {}
     unlock_events, cb_events, earnings_window = risk_data
     inst_holding, margin_overheat = crowding_data
     passed, excluded = [], []
@@ -2868,17 +2971,21 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         # 27. 融资买入过热代理（v6.9.28: 换手率>20%+量比>2.5→排除，代理融资买入占比>25%）
         if margin_overheat.get(code):
             reasons.append(f"融资过热(换手{to:.0f}% 量比{vr:.1f})")
-        # 28. 质押比例过高（v6.9.39: step10D API已废弃，从F10 fundamental_data兜底读取）
+        # 28. 质押比例过高（v6.16.35: 优先使用step10D新API数据，F10兜底）
         fd = fundamental_data.get(code, {})
-        pledge_ratio = fd.get('pledge_ratio')
+        pledge_ratio = pledge_data.get(code)  # step10D批量API: 百分比值
+        if pledge_ratio is None:
+            pledge_ratio = fd.get('pledge_ratio')  # F10兜底
         if pledge_ratio is not None:
             try:
                 if float(pledge_ratio) > 50:
                     reasons.append(f"质押过高({float(pledge_ratio):.0f}%)")
             except (ValueError, TypeError):
                 pass
-        # 29. 商誉/净资产>30%（v6.9.39: step10D API已废弃，从F10 fundamental_data兜底读取）
-        goodwill_ratio = fd.get('goodwill_ratio')
+        # 29. 商誉/净资产>30%（v6.16.35: 优先使用step10D新API数据，F10兜底）
+        goodwill_ratio = goodwill_data.get(code)  # step10D批量API: 小数
+        if goodwill_ratio is None:
+            goodwill_ratio = fd.get('goodwill_ratio')  # F10兜底
         if goodwill_ratio is not None:
             try:
                 if float(goodwill_ratio) > 0.30:
@@ -5464,7 +5571,7 @@ def main():
     _preload_industry_from_eastmoney(all_stocks)  # v6.9.34: 东方财富HTTP API获取行业分类
     for s in all_stocks: s['industry'] = lookup_industry(s.get('code', ''))
     
-    print("\n[步骤10D] 财务数据..."); pledge_data, goodwill_data, unlock_data = step10D_fetch_financials()
+    print("\n[步骤10D] 财务数据..."); pledge_data, goodwill_data = step10D_fetch_financials()
     
     raw_pool = [s for s in all_stocks if s.get('change_pct') is not None and s.get('change_pct') >= -9.5
                 and s.get('close') is not None and s.get('close') > 0]
@@ -5550,7 +5657,7 @@ def main():
     print("\n[步骤10F] 风险事件..."); unlock_events, cb_events, earnings_window = step10F_fetch_risk_events()
     print("\n[步骤10G] 拥挤度..."); inst_holding, margin_overheat = step10G_fetch_crowding_data(ael)
     print("\n[步骤10H] 二级行业..."); sub_industry_data = step10H_fetch_sub_industry(ael)
-    print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data, fundamental_data, (unlock_events, cb_events, earnings_window), (inst_holding, margin_overheat)); asig = len(asl)
+    print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data, fundamental_data, (unlock_events, cb_events, earnings_window), (inst_holding, margin_overheat), pledge_data, goodwill_data); asig = len(asl)
     print("\n[步骤13] 策略匹配..."); sm = step13_strategy_match(asl, kline_data); astr = len(sm)
     # v6.9.53: 策略匹配成功后统一+1计数+回填当日策略（修复步骤11预加导致计数不准）
     for c in sm:
