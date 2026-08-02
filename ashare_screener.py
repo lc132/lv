@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.16.33
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 21策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1) | 新闻筛查修复(v6.16.16) | 漏洞修复(v6.16.33)
+A股每日盘前短线标的智能筛选 v6.16.34
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 21策略 | 27信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1) | 新闻筛查修复(v6.16.16) | 五项整改(v6.16.34)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -100,7 +100,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.33"
+BUILTIN_VERSION = "v6.16.34"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -2670,12 +2670,9 @@ def step10H_fetch_sub_industry(candidates):
 # ============================================================
 # 步骤11：硬排除
 # ============================================================
-def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_data=None, goodwill_data=None, unlock_data=None, fundamental_data=None):
+def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, fundamental_data=None):  # v6.16.34: 移除废弃的pledge/goodwill/unlock参数
     """v6.9.43: 13项硬排除（创业板/PE<0/质押/商誉已迁移至信号过滤，解禁API已废弃）"""
     if kline_data is None: kline_data = {}
-    if pledge_data is None: pledge_data = {}
-    if goodwill_data is None: goodwill_data = {}
-    if unlock_data is None: unlock_data = {}
     if fundamental_data is None: fundamental_data = {}
     er = Counter()
     recent_7d_dates = {}  # v6.6.37: 按日期去重，统计7日内推荐天数
@@ -2720,10 +2717,6 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, pledge_
         kd = kline_data.get(code, {})
         if not reason and kd.get('days_listed') is not None and kd['days_listed'] < 60:
             reason = "上市不足60天"
-        # v6.9.4: 质押比例>50%（v6.9.39: step10D API已废弃，降级为信号标记，见step12信号#28）
-        # v6.9.4: 商誉/净资产>30%（v6.9.39: step10D API已废弃，降级为信号标记，见step12信号#29）
-        # v6.9.4: 近期大额解禁（v6.9.39: 已迁移至step12信号#23，此处不再检查）
-        # v6.9.22: PE<0已迁移至信号过滤#21，此处在硬排除中不再检查
         if reason: er[reason.split('(')[0]] += 1; excluded.append(c)
         else: passed.append(c)
     # 统计7日内推荐数量（仅统计通过且被标注的）
@@ -2962,7 +2955,7 @@ def step13_strategy_match(candidates, kline_data=None):
         # ── E 资金埋伏 (v6.9.25: 弱市不折扣，代理base=6与H看齐) ──
         if not s and 0 <= chg <= 1:
             mi = c.get('main_inflow')
-            if mi is not None and mi > 30_000_000:  # v6.16.24: 修正阈值从3000→3000万，与R/S/T一致
+            if mi is not None and mi > params.get("strategy_e_expand_threshold", 1500) * 10000:  # v6.16.34: 使用可配置阈值(默认1500万)，扩大资金埋伏策略候选池
                 s = "E"; reason = f"资金埋伏:涨{chg:.1f}%+主力流入{mi/1e4:.0f}万"; score = 6
             elif mi is None and close > op:
                 # 代理兜底：阳线+放量或高换手
@@ -3134,6 +3127,23 @@ def step13_strategy_match(candidates, kline_data=None):
             elif res_strategy == 'T':
                 s = "T"; reason = f"主力观察:底仓{pos_score}分+起爆{break_score}分"; score = 5
         if s: c['strategy'] = s; c['score'] = score; matched.append(c)
+    # v6.16.34: 震荡市策略A数量上限 — 策略A在震荡市回测胜率仅20%，限制最多N只
+    sa_limit = params.get("strategy_a_shock_market_limit", 5)
+    if "震荡" in market_condition and sa_limit > 0:
+        a_matched = [c for c in matched if c.get("strategy") == "A"]
+        if len(a_matched) > sa_limit:
+            a_matched.sort(key=lambda c: -(c.get("score", 0)))
+            a_codes_to_remove = {c.get("code") for c in a_matched[sa_limit:]}
+            removed_count = 0
+            new_matched = []
+            for c in matched:
+                if c.get("strategy") == "A" and c.get("code") in a_codes_to_remove:
+                    removed_count += 1
+                else:
+                    new_matched.append(c)
+            matched = new_matched
+            log_alert("INFO", "策略A限制", f"震荡市策略A上限{sa_limit}只, 已剔除{removed_count}只")
+
     log_alert("INFO", "策略匹配", f"匹配{len(matched)}只")
     return matched
 
@@ -5535,7 +5545,7 @@ def main():
                 log_alert("INFO", "K线降级", f"axdata补救{rescued2}只({','.join(still_failed[:5])})")
     record_step_status("步骤10C: 历史K线", "OK", f"{valid_kline}有效")
     
-    print("\n[步骤11] 硬排除..."); ael, _, er = step11_hard_exclude(raw_pool, ahc, kline_data, pledge_data, goodwill_data, unlock_data, {}); ae = len(ael)
+    print("\n[步骤11] 硬排除..."); ael, _, er = step11_hard_exclude(raw_pool, ahc, kline_data, {}); ae = len(ael)
     print("\n[步骤10E] F10基本面..."); fundamental_data = step10E_fetch_fundamentals(ael)
     print("\n[步骤10F] 风险事件..."); unlock_events, cb_events, earnings_window = step10F_fetch_risk_events()
     print("\n[步骤10G] 拥挤度..."); inst_holding, margin_overheat = step10G_fetch_crowding_data(ael)
