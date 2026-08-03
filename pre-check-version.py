@@ -3,7 +3,20 @@
 # 依赖外部函数：safe_read_json, read_all_history, log_alert, os, beijing_date
 import os
 
-BUILTIN_VERSION = "v6.16.20"  # 与 ashare_screener.py 保持一致
+def _load_builtin_version():
+    """SSOT：版本号从仓库根 VERSION 文件读取，避免硬编码漂移。"""
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+    for _p in (os.path.join(_HERE, "VERSION"), os.path.join(_HERE, "..", "VERSION"), os.path.join(os.getcwd(), "VERSION")):
+        try:
+            with open(_p, "r", encoding="utf-8") as _f:
+                _v = _f.read().strip()
+                if _v:
+                    return _v
+        except OSError:
+            continue
+    return "v6.16.36"
+
+BUILTIN_VERSION = _load_builtin_version()  # SSOT: 与 VERSION 文件保持一致
 adj_records = safe_read_json('/workspace/策略调整记录.json')
 if adj_records and len(adj_records) > 0:
     latest = adj_records[-1]
