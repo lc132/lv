@@ -177,8 +177,13 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
                     'exit_reason': 'chase_no_data', 'return_pct': 0, 'hold_days': 1,
                     'max_drawdown_pct': 0, 'max_profit_pct': 0, 'chased': True}
         return _simulate_single(chase_entry, adjusted_stop, adjusted_tp, remaining_kl,
-                                hold_days - 1, take_profit)
+                                hold_days - 1, max_floating_loss, max_profit)
 
+    return _simulate_single(entry, stop_loss, take_profit, kl, hold_days, max_floating_loss, max_profit)
+
+
+def _simulate_single(entry, stop_loss, take_profit, kl, hold_days=10, max_floating_loss=0.0, max_profit=0.0):
+    """核心模拟循环：不含追入逻辑，供_simulate_trade追入后调用"""
     # v6.13.14: 移动止损 — 盈利达止盈目标50%时，将止损上移至保本价
     trailing_active = False
     trailing_stop = entry  # 保本价
