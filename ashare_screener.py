@@ -100,7 +100,25 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.36"
+def _load_builtin_version():
+    """单一版本号真相源(SSOT)：版本号从仓库根 VERSION 文件读取，避免硬编码漂移。
+    兜底：VERSION 缺失时回退内嵌版本，保证脚本可独立运行。"""
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+    for _p in (
+        os.path.join(_HERE, "VERSION"),        # 脚本在仓库根
+        os.path.join(_HERE, "..", "VERSION"),  # 脚本在子目录
+        os.path.join(os.getcwd(), "VERSION"),  # 当前工作目录
+    ):
+        try:
+            with open(_p, "r", encoding="utf-8") as _f:
+                _v = _f.read().strip()
+                if _v:
+                    return _v
+        except OSError:
+            continue
+    return "v6.16.36"  # 兜底版本（与发版时 VERSION 保持一致）
+
+BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
