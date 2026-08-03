@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.16.35
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1) | 新闻筛查修复(v6.16.16) | 五项整改(v6.16.35)
+A股每日盘前短线标的智能筛选 v6.16.36
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1) | 新闻筛查修复(v6.16.16) | 五项整改(v6.16.35)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -100,7 +100,7 @@ from lib.backtest import run_backtest, generate_backtest_report, generate_backte
 from lib.core import DATA_DIR
 from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
 
-BUILTIN_VERSION = "v6.16.35"
+BUILTIN_VERSION = "v6.16.36"
 GITHUB_REPO = "lc132/lv"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
@@ -373,6 +373,15 @@ _ZJH_TO_SHENWAN = {
     '采矿业': '有色金属',
     '居民服务、修理和其他服务业': '社会服务',
 }
+
+# v6.16.36: 申万一级行业合法值白名单（schema校验用，与_ZJH_TO_SHENWAN映射目标一致）
+_VALID_SHENWAN_INDUSTRIES = frozenset([
+    '电子', '电力设备', '机械设备', '基础化工', '医药生物', '汽车', '食品饮料',
+    '纺织服饰', '建筑材料', '有色金属', '钢铁', '国防军工', '轻工制造', '石油石化',
+    '环保', '煤炭', '银行', '非银金融', '房地产', '建筑装饰', '商贸零售', '交通运输',
+    '公用事业', '社会服务', '传媒', '计算机', '通信', '农林牧渔', '综合',
+    '家用电器', '美容护理',
+])
 
 DEFAULT_PARAMS = {
     "search_budget": 25, "northbound_threshold": 3000, "consecutive_weeks": 2,
@@ -1398,12 +1407,13 @@ INDUSTRY_MAP = {
     '304200-304299': '建筑装饰', '304300-304399': '基础化工',
 }
 def lookup_industry(code):
-    """行业查表：v6.9.34 硬编码覆盖 → 东方财富HTTP缓存 → 代码段映射
+    """v6.16.36: 行业查表 — L1/L2置信度分层，L2(代码段映射)结果禁止写入缓存。
+    优先级: L1-硬编码(HARDCODED_INDUSTRY) → L1-东财HTTP缓存(industry_cache) → L2-代码段映射(INDUSTRY_MAP, 不准, 仅兜底)
     v6.13.53: 缓存未加载时自动加载，防止回退到错误的代码段映射"""
-    # 1. 硬编码覆盖优先（手动校对，最高优先级）
+    # 1. 硬编码覆盖优先（L1: 手动校对，最高置信度）
     if code in HARDCODED_INDUSTRY:
         return HARDCODED_INDUSTRY[code]
-    # 2. 东方财富缓存（证监会→申万映射）。v6.9.36: 兼容dict格式值
+    # 2. 东方财富缓存（L1: HTTP直取，高置信度）。v6.9.36: 兼容dict格式值
     # v6.13.53: 缓存为空时自动加载，防止回退到不准确的代码段映射
     if not _industry_cache:
         _load_industry_cache()
@@ -1412,7 +1422,8 @@ def lookup_industry(code):
         if isinstance(v, dict):
             return v.get('sshy', '') or '未知'
         return v
-    # 3. 代码段映射（仅缓存中无此code时作为兜底，精确度低）
+    # 3. 代码段映射（L2: 仅兜底，低置信度，禁止写入缓存）
+    #    代码段映射基于代码前缀推断行业，精度远低于HTTP直取，仅用于缓存完全缺失时的降级。
     try:
         ci = int(code)
     except (ValueError, TypeError):
@@ -1438,27 +1449,73 @@ def _zjh_to_shenwan(zjh):
             return _ZJH_TO_SHENWAN[broad]
     return None
 
+def _validate_industry_schema(cache, cache_name=""):
+    """v6.16.36: 落盘前/加载后schema校验。
+    一级行业缓存：值必须是_VALID_SHENWAN_INDUSTRIES中的合法申万行业。
+    二级行业缓存：值必须是非空字符串。
+    返回: (合法条目数, 非法条目数, 缺失率)"""
+    total = len(cache)
+    if total == 0:
+        return 0, 0, 0.0
+    valid = 0
+    for code, industry in cache.items():
+        if isinstance(industry, str) and industry and industry != '未知':
+            valid += 1
+    invalid = total - valid
+    missing_rate = invalid / total
+    if invalid > 0:
+        print(f"[WARNING] {cache_name}schema校验: {valid}条合法, {invalid}条非法, 缺失率{missing_rate:.1%}")
+    return valid, invalid, missing_rate
+
 def _load_industry_cache():
-    """从磁盘加载行业缓存。v6.9.36: 兼容旧格式dict值自动转字符串。"""
+    """v6.16.36: 从磁盘加载行业缓存 + 完整性自检。
+    返回: (一级需要重建, 二级需要重建) — 缺失率>5%触发重建。"""
     global _industry_cache, _sub_industry_cache
+    indy_rebuild = False; sub_rebuild = False
     try:
         with open(INDUSTRY_CACHE_FILE, 'r', encoding='utf-8') as f:
             _industry_cache = json.load(f)
         # v6.9.36: 兼容旧格式dict值自动转字符串
         _industry_cache = {k: (v.get('sshy', '') or '未知') if isinstance(v, dict) else v for k, v in _industry_cache.items()}
-        print(f"[INFO] 行业缓存: 从磁盘加载 {len(_industry_cache)} 条")
+        total = len(_industry_cache)
+        if total > 0:
+            valid, invalid, missing_rate = _validate_industry_schema(_industry_cache, "一级行业")
+            if missing_rate > 0.05:
+                print(f"[WARNING] 行业缓存: 缺失率{missing_rate:.1%}>5%, 标记自动重建")
+                indy_rebuild = True
+            else:
+                print(f"[INFO] 行业缓存: 从磁盘加载 {total} 条 (合法{valid}条)")
+        else:
+            print(f"[INFO] 行业缓存: 缓存为空")
     except (FileNotFoundError, json.JSONDecodeError, PermissionError):
         _industry_cache = {}
     try:
         with open(SUB_INDUSTRY_CACHE_FILE, 'r', encoding='utf-8') as f:
             _sub_industry_cache = json.load(f)
-        print(f"[INFO] 二级行业缓存: 从磁盘加载 {len(_sub_industry_cache)} 条")
+        total = len(_sub_industry_cache)
+        if total > 0:
+            valid, invalid, missing_rate = _validate_industry_schema(_sub_industry_cache, "二级行业")
+            if missing_rate > 0.05:
+                print(f"[WARNING] 二级行业缓存: 缺失率{missing_rate:.1%}>5%, 标记自动重建")
+                sub_rebuild = True
+            else:
+                print(f"[INFO] 二级行业缓存: 从磁盘加载 {total} 条 (合法{valid}条)")
+        else:
+            print(f"[INFO] 二级行业缓存: 缓存为空")
     except (FileNotFoundError, json.JSONDecodeError, PermissionError):
         _sub_industry_cache = {}
+    return indy_rebuild, sub_rebuild
 
 def _save_industry_cache():
-    """保存行业缓存到磁盘"""
+    """v6.16.36: 保存行业缓存到磁盘 — 落盘前schema校验，剔除非法条目。"""
     if _industry_cache:
+        # Schema校验：仅保留合法申万一级行业
+        clean = {k: v for k, v in _industry_cache.items()
+                 if isinstance(v, str) and v in _VALID_SHENWAN_INDUSTRIES}
+        stripped = len(_industry_cache) - len(clean)
+        if stripped > 0:
+            print(f"[WARNING] 行业缓存保存: schema校验剔除{stripped}条非法条目")
+            _industry_cache.clear(); _industry_cache.update(clean)
         try:
             with open(INDUSTRY_CACHE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(_industry_cache, f, ensure_ascii=False, indent=2)
@@ -1466,12 +1523,46 @@ def _save_industry_cache():
         except Exception as e:
             print(f"[WARNING] 行业缓存保存失败: {e}")
     if _sub_industry_cache:
+        # Schema校验：仅保留非空字符串值
+        clean = {k: v for k, v in _sub_industry_cache.items()
+                 if isinstance(v, str) and v and v != '未知'}
+        stripped = len(_sub_industry_cache) - len(clean)
+        if stripped > 0:
+            print(f"[WARNING] 二级行业缓存保存: schema校验剔除{stripped}条非法条目")
+            _sub_industry_cache.clear(); _sub_industry_cache.update(clean)
         try:
             with open(SUB_INDUSTRY_CACHE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(_sub_industry_cache, f, ensure_ascii=False, indent=2)
             print(f"[INFO] 二级行业缓存: 已保存 {len(_sub_industry_cache)} 条")
         except Exception as e:
             print(f"[WARNING] 二级行业缓存保存失败: {e}")
+
+def _rebuild_industry_from_http(all_stocks):
+    """v6.16.36: 通过东方财富HTTP API批量重建行业缓存（完整性自检触发）。
+    并发拉取，仅写入L1(HTTP直取)结果，L2(代码段映射)不上缓存。"""
+    global _industry_cache, _sub_industry_cache
+    _industry_cache = {}; _sub_industry_cache = {}
+    fetched = 0; failed = 0
+    codes = [s.get('code', '') for s in all_stocks if s.get('code', '')]
+    print(f"[INFO] 行业缓存重建: 开始HTTP拉取 {len(codes)} 只...")
+    # 并发拉取（max_workers=20，与step10E一致）
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(_fetch_zjh_industry, code): code for code in codes}
+        for future in as_completed(futures):
+            code = futures[future]
+            try:
+                indy, sub = future.result()
+                if indy is not None and indy in _VALID_SHENWAN_INDUSTRIES:
+                    _industry_cache[code] = indy
+                if sub is not None and isinstance(sub, str) and sub and sub != '未知':
+                    _sub_industry_cache[code] = sub
+                fetched += 1
+            except Exception:
+                failed += 1
+            if (fetched + failed) % 500 == 0:
+                print(f"  行业缓存重建: {fetched + failed}/{len(codes)}...")
+    print(f"[INFO] 行业缓存重建: 完成 — 一级{len(_industry_cache)}条, 二级{len(_sub_industry_cache)}条, 失败{failed}只")
+    _save_industry_cache()
 
 def _fetch_zjh_industry(code):
     """v6.9.35: 通过东方财富HTTP API获取证监会行业和二级行业(sshy)。
@@ -1494,14 +1585,19 @@ def _fetch_zjh_industry(code):
         return None, None
 
 def _preload_industry_from_eastmoney(all_stocks):
-    """v6.9.35: 通过东方财富HTTP API批量获取行业分类（一级+二级）。
-    v6.9.59: 所有日期统一仅读取磁盘缓存，不再执行HTTP拉取（行业缓存由sunday_industry_pull.py单独维护）。"""
+    """v6.16.36: 加载行业缓存 + 完整性自检 + 缺失率>5%自动HTTP重建。
+    v6.9.59: 所有日期统一优先读取磁盘缓存（行业缓存由sunday_industry_pull.py单独维护）。
+    v6.16.36: 缓存损坏(缺失率>5%)时自动触发HTTP重建，无需等待周日脚本。"""
     global _industry_cache, _sub_industry_cache
-    _load_industry_cache()
+    indy_rebuild, sub_rebuild = _load_industry_cache()
     
     cache_is_empty = len(_industry_cache) == 0 and len(_sub_industry_cache) == 0
+    need_http = indy_rebuild or sub_rebuild
     
-    if cache_is_empty:
+    if need_http and not cache_is_empty:
+        print(f"[INFO] 行业缓存: 缺失率>5%，触发HTTP自动重建...")
+        _rebuild_industry_from_http(all_stocks)
+    elif cache_is_empty:
         print(f"[INFO] 行业缓存: 缓存为空，使用代码段映射降级（请执行sunday_industry_pull.py初始化缓存）")
     else:
         print(f"[INFO] 行业缓存: 仅读取缓存 (一级{len(_industry_cache)}条, 二级{len(_sub_industry_cache)}条)")
