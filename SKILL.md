@@ -1,6 +1,6 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.20.1)。基于前一日收盘数据，通过37步筛选流程，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
+description: A股每日盘前短线标的智能筛选(v6.20.2)。基于前一日收盘数据，通过37步筛选流程，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
 ---
 # A股盘前短线标的筛选 v6.16.36
 
@@ -8,6 +8,8 @@ description: A股每日盘前短线标的智能筛选(v6.20.1)。基于前一日
 
 > **版本号单一真相源(SSOT)**：`VERSION` 文件为唯一来源。`ashare_screener.py` / `pre-check-version.py` 运行时读取 `VERSION`；本文件与 `策略调整记录.json` 由 `scripts/sync_version.py` 在发版时同步，**禁止手工硬编码版本号**。
 
+
+- **v6.20.2**: 仓库治理整改（报告#3-#7）——(1).gitattributes 标记生成物 linguist-vendored/generated 修正仓库被识别为HTML (2).gitignore 忽略 .github_token/日志 防凭证泄露 (3)新增 scripts/pre_push_check.py 发版前质量门禁 (4)新增 scripts/lint_commit_msg.py 规范提交信息(type: desc, 拒绝双v) (5)统一机器人提交身份为 ashare-screener/ashare-bot@github.com 常量, 自动提交前缀 data:
 
 - **v6.20.1**: 版本号统一——全部来源(VERSION/SKILL.md/策略调整记录.json/ashare_screener.py)经 SSOT 机制收敛至 v6.20.1，禁止手工硬编码。
 
