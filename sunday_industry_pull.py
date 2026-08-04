@@ -117,6 +117,20 @@ def _zjh_to_shenwan(zjh):
         if broad in _ZJH_TO_SHENWAN: return _ZJH_TO_SHENWAN[broad]
     return None
 
+def _is_valid_industry(val):
+    """落盘前 schema 校验（P0#1 根治行业缓存缺陷）：行业名须为纯中文非空字符串、
+    长度合理、无控制字符、不含数字（申万行业名均为纯中文，含数字即非法/证监会代码）。"""
+    if not isinstance(val, str):
+        return False
+    s = val.strip()
+    if not s or len(s) > 20:
+        return False
+    if any(ord(c) < 32 for c in s):
+        return False
+    if any(ch.isdigit() for ch in s):
+        return False
+    return True
+
 def _fetch_industry(code):
     """通过东方财富HTTP API获取行业分类（使用默认SSL验证）"""
     try:
@@ -214,7 +228,20 @@ def main():
         print(f"  进度: {progress}/{len(to_fetch)} (一级+{new_primary}, 二级+{new_secondary}, 失败{fail_count})")
     
     print(f"\n[5] 拉取完成: 一级{len(industry_cache)}条, 二级{len(sub_industry_cache)}条, 失败{fail_count}条")
-    
+
+    # 5.5 落盘前 schema 校验（P0#1）：剔除非法条目，防止坏数据进入缓存被 step0B 同步污染筛选
+    print("\n[5.5] 落盘前 schema 校验...")
+    bad_p = [c for c, v in industry_cache.items() if not _is_valid_industry(v)]
+    bad_s = [c for c, v in sub_industry_cache.items() if not _is_valid_industry(v)]
+    for c in bad_p:
+        del industry_cache[c]
+    for c in bad_s:
+        del sub_industry_cache[c]
+    if bad_p or bad_s:
+        print(f"  [schema校验] 剔除非法一级 {len(bad_p)} 条、二级 {len(bad_s)} 条")
+    else:
+        print("  [schema校验] 全部合法")
+
     # 6. Save caches
     print("\n[6] 保存缓存文件...")
     with open(cache_file, 'w', encoding='utf-8') as f:
