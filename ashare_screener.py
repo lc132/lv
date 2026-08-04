@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.20.1
+A股每日盘前短线标的智能筛选 v6.20.2
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1) | 新闻筛查修复(v6.16.16) | 五项整改(v6.16.35)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -120,6 +120,8 @@ def _load_builtin_version():
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"
+BOT_AUTHOR_NAME = "ashare-screener"  # v6.20.2: 统一机器人提交身份(治理整改#4)
+BOT_AUTHOR_EMAIL = "ashare-bot@github.com"
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
 data_date = None; prediction_date = None; pred_yyyymmdd = None
@@ -5570,10 +5572,10 @@ def step26_github_sync(mp, hd, candidates):
             fp = os.path.join('/workspace', f)
             if os.path.exists(fp):
                 shutil.copy(fp, os.path.join(rd, f))
-        subprocess.run(["git", "-C", rd, "config", "user.email", "ashare-bot@github.com"], capture_output=True, timeout=15)
-        subprocess.run(["git", "-C", rd, "config", "user.name", "ashare-screener"], capture_output=True, timeout=15)
+        subprocess.run(["git", "-C", rd, "config", "user.email", BOT_AUTHOR_EMAIL], capture_output=True, timeout=15)
+        subprocess.run(["git", "-C", rd, "config", "user.name", BOT_AUTHOR_NAME], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", rd, "add", "."], capture_output=True, timeout=15)
-        subprocess.run(["git", "-C", rd, "commit", "-m", f"筛选结果 {prediction_date} (v{file_version})", "--allow-empty"], capture_output=True, timeout=15)
+        subprocess.run(["git", "-C", rd, "commit", "-m", f"data: 筛选结果 {prediction_date} (v{file_version})", "--allow-empty"], capture_output=True, timeout=15)
         result = _git_with_token(["git", "-C", rd, "push", "origin", "main"], timeout=30, check=False)  # v6.16.30: 60→30s
         if result.returncode == 0: log_alert("INFO", "GitHub同步", f"✅ {prediction_date} 已推送")
         else: log_alert("WARNING", "GitHub同步", f"推送失败: {result.stderr[:100]}")
