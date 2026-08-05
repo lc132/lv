@@ -841,12 +841,10 @@ def _build_company_profile(code):
             profile = profile[:300] + '…'
         lines.append(f'- **公司简介**：{profile}')
 
-    # 经营范围
+    # 经营范围（完整显示，不做截断）
     _scope = info.get('BUSINESS_SCOPE')
     scope = _scope.strip() if isinstance(_scope, str) else (str(_scope).strip() if _scope else '')
     if scope:
-        if len(scope) > 200:
-            scope = scope[:200] + '…'
         lines.append(f'- **经营范围**：{scope}')
 
     # 基本字段
