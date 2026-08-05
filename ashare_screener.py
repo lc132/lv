@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.20.8
+A股每日盘前短线标的智能筛选 v6.20.9
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1) | 新闻筛查修复(v6.16.16) | 五项整改(v6.16.35)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.20.8"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.20.9"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"
@@ -5612,85 +5612,35 @@ def step26_github_sync(mp, hd, candidates):
 # ============================================================
 # 步骤27：飞书推送
 # ============================================================
-def step27_feishu_push(candidates, total_raw, ae, asig, astr, amicro, aind, anew, sd, pk_results=None, bt_result=None):
-    """v6.20.8: 飞书推送改为双卡片样式，与扣子测试机器人模板对齐。
-    卡片1: 策略TOP3 / 冠军 / 主力资金 / 回测统计 / 免责声明 / 完整报告链接
-    卡片2: TOP15列表 / 完整标的链接
-    """
+def step27_feishu_push(candidates, total_raw, ae, asig, astr, amicro, aind, anew, sd):
+    """v6.20.9: 恢复为8月5日前单卡片样式（撤销 v6.20.8 双卡片改动），回测恢复独立推送。"""
     if not FEISHU_WEBHOOK: log_alert("WARNING", "飞书推送", "无Webhook"); return
     try:
         fc = len(candidates)
         sn = _STRATEGY_NAMES
+        ss = " | ".join([f"{s}{sn.get(s,'')}:{sd.get(s,0)}只" for s in ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T'] if sd.get(s, 0) > 0]) or "无推荐标的"
         pb = "https://lc132.github.io/lv"
         pr = f"{pb}/ashare-screening-{pred_yyyymmdd}/ashare-screening-{pred_yyyymmdd}.html"
-
-        # ── 卡片1: 综合信息卡 ──
-        card1_elements = []
-
-        # 策略TOP3（按最终池内入选数量降序）
-        top3_strats = sorted([(s, cnt) for s, cnt in sd.items() if cnt > 0], key=lambda x: -x[1])[:3]
-        if top3_strats:
-            top3_text = " ｜ ".join([f"{s}{sn.get(s, s)}:{cnt}只" for s, cnt in top3_strats])
-            card1_elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**策略TOP3**:\n{top3_text}"}})
-            card1_elements.append({"tag": "hr"})
-
-        # 冠军信息
-        champion = pk_results.get('__champion__', {}) if pk_results else {}
-        if champion and champion.get('winner_code'):
-            crown_code = champion.get('winner_code', '')
-            crown_name = champion.get('winner_name', '')
-            crown_candidate = next((c for c in candidates if c.get('code') == crown_code), None)
-            crown_strat = crown_candidate.get('strategy', '?') if crown_candidate else '?'
-            crown_score = champion.get('winner_score', 0)
-            total_main = sum((c.get('main_inflow') or 0) for c in candidates)
-            avg_main = total_main / fc if fc > 0 else 0
-            card1_elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"👑 **冠军**: {crown_name}({crown_code}) — {crown_strat}{sn.get(crown_strat, crown_strat)}策略, 评分 {crown_score}/7\n**主力资金**: 净流入 {total_main/1e8:.2f} 亿 ｜ 平均 {avg_main/1e4:.0f} 万/只"}})
-            card1_elements.append({"tag": "hr"})
-
-        # 回测统计（如有）
-        if bt_result and bt_result.get('metrics') and bt_result.get('all_trades'):
-            m = bt_result['metrics']
-            card1_elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**回测统计**\n{m.get('total', 0)} 笔交易 ｜ 胜率 {m.get('win_rate', 0):.1f}% ｜ 均收 {m.get('avg_return', 0):.2f}% ｜ 盈亏比 {m.get('profit_factor', 0):.2f} ｜ 夏普 {m.get('sharpe', 0):.2f}"}})
-            card1_elements.append({"tag": "hr"})
-
-        # 免责声明 + 完整报告链接
-        report_basename = os.path.basename(pr)
-        card1_elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"⚠️ **免责声明**：本报告仅供研究参考，不构成任何投资建议。\n📄 完整报告: [{report_basename}]({pr})"}})
-
-        card1 = {"msg_type": "interactive", "card": {
+        card = {"msg_type": "interactive", "card": {
             "header": {"title": {"tag": "plain_text", "content": f"📊 每日短线标的筛选 — {prediction_date}"}, "template": "blue"},
-            "elements": card1_elements}}
-
-        # ── 卡片2: TOP15 标的卡 ──
-        top15 = sorted(candidates, key=lambda c: -(c.get('score', 0) or 0))[:15]
-        top15_lines = "\n".join([
-            f"{i+1}. {c.get('code')} {c.get('name')} ({c.get('strategy', '?')}{sn.get(c.get('strategy','?'), c.get('strategy','?'))}) 评分:{c.get('score', 0)}"
-            for i, c in enumerate(top15)
-        ]) if top15 else "无推荐标的"
-
-        card2 = {"msg_type": "interactive", "card": {
-            "header": {"title": {"tag": "plain_text", "content": f"📈 {prediction_date} 短线标的 TOP15"}, "template": "blue"},
             "elements": [
-                {"tag": "div", "text": {"tag": "lark_md", "content": top15_lines}},
+                {"tag": "div", "text": {"tag": "lark_md", "content": f"**数据来源**: {data_date}  |  **市场环境**: {market_condition}  |  **建议仓位**: {position_pct}%"}},
                 {"tag": "hr"},
-                {"tag": "div", "text": {"tag": "lark_md", "content": f"📄 完整{fc}只标的: [查看完整报告]({pr})"}}]}}
+                {"tag": "div", "text": {"tag": "lark_md", "content": f"原始: **{total_raw}**只 → 硬排: **{ae}**只 → 信号: **{asig}**只 → 策略: **{astr}**只 → 微观: **{amicro}**只 → 行业: **{aind}**只 → 新闻: **{aind - anew}**只 → ★ 最终: **{fc}**只"}},
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md", "content": f"**策略分布**: {ss}"}},
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md", "content": f"📈 [**查看完整可视化报告（GitHub Pages）**]({pr})\n📁 [**报告列表首页**]({pb})"}},
+                {"tag": "note", "elements": [{"tag": "plain_text", "content": "⚠️ 仅供参考，不构成投资建议"}]}]}}
+        req = urllib.request.Request(FEISHU_WEBHOOK, data=json.dumps(card, ensure_ascii=False).encode('utf-8'),
+                                     headers={'Content-Type': 'application/json'}, method='POST')
+        with _http_retry(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+        if result.get('code') == 0:
+            log_alert("INFO", "飞书推送", f"✅ {prediction_date} 已推送")
+        else: log_alert("WARNING", "飞书推送", f"推送失败: {result.get('msg','')}")
+    except Exception as e: log_alert("WARNING", "飞书推送", f"失败: {str(e)[:80]}")
 
-        # ── 顺序发送两张卡片 ──
-        for card in [card1, card2]:
-            req = urllib.request.Request(FEISHU_WEBHOOK, data=json.dumps(card, ensure_ascii=False).encode('utf-8'),
-                                         headers={'Content-Type': 'application/json'}, method='POST')
-            with _http_retry(req, timeout=10) as resp:
-                result = json.loads(resp.read())
-            if result.get('code') == 0:
-                log_alert("INFO", "飞书推送", f"✅ {prediction_date} 卡片已推送")
-            else:
-                log_alert("WARNING", "飞书推送", f"推送失败: {result.get('msg','')}")
-    except Exception as e:
-        log_alert("WARNING", "飞书推送", f"失败: {str(e)[:80]}")
-
-# ============================================================
-# 数据源监控
-# ============================================================
 def update_data_source_monitor(ds):
     monitor = safe_read_json("/workspace/数据源监控.json", default={"tencent_success": 0, "tencent_consecutive_failures": 0, "total_runs": 0, "last_source": "", "history": []})
     if not isinstance(monitor, dict): monitor = {"tencent_success": 0, "tencent_consecutive_failures": 0, "total_runs": 0, "last_source": "", "history": []}
@@ -5983,8 +5933,8 @@ def main():
             os.makedirs("/workspace/backtest", exist_ok=True)
             import shutil
             shutil.copy("/workspace/回测报告.html", "/workspace/backtest/index.html")
-            # v6.20.8: 回测统计已整合到 step27 飞书卡片中，不再单独推送回测卡
-            # push_backtest_to_feishu(bt_result)
+            # v6.20.9: 恢复独立回测卡推送（撤销 v6.20.8 整合到 step27 的做法，回到8月5日前行为）
+            push_backtest_to_feishu(bt_result)
             bt_lookup = _build_backtest_lookup(bt_result)
         record_step_status("步骤25: 历史回测", "OK", f"{len(bt_result.get('all_trades',[]))}笔交易")
     else:
@@ -6021,7 +5971,7 @@ def main():
     
     print("\n[步骤26] GitHub同步..."); step26_github_sync(mp, hd, final)
     record_step_status("步骤26: GitHub同步", "OK")
-    print("\n[步骤27] 飞书推送..."); step27_feishu_push(final, total_raw, ae, asig, astr, amicro, aind, anew, sd, pk_results, bt_result)
+    print("\n[步骤27] 飞书推送..."); step27_feishu_push(final, total_raw, ae, asig, astr, amicro, aind, anew, sd)
     record_step_status("步骤27: 飞书推送", "OK")
     
     # v6.13.11: 步骤执行状态报告
