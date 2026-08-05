@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.20.6
+A股每日盘前短线标的智能筛选 v6.20.7
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1) | 新闻筛查修复(v6.16.16) | 五项整改(v6.16.35)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.20.6"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.20.7"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"
@@ -4734,7 +4734,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
             champion_candidate = next((c for c in candidates if c.get('code') == champion_code), None)
             if champion_candidate:
                 try:
-                    champion_analysis = generate_candidate_analysis(champion_candidate, kline_data or {}, 0, len(candidates))
+                    champion_analysis = generate_candidate_analysis(champion_candidate, kline_data or {}, 0, len(candidates), is_champion=True)
                     analyses.insert(0, champion_analysis)
                     log_alert("INFO", "深度分析", f"冠军 {champion_candidate.get('name','')}({champion_code}) 已注入深度分析")
                 except Exception as e:
@@ -4759,6 +4759,13 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
             lines.append("")
             lines.append(ca.get('suggestion', ''))
             lines.append("")
+            # v6.20.7: 冠军标的额外三板块
+            if ca.get('is_champion'):
+                for extra_key in ('company_profile', 'market_finance', 'news_research'):
+                    extra_val = ca.get(extra_key, '')
+                    if extra_val:
+                        lines.append(extra_val)
+                        lines.append("")
             lines.append("---")
             lines.append("")
     
@@ -5045,6 +5052,10 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             ('fundamental', '基本面分析', 'fundamental'),
             ('risk', '风险提示', 'risk'),
             ('suggestion', '操作建议', 'suggestion'),
+            # v6.20.7: 冠军标的专属三板块（is_champion=True时有值，否则为空字符串自动跳过）
+            ('company_profile', '公司概况', 'fundamental'),
+            ('market_finance', '行情及财务', 'technical'),
+            ('news_research', '机构观点', 'capital'),
         ]
         
         # v6.13.53: 跨策略冠军获取，用于HTML个股深度研判卡片标注👑
@@ -5056,7 +5067,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             champion_candidate_html = next((c for c in candidates if c.get('code') == champion_code_html), None)
             if champion_candidate_html:
                 try:
-                    champion_analysis_html = generate_candidate_analysis(champion_candidate_html, kline_data or {}, 0, len(candidates))
+                    champion_analysis_html = generate_candidate_analysis(champion_candidate_html, kline_data or {}, 0, len(candidates), is_champion=True)
                     html_analyses.insert(0, champion_analysis_html)
                 except Exception as e:
                     log_alert("WARNING", "深度分析", f"HTML冠军 {champion_candidate_html.get('name','')}({champion_code_html}) 注入失败: {e}")
