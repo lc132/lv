@@ -335,6 +335,13 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         return {'all_trades': [], 'metrics': {}, 'strategy_metrics': {}, 'industry_metrics': {}}
 
     today = datetime.now() + timedelta(hours=8)  # v6.13.10: 北京时间（与主脚本一致）
+    today_str = today.strftime('%Y-%m-%d')
+    # v6.16.12 修正：皇冠回测仅统计"当日"跨策略冠军，避免混入历史各日冠军导致明细错配
+    current_champion_code = None
+    for h in history:
+        if h.get('is_champion') and h.get('prediction_date') == today_str:
+            current_champion_code = h.get('code')
+            break
     cutoff = today - timedelta(days=max_days_lookback)
     # v6.13.28: 预测日=买入日(盘前预测当日买入)，排除当天预测(尚无收盘K线，显示无意义)
     history = [h for h in history
@@ -422,7 +429,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         trade['take_profit'] = tp
         trade['prediction_date'] = pred_date
         trade['score'] = h.get('score', 0)
-        trade['is_champion'] = h.get('is_champion', False)  # v6.16.12: 皇冠回测
+        trade['is_champion'] = (code == current_champion_code)  # v6.16.12 修正: 仅当日冠军
         trades.append(trade)
 
     metrics = _compute_metrics(trades)
@@ -438,7 +445,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     industry_metrics = {i: _compute_metrics(ts) for i, ts in industry_trades.items()}
 
     # v6.16.12: 皇冠回测——仅统计跨策略冠军标的
-    champion_trades = [t for t in trades if t.get('is_champion')]
+    champion_trades = [t for t in trades if current_champion_code and t['code'] == current_champion_code]
     champion_metrics = _compute_metrics(champion_trades) if champion_trades else None
     if champion_trades:
         print(f"  皇冠回测: {champion_metrics['total']}笔 | 胜率{champion_metrics['win_rate']}% | "
