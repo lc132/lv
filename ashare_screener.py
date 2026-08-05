@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.20.2
+A股每日盘前短线标的智能筛选 v6.20.6
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1) | 新闻筛查修复(v6.16.16) | 五项整改(v6.16.35)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.20.1"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.20.6"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"
@@ -5517,7 +5517,7 @@ def step22_write_history(candidates, champion_code=None):
             rec["is_champion"] = True
         safe_append_json(hf, rec)
         written += 1
-    # v6.16.39 修正：新增/去重后统一归一化 is_champion
+    # v6.20.4 修正：新增/去重后统一归一化 is_champion
     # 旧逻辑仅在"新写入"记录上标记 is_champion；若冠军标的此前已写入(去重跳过)则无法补标，
     # 导致 is_champion 停留在最早写入时的冠军，与主报告最新冠军不一致(如000603错标、002015漏标)。
     # 此处对文件全部记录重算：清旧标记，仅本次 champion_code 标 True。
@@ -5590,7 +5590,7 @@ def step26_github_sync(mp, hd, candidates):
         subprocess.run(["git", "-C", rd, "config", "user.email", BOT_AUTHOR_EMAIL], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", rd, "config", "user.name", BOT_AUTHOR_NAME], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", rd, "add", "."], capture_output=True, timeout=15)
-        subprocess.run(["git", "-C", rd, "commit", "-m", f"data: 筛选结果 {prediction_date} (v{file_version})", "--allow-empty"], capture_output=True, timeout=15)
+        subprocess.run(["git", "-C", rd, "commit", "-m", f"data: 筛选结果 {prediction_date} ({file_version})", "--allow-empty"], capture_output=True, timeout=15)
         result = _git_with_token(["git", "-C", rd, "push", "origin", "main"], timeout=30, check=False)  # v6.16.30: 60→30s
         if result.returncode == 0: log_alert("INFO", "GitHub同步", f"✅ {prediction_date} 已推送")
         else: log_alert("WARNING", "GitHub同步", f"推送失败: {result.stderr[:100]}")
