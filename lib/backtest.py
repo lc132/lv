@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.16.34
+# A股短线筛选 — 历史回测模块 v6.20.6
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
@@ -18,6 +18,28 @@ import time
 import os
 from collections import defaultdict, Counter
 from datetime import datetime, timedelta
+
+
+def _load_version():
+    """SSOT: 从仓库根 VERSION 文件读取，消除页脚硬编码漂移。
+    兜底：VERSION 缺失时回退内嵌版本，保证模块可独立运行。"""
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+    for _p in (
+        os.path.join(_HERE, "..", "VERSION"),  # 模块在 lib/ 子目录
+        os.path.join(_HERE, "VERSION"),          # 模块在仓库根
+        os.path.join(os.getcwd(), "VERSION"),    # 当前工作目录
+    ):
+        try:
+            with open(_p, "r", encoding="utf-8") as _f:
+                _v = _f.read().strip()
+                if _v:
+                    return _v
+        except OSError:
+            continue
+    return "v6.20.6"  # 兜底版本（由 sync_version.py 锚定同步）
+
+
+BUILTIN_VERSION = _load_version()
 
 # v6.12.24: 独立SSL上下文，解除对主脚本全局opener的依赖
 _BT_SSL_CTX = ssl._create_unverified_context()
@@ -336,7 +358,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
 
     today = datetime.now() + timedelta(hours=8)  # v6.13.10: 北京时间（与主脚本一致）
     today_str = today.strftime('%Y-%m-%d')
-    # v6.16.38 修正：皇冠回测展示"最新一期"跨策略冠军
+    # v6.20.3 修正：皇冠回测展示"最新一期"跨策略冠军
     # 旧逻辑(420a5ef8)用 datetime.now() 当天 prediction_date 匹配冠军，但回测历史已排除当天
     # (prediction_date < today)，导致 current_champion_code 命中后记录被过滤、皇冠取不到标的；
     # 更早版本则聚合所有历史各日冠军(603496/600726)混入皇冠板块。
@@ -345,7 +367,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     current_champion_code = None
     latest_champion_date = None
     for h in history:  # 注意：此循环在 today 过滤之前，history 为完整推荐历史
-        # v6.16.40: 仅纳入 prediction_date<=today 的冠军(已发生、可回测)，排除未来买入日冠军
+        # v6.20.5: 仅纳入 prediction_date<=today 的冠军(已发生、可回测)，排除未来买入日冠军
         if h.get('is_champion') and h.get('prediction_date') <= today_str:
             pd = h.get('prediction_date')
             if pd and (latest_champion_date is None or pd > latest_champion_date):
@@ -353,7 +375,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
                 current_champion_code = h.get('code')
     cutoff = today - timedelta(days=max_days_lookback)
     # v6.13.28: 预测日=买入日(盘前预测当日买入)，排除当天预测(尚无收盘K线)；
-    # v6.16.38: 冠军记录豁免该排除，保证最新一期冠军可参与回测
+    # v6.20.3: 冠军记录豁免该排除，保证最新一期冠军可参与回测
     history = [h for h in history
                if h.get('prediction_date') and h['prediction_date'] >= cutoff.strftime('%Y-%m-%d')
                and (h['prediction_date'] < today.strftime('%Y-%m-%d') or h.get('is_champion'))]
@@ -439,7 +461,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         trade['take_profit'] = tp
         trade['prediction_date'] = pred_date
         trade['score'] = h.get('score', 0)
-        trade['is_champion'] = (code == current_champion_code)  # v6.16.38: 标记最新一期冠军
+        trade['is_champion'] = (code == current_champion_code)  # v6.20.3: 标记最新一期冠军
         trades.append(trade)
 
     metrics = _compute_metrics(trades)
@@ -573,7 +595,7 @@ def generate_backtest_report(bt_result, output_path=None):
     lines.extend([
         "",
         f"> \u26a0\ufe0f 免责声明：回测结果不代表未来表现，仅供参考。",
-        f"> 版本: v6.16.30 | 生成: {today_str}",
+        f"> 版本: {BUILTIN_VERSION} | 生成: {today_str}",
     ])
 
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -696,7 +718,7 @@ def generate_backtest_html(bt_result, output_path=None):
     if not trades:
         html = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>历史回测报告</title>
 <style>body{{font-family:"Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif;max-width:900px;margin:40px auto;padding:20px;background:#f8fafc;color:#1e293b}}h1{{color:#2563eb}}</style></head>
-<body><h1>历史回测报告</h1><p>暂无回测数据。</p><h2>回测说明</h2><ul><li>回测使用最近90天推荐历史。</li><li>单笔最大持仓10个交易日。</li><li>按推荐时的进场、止损、止盈价格进行模拟。</li><li>遵循A股T+1规则，买入当日不检查止盈止损出场。</li><li>回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。</li><li>v6.13.14新增：移动止损(盈利达TP50%保本)、时间止损(持仓3天仍亏损离场)。</li></ul><p style="color:#94a3b8">版本: v6.16.27 | 生成: {today_str}</p></body></html>'''
+<body><h1>历史回测报告</h1><p>暂无回测数据。</p><h2>回测说明</h2><ul><li>回测使用最近90天推荐历史。</li><li>单笔最大持仓10个交易日。</li><li>按推荐时的进场、止损、止盈价格进行模拟。</li><li>遵循A股T+1规则，买入当日不检查止盈止损出场。</li><li>回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。</li><li>v6.13.14新增：移动止损(盈利达TP50%保本)、时间止损(持仓3天仍亏损离场)。</li></ul><p style="color:#94a3b8">版本: {BUILTIN_VERSION} | 生成: {today_str}</p></body></html>'''
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(html)
         return output_path
@@ -849,7 +871,7 @@ _champion_html(champion_trades, champion_metrics)
 
 <div class="footer">
 <p>\u26a0\ufe0f \u514d\u8d23\u58f0\u660e\uff1a\u56de\u6d4b\u7ed3\u679c\u4e0d\u4ee3\u8868\u672a\u6765\u8868\u73b0\uff0c\u4ec5\u4f9b\u53c2\u8003\u3002</p>
-<p>\u7248\u672c: v6.16.30 | \u751f\u6210: {today_str}</p>
+<p>\u7248\u672c: {BUILTIN_VERSION} | \u751f\u6210: {today_str}</p>
 </div>
 </div>
 </body>
