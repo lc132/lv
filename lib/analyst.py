@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v6.13.38 AI 策略分析师模块
+v6.20.7 AI 策略分析师模块
 将单纯的数据筛选升级为 AI 智能分析，让大模型充当专属策略分析师。
 对最终候选池进行多维度深度分析，输出结构化研判报告。
 
@@ -9,9 +9,19 @@ v6.13.0 优化:
 - 市场全景: 新增外围市场联动/市场宽度/成交量分析
 - 板块深度: 新增板块轮动/龙头识别/板块评分
 - 个股深度: 新增60日区间/BOLL带/KDJ超买超卖/量价背离/板块关联
+
+v6.20.7 新增:
+- 冠军标的深度研判: is_champion=True 时联网拉取公司概况/行情财务/近期动态
+- 三大数据源: 东财F10公司概况/东财datacenter财务数据/新浪K线+腾讯实时行情
 """
 
 import re
+import json
+import time
+import ssl
+import urllib.request
+import urllib.parse
+import urllib.error
 
 
 def generate_market_overview(final_candidates, index_data, market_condition,
@@ -233,12 +243,16 @@ def generate_sector_analysis(final_candidates, sector_limit_up, fc):
     return "\n".join(lines)
 
 
-def generate_candidate_analysis(c, kline_data, idx, total):
+def generate_candidate_analysis(c, kline_data, idx, total, is_champion=False):
     """
     个股深度分析
     对单个候选标的进行策略逻辑、技术面、资金面、基本面、风险、操作建议的综合研判。
 
-    返回: dict with keys: code, name, strategy, strategy_logic, technical, capital, fundamental, risk, suggestion, summary
+    v6.20.7: is_champion=True 时额外联网拉取公司概况/行情财务/近期动态三板块。
+
+    返回: dict with keys: code, name, strategy, strategy_logic, technical, capital,
+          fundamental, risk, suggestion, summary,
+          is_champion, company_profile, market_finance, news_research
     """
     code = c.get('code', '')
     name = c.get('name', '')
@@ -330,6 +344,24 @@ def generate_candidate_analysis(c, kline_data, idx, total):
     # ========== 综合研判 ==========
     summary = _build_summary(strat, sname, score, conf, plr, change_pct, industry, main_in, r7d, close, high60, low60, has_kline)
 
+    # ========== v6.20.7: 冠军标的深度研判三板块 ==========
+    company_profile = ''
+    market_finance = ''
+    news_research = ''
+    if is_champion:
+        try:
+            company_profile = _build_company_profile(code)
+        except Exception:
+            company_profile = ''
+        try:
+            market_finance = _build_market_finance(code, kd, close, change_pct)
+        except Exception:
+            market_finance = ''
+        try:
+            news_research = _build_news_research(c, code, name)
+        except Exception:
+            news_research = ''
+
     return {
         'code': code,
         'name': name,
@@ -341,6 +373,10 @@ def generate_candidate_analysis(c, kline_data, idx, total):
         'risk': risk,
         'suggestion': suggestion,
         'summary': summary,
+        'is_champion': is_champion,
+        'company_profile': company_profile,
+        'market_finance': market_finance,
+        'news_research': news_research,
     }
 
 
@@ -734,6 +770,338 @@ def _build_summary(strat, sname, score, conf, plr, change_pct, industry, main_in
         summaries.append(f"7日内持续推荐，趋势延续性强")
 
     return "，".join(summaries) + "。"
+
+
+# ============================================================
+# v6.20.7: 冠军标的深度研判 — 三板块构建函数
+# ============================================================
+
+def _safe_http_get(url, timeout=10, encoding='utf-8'):
+    """通用安全HTTP GET请求，带重试和SSL宽容。"""
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json, text/html, */*',
+        'Referer': 'https://quote.eastmoney.com/',
+    }
+    last_err = None
+    for _attempt in range(3):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+                data = resp.read()
+                if encoding == 'gbk':
+                    return data.decode('gbk', errors='replace')
+                return data.decode(encoding, errors='replace')
+        except Exception as e:
+            last_err = e
+            time.sleep(0.5)
+    return None
+
+
+def _code_to_secucode(code):
+    """6位股票代码 → secucode格式(如 002015.SZ / 600519.SH)。"""
+    code = str(code).strip().zfill(6)
+    if code.startswith(('60', '68', '11', '13')):
+        return code, f'{code}.SH', 'sh' + code, '1.' + code
+    else:
+        return code, f'{code}.SZ', 'sz' + code, '0.' + code
+
+
+def _build_company_profile(code):
+    """
+    冠军板块1: 公司概况
+    数据源: 东方财富F10 CompanySurvey API
+    返回: Markdown格式字符串
+    """
+    _, secucode, szsh, _ = _code_to_secucode(code)
+    url = f'https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax?code={szsh}'
+    text = _safe_http_get(url, timeout=12)
+    if not text:
+        return ''
+    try:
+        d = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return ''
+    jbzl = d.get('jbzl') or []
+    if not jbzl:
+        return ''
+    info = jbzl[0] if isinstance(jbzl, list) else jbzl
+
+    lines = ['**公司概况**：']
+
+    # 公司简介
+    _profile = info.get('ORG_PROFILE')
+    profile = _profile.strip() if isinstance(_profile, str) else (str(_profile).strip() if _profile else '')
+    if profile:
+        # 截取前300字，避免过长
+        if len(profile) > 300:
+            profile = profile[:300] + '…'
+        lines.append(f'- **公司简介**：{profile}')
+
+    # 经营范围
+    _scope = info.get('BUSINESS_SCOPE')
+    scope = _scope.strip() if isinstance(_scope, str) else (str(_scope).strip() if _scope else '')
+    if scope:
+        if len(scope) > 200:
+            scope = scope[:200] + '…'
+        lines.append(f'- **经营范围**：{scope}')
+
+    # 基本字段
+    fields_map = [
+        ('CHAIRMAN', '董事长'), ('LEGAL_PERSON', '法定代表人'),
+        ('PRESIDENT', '总经理'), ('SECRETARY', '董秘'),
+        ('EMP_NUM', '员工人数'),
+        ('ORG_WEB', '公司网址'), ('PROVINCE', '所在省份'),
+        ('INDUSTRYCSRC1', '证监会行业'), ('ORG_TEL', '联系电话'),
+    ]
+    detail_parts = []
+    for key, label in fields_map:
+        raw = info.get(key)
+        if raw is None:
+            continue
+        val = str(raw).strip() if isinstance(raw, str) else str(raw)
+        if val and val != '--' and val != 'None':
+            detail_parts.append(f'{label}：{val}')
+    if detail_parts:
+        lines.append(f"- {'，'.join(detail_parts)}")
+
+    # 上市信息
+    reg_capital = info.get('REG_CAPITAL')
+    if reg_capital:
+        try:
+            rc = float(reg_capital)
+            if rc > 0:
+                lines.append(f'- **注册资本**：{rc:.0f}万元（约{rc/1e4:.2f}亿元）')
+        except (ValueError, TypeError):
+            pass
+
+    if len(lines) <= 1:
+        return ''
+    return '\n'.join(lines)
+
+
+def _build_market_finance(code, kd, close, change_pct):
+    """
+    冠军板块2: 行情及财务表现
+    数据源: 新浪K线历史(30日) + 东方财富datacenter财务数据
+    返回: Markdown格式字符串
+    """
+    _, secucode, szsh, secid = _code_to_secucode(code)
+    lines = ['**行情及财务表现**：']
+
+    # ── 行情部分: 新浪K线 ──
+    kline_url = f'https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol={szsh}&scale=240&datalen=30'
+    kline_text = _safe_http_get(kline_url, timeout=10)
+    klines = []
+    if kline_text:
+        try:
+            klines = json.loads(kline_text)
+        except (json.JSONDecodeError, ValueError):
+            klines = []
+
+    if klines:
+        recent = klines[-1] if klines else {}
+        first = klines[0] if klines else {}
+        try:
+            cur_close = float(recent.get('close', 0))
+            cur_vol = float(recent.get('volume', 0))
+            period_high = max(float(k.get('high', 0)) for k in klines)
+            period_low = min(float(k.get('low', 0)) for k in klines)
+            start_close = float(first.get('close', 0))
+            if start_close > 0:
+                period_chg = (cur_close / start_close - 1) * 100
+                lines.append(f'- **近30日行情**：收盘{cur_close:.2f}元，区间涨跌{period_chg:+.1f}%，最高{period_high:.2f}，最低{period_low:.2f}')
+            # 5日均量
+            if len(klines) >= 5:
+                avg_vol5 = sum(float(k.get('volume', 0)) for k in klines[-5:]) / 5
+                lines.append(f'- **近5日均量**：{avg_vol5/1e4:.0f}万手')
+        except (ValueError, TypeError, ZeroDivisionError):
+            pass
+
+    # ── 财务部分: 东方财富datacenter ──
+    fin_url = (f'https://datacenter-web.eastmoney.com/api/data/v1/get?'
+               f'reportName=RPT_F10_FINANCE_MAINFINADATA&columns=ALL'
+               f'&filter=(SECUCODE%3D%22{urllib.parse.quote(secucode)}%22)'
+               f'&pageNumber=1&pageSize=4&sortColumns=REPORT_DATE&sortTypes=-1')
+    fin_text = _safe_http_get(fin_url, timeout=12)
+    fin_data = []
+    if fin_text:
+        try:
+            fd = json.loads(fin_text)
+            fin_data = fd.get('result', {}).get('data', []) if fd.get('success') else []
+        except (json.JSONDecodeError, ValueError, AttributeError):
+            fin_data = []
+
+    if fin_data:
+        latest = fin_data[0]
+        report_name = latest.get('REPORT_DATE_NAME', '')
+        eps = latest.get('EPSJB')
+        bps = latest.get('BPS')
+        roe = latest.get('ROEJQ')
+        np = latest.get('PARENTNETPROFIT')
+        rev = latest.get('TOTALOPERATEREVE')
+        np_yoy = latest.get('PARENTNETPROFITTZ')
+        rev_yoy = latest.get('TOTALOPERATEREVETZ')
+        gross_margin = latest.get('XSMLL')
+        debt_ratio = latest.get('ZCFZL')
+        deduct_np_yoy = latest.get('KCFJCXSYJLRTZ')
+
+        fin_parts = []
+        if report_name:
+            fin_parts.append(f'最新报告期：{report_name}')
+        if eps is not None:
+            fin_parts.append(f'EPS {float(eps):.3f}元')
+        if bps is not None:
+            fin_parts.append(f'每股净资产 {float(bps):.2f}元')
+        if roe is not None:
+            fin_parts.append(f'ROE(加权) {float(roe):.2f}%')
+        if gross_margin is not None:
+            fin_parts.append(f'毛利率 {float(gross_margin):.1f}%')
+        if debt_ratio is not None:
+            fin_parts.append(f'资产负债率 {float(debt_ratio):.1f}%')
+        if fin_parts:
+            lines.append(f"- **核心指标**：{'，'.join(fin_parts)}")
+
+        growth_parts = []
+        if rev is not None:
+            rev_yi = float(rev) / 1e8
+            growth_parts.append(f'营收{rev_yi:.1f}亿')
+            if rev_yoy is not None:
+                growth_parts.append(f'同比{float(rev_yoy):+.1f}%')
+        if np is not None:
+            np_yi = float(np) / 1e8
+            growth_parts.append(f'归母净利{np_yi:.2f}亿')
+            if np_yoy is not None:
+                growth_parts.append(f'同比{float(np_yoy):+.1f}%')
+        if deduct_np_yoy is not None:
+            growth_parts.append(f'扣非净利同比{float(deduct_np_yoy):+.1f}%')
+        if growth_parts:
+            lines.append(f"- **业绩增长**：{'，'.join(growth_parts)}")
+
+        # 同比趋势对比（如果有多个报告期）
+        if len(fin_data) >= 2:
+            prev = fin_data[1]
+            prev_np_yoy = prev.get('PARENTNETPROFITTZ')
+            if np_yoy is not None and prev_np_yoy is not None:
+                try:
+                    trend = float(np_yoy) - float(prev_np_yoy)
+                    if trend > 5:
+                        lines.append(f'- **业绩趋势**：归母净利同比增速较上期提升{trend:.1f}个百分点，加速增长')
+                    elif trend < -5:
+                        lines.append(f'- **业绩趋势**：归母净利同比增速较上期下降{abs(trend):.1f}个百分点，增速放缓')
+                except (ValueError, TypeError):
+                    pass
+    else:
+        lines.append('- 财务数据暂不可得')
+
+    if len(lines) <= 1:
+        return ''
+    return '\n'.join(lines)
+
+
+def _build_news_research(c, code, name):
+    """
+    冠军板块3: 近期动态与机构观点
+    数据源: 候选标的已有字段(新闻/公告) + 东方财富研报API + 实时行情快照
+    返回: Markdown格式字符串
+    """
+    _, secucode, szsh, secid = _code_to_secucode(code)
+    lines = ['**近期动态与机构观点**：']
+
+    # ── 已有公告/新闻 ──
+    ann = c.get('_announcement', '') or ''
+    news = c.get('_news_positive', '') or ''
+    if ann:
+        ann_items = []
+        for item in ann.split('; '):
+            item = item.strip()
+            if not item:
+                continue
+            m = re.match(r'\[(\d{2}-\d{2})\]([^:]+):(.+)', item)
+            if m:
+                date, cat, title = m.groups()
+                title = title.strip()[:40] + ('…' if len(title.strip()) > 40 else '')
+                ann_items.append(f'{date} [{cat}] {title}')
+            elif len(item) > 5:
+                ann_items.append(item.strip()[:50])
+            if len(ann_items) >= 3:
+                break
+        if ann_items:
+            lines.append(f"- **近期公告**：{'；'.join(ann_items)}")
+
+    if news:
+        news_short = news.strip()[:80] + ('…' if len(news.strip()) > 80 else '')
+        lines.append(f'- **新闻亮点**：{news_short}')
+
+    # ── 研报 ──
+    report_url = (f'https://reportapi.eastmoney.com/report/list?'
+                  f'industryCode=*&industry=*&pageSize=5&industryRating=*'
+                  f'&rating=*&ratingChange=*&beginTime=2024-01-01&endTime=2026-12-31'
+                  f'&pageNo=1&fields=&qType=1&code={code}')
+    report_text = _safe_http_get(report_url, timeout=10)
+    reports = []
+    if report_text:
+        try:
+            rd = json.loads(report_text)
+            reports = rd.get('data', []) or []
+        except (json.JSONDecodeError, ValueError):
+            reports = []
+
+    if reports:
+        lines.append('- **机构研报**：')
+        for r in reports[:3]:
+            title = (r.get('title') or '').strip()
+            org = (r.get('orgName') or '').strip()
+            pub = (r.get('publishDate') or '')[:10]
+            rating = (r.get('emRatingName') or '').strip()
+            eps_next = r.get('predictNextYearEps')
+            pe_next = r.get('predictNextYearPe')
+            parts = [f'  - {pub} {org}']
+            if rating:
+                parts.append(f'[{rating}]')
+            parts.append(title[:40])
+            if eps_next is not None:
+                parts.append(f'(预测EPS {float(eps_next):.2f})')
+            lines.append(' '.join(parts))
+    else:
+        lines.append('- **机构研报**：近期无覆盖研报')
+
+    # ── 实时行情快照(腾讯) ──
+    quote_url = f'https://qt.gtimg.cn/q={szsh}'
+    quote_text = _safe_http_get(quote_url, timeout=8, encoding='gbk')
+    if quote_text:
+        # 腾讯格式: v_sz002015="51~协鑫能科~002015~16.12~16.10~..."
+        m = re.search(r'"([^"]+)"', quote_text)
+        if m:
+            fields = m.group(1).split('~')
+            if len(fields) > 49:
+                try:
+                    cur_price = float(fields[3])
+                    prev_close = float(fields[4])
+                    total_mv = float(fields[45]) if fields[45] else 0  # 总市值(亿)
+                    circ_mv = float(fields[44]) if fields[44] else 0    # 流通市值(亿)
+                    pe_tt = float(fields[39]) if fields[39] else 0      # 市盈率TTM
+                    pb = float(fields[46]) if fields[46] else 0         # 市净率
+                    mv_parts = []
+                    if total_mv > 0:
+                        mv_parts.append(f'总市值{total_mv:.0f}亿')
+                    if circ_mv > 0:
+                        mv_parts.append(f'流通{circ_mv:.0f}亿')
+                    if pe_tt > 0:
+                        mv_parts.append(f'PE(TTM) {pe_tt:.1f}')
+                    if pb > 0:
+                        mv_parts.append(f'PB {pb:.2f}')
+                    if mv_parts:
+                        lines.append(f"- **估值快照**：{'，'.join(mv_parts)}")
+                except (ValueError, IndexError):
+                    pass
+
+    if len(lines) <= 1:
+        return ''
+    return '\n'.join(lines)
 
 
 def generate_ai_report(final_candidates, kline_data, index_data, market_condition,
