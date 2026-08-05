@@ -1,0 +1,52 @@
+name: 质量门禁 (Quality Gate)
+
+# P0-3 整改：把已交付的质量门禁接入执行链路
+# - push 到 main（排除 data/ 数据变动）时强制校验
+# - pull_request / workflow_dispatch 作为可复用入口
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'data/**'
+      - '**/*.md'          # 文档改动不触发（避免噪音；版本相关改动由 SSOT 自校验兜底）
+  pull_request:
+    branches: [main]
+  workflow_dispatch:        # 支持手动触发
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout 仓库（完整历史，便于 baseline 比较）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 获取 PR base 分支
+        if: github.event_name == 'pull_request'
+        run: git fetch origin ${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}
+
+      - name: 计算 baseline ref
+        id: baseline
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "ref=origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: SSOT 幂等自校验（防止漏跑 sync_version.py）
+        run: |
+          python3 scripts/sync_version.py
+          git diff --exit-code
+          echo "✅ SSOT 已自洽：提交内容与 VERSION 完全一致"
+
+      - name: 运行发版前质量门禁
