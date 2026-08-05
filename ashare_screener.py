@@ -5517,7 +5517,7 @@ def step22_write_history(candidates, champion_code=None):
             rec["is_champion"] = True
         safe_append_json(hf, rec)
         written += 1
-    # v6.16.32 修正：新增/去重后统一归一化 is_champion
+    # v6.16.39 修正：新增/去重后统一归一化 is_champion
     # 旧逻辑仅在"新写入"记录上标记 is_champion；若冠军标的此前已写入(去重跳过)则无法补标，
     # 导致 is_champion 停留在最早写入时的冠军，与主报告最新冠军不一致(如000603错标、002015漏标)。
     # 此处对文件全部记录重算：清旧标记，仅本次 champion_code 标 True。
