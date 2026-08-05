@@ -14,12 +14,12 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.16.36"
+    return "v6.20.6"
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 与 VERSION 文件保持一致
 adj_records = safe_read_json('/workspace/策略调整记录.json')
 if adj_records and len(adj_records) > 0:
-    latest = adj_records[-1]
+    latest = adj_records[0]
     file_version = latest.get('version', BUILTIN_VERSION)
     params = latest.get('params', {})
 else:
