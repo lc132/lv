@@ -213,3 +213,18 @@ _pl_sorted = sorted(_pl_data, key=lambda x: (-x[2], -x[1]))
 - 主力净流入: >1亿
 - 评分维度: 封板质量(0-3) + 空间潜力(0-3) + 板块强度(0-3) + 资金强度(0-3)
 - 输出: /workspace/overnight_result.json
+## 飞书推送模板（🔒 已锁定）
+
+> 此模板于 **2026-08-06** 锁定，任何修改需通过飞书群组审批。
+
+| 项目 | 内容 |
+|------|------|
+| header 模板 | `blue` 蓝色 |
+| 标题 | `📊 每日短线标的筛选 — {prediction_date}` |
+| 第一行 | `数据来源: {data_date} \| 市场环境: {market_condition} \| 建议仓位: {position}%` |
+| 第二行 | `原始标的池: {total_raw}只 → ... → ★ 最终: {final_count}只` |
+| 第三行 | `策略分布: {strategy_summary}` |
+| 第四行 | `📈 [查看完整可视化报告（GitHub Pages）]` + `📁 [报告列表首页]` |
+| 底部 note | `⚠️ 仅供参考，不构成投资建议` |
+
+**相关文件**: `ashare_screener.py` step27, `feishu-push.py`, `references/feishu-push.py`
