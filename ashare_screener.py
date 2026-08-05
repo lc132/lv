@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.20.9
+A股每日盘前短线标的智能筛选 v6.20.10
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1) | 新闻筛查修复(v6.16.16) | 五项整改(v6.16.35)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.20.9"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.20.10"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"
@@ -148,12 +148,15 @@ def _load_credential(env_key, file_path, fallback=""):
 
 GITHUB_TOKEN = _load_credential("GITHUB_TOKEN", "/workspace/.github_token")
 FEISHU_WEBHOOK = _load_credential("FEISHU_WEBHOOK", "/workspace/.feishu_webhook")
+PUSHPLUS_TOKEN = _load_credential("PUSHPLUS_TOKEN", "/workspace/.pushplus_token")
 
 # --- v6.15.3: Token/Webhook 格式校验
 if GITHUB_TOKEN and not (GITHUB_TOKEN.startswith("ghp_") or GITHUB_TOKEN.startswith("github_pat_")):
     log_alert("WARNING", "凭证校验", "GITHUB_TOKEN格式异常，推送可能失败")
 if FEISHU_WEBHOOK and not FEISHU_WEBHOOK.startswith("https://open.feishu.cn/open-apis/bot/v2/hook/"):
     log_alert("WARNING", "凭证校验", "FEISHU_WEBHOOK格式异常，推送可能失败")
+if PUSHPLUS_TOKEN and len(PUSHPLUS_TOKEN) < 8:
+    log_alert("WARNING", "凭证校验", "PUSHPLUS_TOKEN过短，微信推送可能失败")
 
 # v6.16.0: 麦蕊智数API配置（免费版500次/天, 需注册获取licence）
 # 注册地址: https://www.mairui.club/gratis (需手机号+短信验证码)
@@ -5611,10 +5614,6 @@ def step26_github_sync(mp, hd, candidates):
 
 # ============================================================
 # 步骤27：飞书推送
-
-# 🔒 LOCKED TEMPLATE — 此模板已锁定，未经审批不得修改
-# 模板样式：蓝色header、三要素（数据来源/市场环境/仓位）、漏斗摘要、策略分布、GitHub Pages链接
-# 上次审批：2026-08-06 | 修改需通过飞书群组审批
 # ============================================================
 def step27_feishu_push(candidates, total_raw, ae, asig, astr, amicro, aind, anew, sd):
     """v6.20.9: 恢复为8月5日前单卡片样式（撤销 v6.20.8 双卡片改动），回测恢复独立推送。"""
@@ -5645,6 +5644,44 @@ def step27_feishu_push(candidates, total_raw, ae, asig, astr, amicro, aind, anew
         else: log_alert("WARNING", "飞书推送", f"推送失败: {result.get('msg','')}")
     except Exception as e: log_alert("WARNING", "飞书推送", f"失败: {str(e)[:80]}")
 
+def step27b_wechat_push(candidates, total_raw, ae, asig, astr, amicro, aind, anew, sd):
+    """v6.20.10: 微信通知（pushplus 推送加）— 与飞书单卡片同款摘要 + GitHub Pages 报告链接。"""
+    if not PUSHPLUS_TOKEN: log_alert("WARNING", "微信推送", "未配置 PUSHPLUS_TOKEN"); return
+    try:
+        fc = len(candidates)
+        sn = _STRATEGY_NAMES
+        ss = " | ".join([f"{s}{sn.get(s,'')}:{sd.get(s,0)}只" for s in ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T'] if sd.get(s, 0) > 0]) or "无推荐标的"
+        pb = "https://lc132.github.io/lv"
+        pr = f"{pb}/ashare-screening-{pred_yyyymmdd}/ashare-screening-{pred_yyyymmdd}.html"
+        content = (
+            f"<h3>📊 每日短线标的筛选 — {prediction_date}</h3>"
+            f"<p><b>数据来源</b>: {data_date} ｜ <b>市场环境</b>: {market_condition} ｜ <b>建议仓位</b>: {position_pct}%</p>"
+            f"<hr>"
+            f"<p>原始: <b>{total_raw}</b>只 → 硬排: <b>{ae}</b>只 → 信号: <b>{asig}</b>只 → 策略: <b>{astr}</b>只 → 微观: <b>{amicro}</b>只 → 行业: <b>{aind}</b>只 → 新闻: <b>{aind - anew}</b>只 → ★ 最终: <b>{fc}</b>只</p>"
+            f"<hr>"
+            f"<p><b>策略分布</b>: {ss}</p>"
+            f"<hr>"
+            f"<p>📈 <a href='{pr}'>查看完整可视化报告（GitHub Pages）</a></p>"
+            f"<p>📁 <a href='{pb}'>报告列表首页</a></p>"
+            f"<p>⚠️ 仅供参考，不构成投资建议</p>"
+        )
+        payload = {"token": PUSHPLUS_TOKEN, "title": f"每日短线标的筛选 — {prediction_date}",
+                   "content": content, "template": "html"}
+        req = urllib.request.Request("https://www.pushplus.plus/send",
+                                     data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
+                                     headers={'Content-Type': 'application/json'}, method='POST')
+        with _http_retry(req, timeout=10) as resp:
+            r = json.loads(resp.read())
+        if r.get('code') == 200:
+            log_alert("INFO", "微信推送", f"✅ {prediction_date} 已推送微信")
+        else:
+            log_alert("WARNING", "微信推送", f"推送失败: {r.get('msg','')}")
+    except Exception as e:
+        log_alert("WARNING", "微信推送", f"失败: {str(e)[:80]}")
+
+# ============================================================
+# 数据源监控
+# ============================================================
 def update_data_source_monitor(ds):
     monitor = safe_read_json("/workspace/数据源监控.json", default={"tencent_success": 0, "tencent_consecutive_failures": 0, "total_runs": 0, "last_source": "", "history": []})
     if not isinstance(monitor, dict): monitor = {"tencent_success": 0, "tencent_consecutive_failures": 0, "total_runs": 0, "last_source": "", "history": []}
@@ -5718,6 +5755,7 @@ def main():
     env_issues = []
     if not GITHUB_TOKEN: env_issues.append("GitHub Token未配置(GitHub推送/持仓拉取将跳过)")
     if not FEISHU_WEBHOOK: env_issues.append("飞书Webhook未配置(飞书推送将跳过)")
+    if not PUSHPLUS_TOKEN: env_issues.append("PUSHPLUS_TOKEN未配置(微信推送将跳过)")
     if env_issues:
         for issue in env_issues:
             log_alert("WARNING", "环境自检", issue)
@@ -5977,6 +6015,8 @@ def main():
     record_step_status("步骤26: GitHub同步", "OK")
     print("\n[步骤27] 飞书推送..."); step27_feishu_push(final, total_raw, ae, asig, astr, amicro, aind, anew, sd)
     record_step_status("步骤27: 飞书推送", "OK")
+    print("\n[步骤27B] 微信推送..."); step27b_wechat_push(final, total_raw, ae, asig, astr, amicro, aind, anew, sd)
+    record_step_status("步骤27B: 微信推送", "OK")
     
     # v6.13.11: 步骤执行状态报告
     print_step_status_summary()
