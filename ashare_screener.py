@@ -5517,6 +5517,21 @@ def step22_write_history(candidates, champion_code=None):
             rec["is_champion"] = True
         safe_append_json(hf, rec)
         written += 1
+    # v6.16.32 修正：新增/去重后统一归一化 is_champion
+    # 旧逻辑仅在"新写入"记录上标记 is_champion；若冠军标的此前已写入(去重跳过)则无法补标，
+    # 导致 is_champion 停留在最早写入时的冠军，与主报告最新冠军不一致(如000603错标、002015漏标)。
+    # 此处对文件全部记录重算：清旧标记，仅本次 champion_code 标 True。
+    if champion_code:
+        all_recs = safe_read_json(hf)
+        changed = False
+        for r in all_recs:
+            if r.get('type') == 'recommendation':
+                should = (r.get('code') == champion_code)
+                if bool(r.get('is_champion')) != should:
+                    r['is_champion'] = should
+                    changed = True
+        if changed:
+            safe_write_json(hf, all_recs)
     log_alert("INFO", "推荐历史", f"已追加{written}条(跳过{len(candidates)-written}条重复)")
 
 # ============================================================
