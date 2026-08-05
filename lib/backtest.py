@@ -438,7 +438,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         trade['take_profit'] = tp
         trade['prediction_date'] = pred_date
         trade['score'] = h.get('score', 0)
-        trade['is_champion'] = (code == current_champion_code)  # v6.16.12 修正: 仅当日冠军
+        trade['is_champion'] = (code == current_champion_code)  # v6.16.31: 标记最新一期冠军
         trades.append(trade)
 
     metrics = _compute_metrics(trades)
