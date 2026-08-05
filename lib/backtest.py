@@ -345,7 +345,8 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     current_champion_code = None
     latest_champion_date = None
     for h in history:  # 注意：此循环在 today 过滤之前，history 为完整推荐历史
-        if h.get('is_champion'):
+        # v6.16.33: 仅纳入 prediction_date<=today 的冠军(已发生、可回测)，排除未来买入日冠军
+        if h.get('is_champion') and h.get('prediction_date') <= today_str:
             pd = h.get('prediction_date')
             if pd and (latest_champion_date is None or pd > latest_champion_date):
                 latest_champion_date = pd
