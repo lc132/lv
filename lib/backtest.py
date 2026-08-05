@@ -336,7 +336,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
 
     today = datetime.now() + timedelta(hours=8)  # v6.13.10: 北京时间（与主脚本一致）
     today_str = today.strftime('%Y-%m-%d')
-    # v6.16.31 修正：皇冠回测展示"最新一期"跨策略冠军
+    # v6.16.38 修正：皇冠回测展示"最新一期"跨策略冠军
     # 旧逻辑(420a5ef8)用 datetime.now() 当天 prediction_date 匹配冠军，但回测历史已排除当天
     # (prediction_date < today)，导致 current_champion_code 命中后记录被过滤、皇冠取不到标的；
     # 更早版本则聚合所有历史各日冠军(603496/600726)混入皇冠板块。
@@ -345,7 +345,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     current_champion_code = None
     latest_champion_date = None
     for h in history:  # 注意：此循环在 today 过滤之前，history 为完整推荐历史
-        # v6.16.33: 仅纳入 prediction_date<=today 的冠军(已发生、可回测)，排除未来买入日冠军
+        # v6.16.40: 仅纳入 prediction_date<=today 的冠军(已发生、可回测)，排除未来买入日冠军
         if h.get('is_champion') and h.get('prediction_date') <= today_str:
             pd = h.get('prediction_date')
             if pd and (latest_champion_date is None or pd > latest_champion_date):
@@ -353,7 +353,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
                 current_champion_code = h.get('code')
     cutoff = today - timedelta(days=max_days_lookback)
     # v6.13.28: 预测日=买入日(盘前预测当日买入)，排除当天预测(尚无收盘K线)；
-    # v6.16.31: 冠军记录豁免该排除，保证最新一期冠军可参与回测
+    # v6.16.38: 冠军记录豁免该排除，保证最新一期冠军可参与回测
     history = [h for h in history
                if h.get('prediction_date') and h['prediction_date'] >= cutoff.strftime('%Y-%m-%d')
                and (h['prediction_date'] < today.strftime('%Y-%m-%d') or h.get('is_champion'))]
@@ -439,7 +439,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         trade['take_profit'] = tp
         trade['prediction_date'] = pred_date
         trade['score'] = h.get('score', 0)
-        trade['is_champion'] = (code == current_champion_code)  # v6.16.31: 标记最新一期冠军
+        trade['is_champion'] = (code == current_champion_code)  # v6.16.38: 标记最新一期冠军
         trades.append(trade)
 
     metrics = _compute_metrics(trades)
