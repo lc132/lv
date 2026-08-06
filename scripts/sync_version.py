@@ -50,6 +50,9 @@ ANCHORS = [
     ("lib/backtest.py",
      r'(return ")v\d+\.\d+\.\d+("  # 兜底版本（由 sync_version.py 锚定同步）)',
      "兜底常量"),
+    ("sunday_industry_pull.py",
+     r"(?m)^(周日行业补全拉取 )v\d+\.\d+\.\d+",
+     "docstring 首行"),
 ]
 
 
