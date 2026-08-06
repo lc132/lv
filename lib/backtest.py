@@ -358,15 +358,21 @@ def run_backtest(hold_days=10, max_days_lookback=90):
 
     today = datetime.now() + timedelta(hours=8)  # v6.13.10: 北京时间（与主脚本一致）
     today_str = today.strftime('%Y-%m-%d')
-    # v6.20.3 修正：皇冠回测展示"最新一期"跨策略冠军
-    # 旧逻辑(420a5ef8)用 datetime.now() 当天 prediction_date 匹配冠军，但回测历史已排除当天
-    # (prediction_date < today)，导致 current_champion_code 命中后记录被过滤、皇冠取不到标的；
-    # 更早版本则聚合所有历史各日冠军(603496/600726)混入皇冠板块。
-    # 新逻辑：在完整 history(尚未按 today 过滤) 中取 prediction_date 最大的 is_champion 记录
-    # 作为本期冠军；并对冠军记录豁免"排除当天预测"过滤，使其在买入日收盘后可正常回测。
+    # v6.20.12 修复：回测"缺失昨日数据"
+    # 根因：旧逻辑完全以 prediction_date(买入日) 做包含过滤与分组。盘后运行的推荐会被打上
+    #   prediction_date=下一交易日(如 08-06 盘后→08-07)，当回测在买入日(08-07)当天运行时，
+    #   prediction_date<today 不成立 → 整批被排除，08-06 的推荐从报告中消失。
+    #   即便后续出现，也被归到 08-07(prediction_date) 而非 08-06(实际运行日)，用户找不到"昨日"数据。
+    # 修复：
+    #   1) 包含/窗口过滤改用记录的真实运行日 date(=data_date)；过去任一天产生的推荐都应被呈现；
+    #   2) K线获取起点仍用 prediction_date(买入日)，保证从实际买入日开盘回放；
+    #   3) 买入日尚未收盘(prediction_date>=today)的推荐标记 holding/no_data，仅展示、不计入胜率，
+    #      待买入日收盘后自动转为有效样本；报表分组/日期列改用 date(运行日)，使"昨日"可定位。
+    # 皇冠处理：在完整 history(尚未按 today 过滤) 中取 prediction_date 最大的 is_champion 记录，
+    #   并豁免其"同日运行排除"，保证最新一期冠军尽早进入回测(买入日收盘后才会有有效收益)。
     current_champion_code = None
     latest_champion_date = None
-    for h in history:  # 注意：此循环在 today 过滤之前，history 为完整推荐历史
+    for h in history:  # 注意：此循环在 date 过滤之前，history 为完整推荐历史
         # v6.20.5: 仅纳入 prediction_date<=today 的冠军(已发生、可回测)，排除未来买入日冠军
         if h.get('is_champion') and h.get('prediction_date') <= today_str:
             pd = h.get('prediction_date')
@@ -374,17 +380,18 @@ def run_backtest(hold_days=10, max_days_lookback=90):
                 latest_champion_date = pd
                 current_champion_code = h.get('code')
     cutoff = today - timedelta(days=max_days_lookback)
-    # v6.13.28: 预测日=买入日(盘前预测当日买入)，排除当天预测(尚无收盘K线)；
-    # v6.20.3: 冠军记录豁免该排除，保证最新一期冠军可参与回测
+    # v6.20.12: 包含过滤改用运行日 date(而非买入日 prediction_date)，修复盘后推荐被整体排除；
+    #   同日新生成的推荐(date==today)仍排除——尚无完整运行日数据；冠军记录豁免该排除。
     history = [h for h in history
-               if h.get('prediction_date') and h['prediction_date'] >= cutoff.strftime('%Y-%m-%d')
-               and (h['prediction_date'] < today.strftime('%Y-%m-%d') or h.get('is_champion'))]
+               if h.get('date') and h['date'] >= cutoff.strftime('%Y-%m-%d')
+               and (h['date'] < today.strftime('%Y-%m-%d') or h.get('is_champion'))]
 
     # v6.13.10: 去重key改为(code,date,strategy,entry)，保留同股票不同策略的推荐
+    # v6.20.12: 去重key改用运行日 date(与包含过滤一致)，避免盘后推荐(prediction_date=次日)被误并
     seen = set()
     unique_history = []
     for h in history:
-        key = (h.get('code'), h.get('prediction_date'), h.get('strategy'), round(h.get('entry') or 0, 2))
+        key = (h.get('code'), h.get('date'), h.get('strategy'), round(h.get('entry') or 0, 2))
         if key not in seen:
             seen.add(key)
             unique_history.append(h)
@@ -442,15 +449,18 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         code = h.get('code', '')
         strategy = h.get('strategy', '?')
         entry = h.get('entry') or 0
+        # v6.20.12: 运行日 date 优先(=data_date)；无 date 的旧格式回退到 prediction_date(兼容历史)
+        date = h.get('date') or h.get('prediction_date', '')
         pred_date = h.get('prediction_date', '')
-        if not code or not entry or not pred_date:
+        # v6.20.12: 包含已按 date 过滤，故以 date 判空(缺运行日则跳过)，pred_date 缺失时仅标记无数据
+        if not code or not entry or not date:
             continue
 
         sl = round(entry * _STRATEGY_STOP_LOSS.get(strategy, 0.96), 2)
         tp = round(entry * _STRATEGY_TAKE_PROFIT.get(strategy, 1.05), 2)
 
-        klines = code_kline_cache.get((code, pred_date), {})
-        post_klines = [k for d, k in sorted(klines.items()) if d >= pred_date]
+        klines = code_kline_cache.get((code, pred_date), {}) if pred_date else {}
+        post_klines = [k for d, k in sorted(klines.items()) if d >= pred_date] if pred_date else []
         trade = _simulate_trade(entry, sl, tp, post_klines, hold_days)
         trade['code'] = code
         trade['name'] = h.get('name', '')
@@ -459,9 +469,18 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         trade['entry'] = entry
         trade['stop_loss'] = sl
         trade['take_profit'] = tp
-        trade['prediction_date'] = pred_date
+        trade['date'] = date                  # v6.20.12: 运行日(=data_date)，报表分组/日期列改用
+        trade['prediction_date'] = pred_date  # 买入日，仅供K线起点与参考
         trade['score'] = h.get('score', 0)
         trade['is_champion'] = (code == current_champion_code)  # v6.20.3: 标记最新一期冠军
+        # v6.20.12: 买入日尚未收盘(prediction_date>=today) → 仅展示、不计入胜负(避免盘中噪声污染胜率)
+        if pred_date and pred_date >= today_str:
+            trade['result'] = 'no_data'
+            trade['exit_reason'] = 'holding'
+            trade['return_pct'] = 0.0
+            trade['exit_price'] = entry
+            trade['hold_days'] = 0
+            trade['is_holding'] = True
         trades.append(trade)
 
     metrics = _compute_metrics(trades)
@@ -511,7 +530,7 @@ def generate_backtest_report(bt_result, output_path=None):
 
     today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.10: 北京时间
     # v6.16.14: 计算样本日期范围
-    sample_dates = sorted(set(t.get('prediction_date', '') for t in trades if t.get('prediction_date')))
+    sample_dates = sorted(set(t.get('date', '') for t in trades if t.get('date')))  # v6.20.12: 按运行日分组
     date_range = f"{sample_dates[0]} ~ {sample_dates[-1]}" if len(sample_dates) >= 2 else (sample_dates[0] if sample_dates else 'N/A')
     lines = [
         f"# A股短线筛选 — 历史回测报告",
@@ -572,8 +591,8 @@ def generate_backtest_report(bt_result, output_path=None):
     ])
     # v6.16.14: 按日期均匀采样，每日期最多10条，确保多日数据均可见
     recent = []
-    for date_key in sorted(set(t.get('prediction_date', '') for t in trades), reverse=True):
-        day_trades = [t for t in trades if t.get('prediction_date') == date_key]
+    for date_key in sorted(set(t.get('date', '') for t in trades), reverse=True):
+        day_trades = [t for t in trades if t.get('date') == date_key]
         day_trades_sorted = sorted(day_trades, key=lambda x: abs(x.get('return_pct', 0)), reverse=True)
         recent.extend(day_trades_sorted[:10])
         if len(recent) >= 20:
@@ -587,7 +606,7 @@ def generate_backtest_report(bt_result, output_path=None):
         else:
             res_emoji = '\U0001f534' if t['result'] == 'loss' else '\u26aa'
         lines.append(
-            f"| {t['prediction_date']} | {t['name']} | {t['code']} | {t['strategy']} | "
+            f"| {t['date']} | {t['name']} | {t['code']} | {t['strategy']} | "
             f"{t['industry']} | {t['entry']:.2f} | {res_emoji}{t['result']} | "
             f"{t['exit_price']:.2f} | {t['return_pct']:+.2f}% | {t['hold_days']}天 |"
         )
@@ -639,7 +658,7 @@ def _build_backtest_lookup(bt_result):
             'no_entry': no_entry_count,
             'avg_return': round(avg_ret, 2),
             'last_result': last['result'], 'last_return': last['return_pct'],
-            'last_date': last.get('prediction_date', ''),
+            'last_date': last.get('date', ''),  # v6.20.12: 运行日
         }
     return lookup
 
@@ -665,7 +684,7 @@ def _champion_html(champion_trades, champion_metrics):
 
     # 冠军交易明细表
     rows = ''
-    for t in reversed(sorted(champion_trades, key=lambda x: str(x.get('prediction_date', '')))):
+    for t in reversed(sorted(champion_trades, key=lambda x: str(x.get('date', '')))):  # v6.20.12: 按运行日排序
         name = t.get('name', '')
         code = t.get('code', '')
         strategy = t.get('strategy', '')
@@ -675,7 +694,7 @@ def _champion_html(champion_trades, champion_metrics):
         exit_price = t.get('exit_price', 0)
         ret = t.get('return_pct', 0)
         hold = t.get('hold_days', 0)
-        pred_date = t.get('prediction_date', '')
+        pred_date = t.get('date', '')  # v6.20.12: 运行日
         # 结果标签和样式：与主交易明细表一致（中文+no_entry/no_data处理）
         if result == 'win':
             result_cls = 'win'
@@ -763,8 +782,8 @@ def generate_backtest_html(bt_result, output_path=None):
     trade_rows = ''
     # v6.16.14: 按日期均匀采样，每日期最多15条，确保多日数据均可见
     recent = []
-    for date_key in sorted(set(t.get('prediction_date', '') for t in trades), reverse=True):
-        day_trades = [t for t in trades if t.get('prediction_date') == date_key]
+    for date_key in sorted(set(t.get('date', '') for t in trades), reverse=True):
+        day_trades = [t for t in trades if t.get('date') == date_key]
         day_trades_sorted = sorted(day_trades, key=lambda x: abs(x.get('return_pct', 0)), reverse=True)
         recent.extend(day_trades_sorted[:15])
         if len(recent) >= 30:
@@ -781,7 +800,7 @@ def generate_backtest_html(bt_result, output_path=None):
             res_cls = 'loss' if t['result'] == 'loss' else 'nodata'
             res_label = '\u4e8f\u635f' if t['result'] == 'loss' else '\u65e0\u6570\u636e'
         ret_sign = '+' if t['return_pct'] >= 0 else ''
-        trade_rows += f'''<tr><td>{t['prediction_date']}</td><td>{t['name']}</td><td>{t['code']}</td>
+        trade_rows += f'''<tr><td>{t['date']}</td><td>{t['name']}</td><td>{t['code']}</td>
         <td>{t['strategy']}</td><td>{t['industry']}</td><td>{t['entry']:.2f}</td>
         <td class="{res_cls}">{res_label}</td><td>{t['exit_price']:.2f}</td>
         <td class="{res_cls}">{ret_sign}{t['return_pct']:.2f}%</td><td>{t['hold_days']}\u5929</td></tr>'''
