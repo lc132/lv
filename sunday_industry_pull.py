@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-周日行业补全拉取 v6.13.38
+周日行业补全拉取 v6.13.39
 每周日执行：全量拉取东方财富HTTP行业分类（一级+二级），更新缓存文件并推送到GitHub。
+v6.13.39: 用东方财富clist真实A股清单替换暴力枚举代码区间（根治超时——旧方案枚举16999个代码仅~4900真实，
+          其余~12000个不存在代码永不在缓存→每次都进to_fetch→顺序抓取数小时超时）；抓取改为并发(max_workers=20)
+          + 墙钟上限(25min)兜底，避免任何情况下无限运行。
 """
 import urllib.request, json, os, time, subprocess, sys, tempfile, shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 if not GITHUB_TOKEN:
@@ -117,6 +121,73 @@ def _zjh_to_shenwan(zjh):
         if broad in _ZJH_TO_SHENWAN: return _ZJH_TO_SHENWAN[broad]
     return None
 
+def _fetch_all_a_codes():
+    """v6.13.39: 获取全部真实A股6位代码（东方财富clist优先，新浪批量降级）。
+    返回真实代码列表（约5000只）。根治超时：旧方案暴力枚举16999个代码区间，
+    其中仅~4900为真实股票，其余~12000个不存在代码永不在缓存→每次都进to_fetch→顺序抓取数小时超时。
+    改用真实清单后 to_fetch≈0，脚本秒级完成。"""
+    # 方案一：东方财富 clist（一次性全量，效率最高）
+    try:
+        url = "https://push2.eastmoney.com/api/qt/clist/get"
+        params = {
+            "pn": "1", "pz": "6000", "po": "1", "np": "1",
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "fltt": "2", "invt": "2", "fid": "f3",
+            "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
+            "fields": "f12", "_": str(int(time.time() * 1000))
+        }
+        headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://quote.eastmoney.com/'}
+        req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        if data and data.get('data') and data['data'].get('diff'):
+            codes = [it.get('f12', '') for it in data['data']['diff'] if it.get('f12')]
+            if codes:
+                return codes
+    except Exception:
+        pass
+    # 方案二：新浪批量（按代码区间拉实时行情，仅保留有成交的真实标的）
+    try:
+        ranges = []
+        for i in range(600000, 606000): ranges.append(f"sh{i}")
+        for i in range(688000, 690000): ranges.append(f"sh{i}")
+        for i in range(1, 5000): ranges.append(f"sz{i:06d}")
+        for i in range(300000, 302000): ranges.append(f"sz{i}")
+        codes = []
+        for i in range(0, len(ranges), 80):
+            batch = ranges[i:i+80]
+            try:
+                url = f"https://hq.sinajs.cn/list={','.join(batch)}"
+                req = urllib.request.Request(url, headers={
+                    'User-Agent': 'Mozilla/5.0',
+                    'Referer': 'https://finance.sina.com.cn'
+                })
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    text = resp.read().decode('gbk')
+                for line in text.strip().split('\n'):
+                    if not line or '=""' in line:
+                        continue
+                    try:
+                        parts = line.split('"')[1].split(',')
+                        if len(parts) < 6:
+                            continue
+                        header = line.split('="')[0]
+                        raw = header.split('_')[-1] if '_' in header else header[-6:]
+                        code = raw if len(raw) == 6 else raw[-6:]
+                        cur = float(parts[3]) if parts[3] else 0
+                        prev = float(parts[2]) if parts[2] else 0
+                        if cur > 0 and prev > 0:
+                            codes.append(code)
+                    except (ValueError, IndexError):
+                        continue
+            except Exception:
+                continue
+        if codes:
+            return codes
+    except Exception:
+        pass
+    return []
+
 def _is_valid_industry(val):
     """落盘前 schema 校验（P0#1 根治行业缓存缺陷）：行业名须为纯中文非空字符串、
     长度合理、无控制字符、不含数字（申万行业名均为纯中文，含数字即非法/证监会代码）。"""
@@ -152,7 +223,7 @@ def _fetch_industry(code):
 
 def main():
     print("=" * 60)
-    print("周日行业补全拉取 v6.13.38")
+    print("周日行业补全拉取 v6.13.39")
     print("=" * 60)
     
     # 1. Clone repo
@@ -185,13 +256,13 @@ def main():
             sub_industry_cache = json.load(f)
         print(f"  二级行业缓存: {len(sub_industry_cache)} 条")
     
-    # 3. Build code list (all A-share stocks)
-    print("\n[3] 构建全量代码列表...")
-    codes = []
-    for i in range(600000, 610000): codes.append(f"{i:06d}")
-    for i in range(1, 5000): codes.append(f"{i:06d}")
-    for i in range(300000, 302000): codes.append(f"{i:06d}")
-    print(f"  共 {len(codes)} 个代码")
+    # 3. Build code list (real A-share stocks only)
+    print("\n[3] 构建全量代码列表(真实A股)...")
+    codes = _fetch_all_a_codes()
+    if not codes:
+        print("ERROR: 无法获取真实A股代码列表，中止")
+        sys.exit(1)
+    print(f"  共 {len(codes)} 个真实代码")
     
     # 4. Find missing codes
     to_fetch = []
@@ -206,26 +277,38 @@ def main():
         print("\n  全部命中，无需拉取")
         return
     
-    # 5. Fetch industry data
-    print(f"\n[4] 开始拉取 {len(to_fetch)} 只股票行业分类...")
+    # 5. Fetch industry data（并发，设墙钟上限防超时）
+    print(f"\n[4] 开始并发拉取 {len(to_fetch)} 只股票行业分类...")
     new_primary = 0; new_secondary = 0; fail_count = 0
-    batch_size = 50
-    
-    for i in range(0, len(to_fetch), batch_size):
-        batch = to_fetch[i:i+batch_size]
-        for code in batch:
-            primary, secondary = _fetch_industry(code)
-            if primary and code not in industry_cache:
-                industry_cache[code] = primary
-                new_primary += 1
-            if secondary and code not in sub_industry_cache:
-                sub_industry_cache[code] = secondary
-                new_secondary += 1
-            if not primary and not secondary:
+    start = time.time()
+    WALL = 1500  # 总墙钟上限 25 分钟，到点即停并保存已有成果（根治超时兜底）
+    executor = ThreadPoolExecutor(max_workers=20)
+    try:
+        futures = {executor.submit(_fetch_industry, code): code for code in to_fetch}
+        done = 0
+        for future in as_completed(futures):
+            code = futures[future]
+            try:
+                primary, secondary = future.result()
+                if primary and code not in industry_cache:
+                    industry_cache[code] = primary
+                    new_primary += 1
+                if secondary and code not in sub_industry_cache:
+                    sub_industry_cache[code] = secondary
+                    new_secondary += 1
+                if not primary and not secondary:
+                    fail_count += 1
+            except Exception:
                 fail_count += 1
-            time.sleep(0.15)
-        progress = min(i+batch_size, len(to_fetch))
-        print(f"  进度: {progress}/{len(to_fetch)} (一级+{new_primary}, 二级+{new_secondary}, 失败{fail_count})")
+            done += 1
+            if done % 500 == 0:
+                elapsed = time.time() - start
+                print(f"  进度: {done}/{len(to_fetch)} (一级+{new_primary}, 二级+{new_secondary}, 失败{fail_count}, 用时{elapsed:.0f}s)")
+                if elapsed > WALL:
+                    print(f"  ⚠️ 已达墙钟上限 {WALL}s，停止剩余 {len(to_fetch)-done} 只拉取")
+                    break
+    finally:
+        executor.shutdown(wait=False)
     
     print(f"\n[5] 拉取完成: 一级{len(industry_cache)}条, 二级{len(sub_industry_cache)}条, 失败{fail_count}条")
 
@@ -263,7 +346,7 @@ def main():
         print("  无变更，跳过推送")
         return
     
-    subprocess.run(["git", "commit", "-m", f"周日行业补全 v6.13.38 (一级{new_primary}+二级{new_secondary})"], capture_output=True, timeout=10)
+    subprocess.run(["git", "commit", "-m", f"周日行业补全 v6.13.39 (一级{new_primary}+二级{new_secondary})"], capture_output=True, timeout=10)
     push_result = _git_with_token(["git", "push", "origin", "main"], timeout=60, check=False)
     if push_result.returncode == 0:
         print("  ✅ 推送成功")
