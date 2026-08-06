@@ -37,6 +37,18 @@ description: A股每日盘前短线标的智能筛选(v6.20.12)。基于前一�
 - **正确的「次日/持仓收益」来源**：`lib/backtest.py` 的 `return_pct`（按 `entry→exit` 真实 K 线模拟）；或基于 `prediction_date` 当日开盘/收盘相对 `entry` 计算。
 - **前瞻逻辑所在**：`prediction_date` 框架（`:609`）+ `_calc_entry()`（`:4029` 推算次日合理进场价）。二者**以 change_pct 为输入特征**，产出 `entry` 价，不产出「预测涨跌幅」。
 
+### 回测日期口径 —— 运行日 `date` vs 买入日 `prediction_date`（v6.20.12 修复）
+- **两个日期字段**：
+  - `date`（=`data_date`）：推荐记录**实际生成日**（盘前/盘后运行的当天），`ashare_screener.py:5525` 赋值。
+  - `prediction_date`：该标的**实际买入日**（盘前=当日；盘后=下一交易日）。
+- **旧 bug**：`run_backtest` 旧逻辑完全以 `prediction_date` 做包含过滤与报表分组。盘后运行的推荐被打上 `prediction_date=次日`，当回测在「买入日当天」运行时，`prediction_date < today` 不成立 → 整批被排除，表现为「回测报告没有昨日数据」。
+- **修复（lib/backtest.py v6.20.12）**：
+  - 包含/窗口过滤改用 `date`（运行日）；过去任一运行日产生的推荐都应呈现。
+  - K线获取起点仍用 `prediction_date`（买入日），保证从实际买入日开盘回放。
+  - 报表分组与「日期」列改用 `date`，使「昨日（运行日）」可定位。
+  - 买入日尚未收盘（`prediction_date >= today`）的推荐标记 `holding`（`no_data`），仅展示、**不计入胜率**，待买入日收盘后自动转为有效样本——避免盘中噪声污染统计。
+- **核对要点**：回测明细「日期」列 = 推荐运行日；要看实际买入日查 `prediction_date`。盘后推荐在「买入日当天」回测会显示「持有中」，属正常，次日自动转为有效样本。
+
 ### 步骤 -1: 日期验证（v6.16.32 新增）
 **在所有筛选开始前强制执行**。调用 `references/date-validator.py` 从权威授时源（timeapi.io → worldtimeapi.org）获取实时北京时间，交叉验证：
 - **prediction_date** 必须等于北京时间今日，且为交易日（非周末/节假日）
