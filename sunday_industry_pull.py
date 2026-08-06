@@ -6,6 +6,9 @@
 v6.13.39: 用东方财富clist真实A股清单替换暴力枚举代码区间（根治超时——旧方案枚举16999个代码仅~4900真实，
           其余~12000个不存在代码永不在缓存→每次都进to_fetch→顺序抓取数小时超时）；抓取改为并发(max_workers=20)
           + 墙钟上限(25min)兜底，避免任何情况下无限运行。
+v6.20.12(维护更新): 新增行业分类校正白名单 _INDUSTRY_CORRECTION，强制覆盖东方财富
+          API (jbzl.sszjhhy / jbzl.sshy) 返回的明显错误分类（一级+二级）；每周日运行时
+          强制回写所有白名单代码的缓存，覆盖历史已缓存的错误值。白名单值经 schema 校验防脏数据。
 """
 import urllib.request, json, os, time, subprocess, sys, tempfile, shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -121,6 +124,34 @@ def _zjh_to_shenwan(zjh):
         if broad in _ZJH_TO_SHENWAN: return _ZJH_TO_SHENWAN[broad]
     return None
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 行业分类校正白名单（v6.20.12 新增）
+# 覆盖东方财富 CompanySurvey API (jbzl.sszjhhy / jbzl.sshy) 返回的明显错误分类。
+# key = 6位股票代码；value = (正确的一级行业, 正确二级行业)。
+# 应用策略：
+#   - 命中白名单时，无论 API 是否返回、返回是否正确，均强制覆盖为人工核定值。
+#   - 每周日运行时会强制回写所有白名单代码的缓存（覆盖历史已缓存的错误值）。
+#   - 仅当白名单值经 _is_valid_industry 校验通过才生效，避免白名单自身引入脏数据。
+#   - 二级行业留空字符串 '' 表示仅校正一级、保留 API 的二级值。
+# 维护说明：发现某代码行业被东方财富明显误分类时，在此追加一条即可；
+#           下表为初始种子条目（均为确凿的正确申万分类，可作格式示例，请按需增补实测误分类）。
+# ─────────────────────────────────────────────────────────────────────────────
+_INDUSTRY_CORRECTION = {
+    '600519': ('食品饮料', '白酒'),          # 贵州茅台
+    '300750': ('电力设备', '电池'),          # 宁德时代
+    '002594': ('汽车', '乘用车'),            # 比亚迪
+    '601318': ('非银金融', '保险'),          # 中国平安
+}
+
+def _apply_correction(code, primary, secondary):
+    """白名单强制校正：命中白名单返回人工核定分类，否则原样返回。"""
+    corr = _INDUSTRY_CORRECTION.get(code)
+    if not corr:
+        return primary, secondary
+    c_pri = corr[0] if _is_valid_industry(corr[0]) else primary
+    c_sec = corr[1] if (len(corr) > 1 and corr[1] and _is_valid_industry(corr[1])) else secondary
+    return c_pri, c_sec
+
 def _fetch_all_a_codes():
     """v6.13.39: 获取全部真实A股6位代码（东方财富clist优先，新浪批量降级）。
     返回真实代码列表（约5000只）。根治超时：旧方案暴力枚举16999个代码区间，
@@ -223,7 +254,7 @@ def _fetch_industry(code):
 
 def main():
     print("=" * 60)
-    print("周日行业补全拉取 v6.13.39")
+    print("周日行业补全拉取 v6.20.12")
     print("=" * 60)
     
     # 1. Clone repo
@@ -290,6 +321,8 @@ def main():
             code = futures[future]
             try:
                 primary, secondary = future.result()
+                # 应用校正白名单：覆盖东方财富API明显错误分类（命中时强制覆盖）
+                primary, secondary = _apply_correction(code, primary, secondary)
                 if primary and code not in industry_cache:
                     industry_cache[code] = primary
                     new_primary += 1
@@ -311,6 +344,29 @@ def main():
         executor.shutdown(wait=False)
     
     print(f"\n[5] 拉取完成: 一级{len(industry_cache)}条, 二级{len(sub_industry_cache)}条, 失败{fail_count}条")
+
+    # 5.4 校正白名单强制回写（覆盖已缓存的错误分类，保证白名单代码始终正确）
+    print("\n[5.4] 校正白名单强制回写...")
+    if _INDUSTRY_CORRECTION:
+        corr_p = corr_s = 0
+        for code, corr in _INDUSTRY_CORRECTION.items():
+            # 不在缓存中（如已退市）则跳过，避免向缓存注入脏数据
+            if code not in industry_cache and code not in sub_industry_cache:
+                continue
+            c_pri = corr[0] if _is_valid_industry(corr[0]) else None
+            c_sec = corr[1] if (len(corr) > 1 and corr[1] and _is_valid_industry(corr[1])) else None
+            if c_pri and industry_cache.get(code) != c_pri:
+                industry_cache[code] = c_pri
+                corr_p += 1
+            if c_sec and sub_industry_cache.get(code) != c_sec:
+                sub_industry_cache[code] = c_sec
+                corr_s += 1
+        if corr_p or corr_s:
+            print(f"  [白名单校正] 强制回写一级 {corr_p} 条、二级 {corr_s} 条")
+        else:
+            print("  [白名单校正] 白名单代码均已正确，无需回写")
+    else:
+        print("  [白名单校正] 白名单为空，跳过")
 
     # 5.5 落盘前 schema 校验（P0#1）：剔除非法条目，防止坏数据进入缓存被 step0B 同步污染筛选
     print("\n[5.5] 落盘前 schema 校验...")
@@ -346,7 +402,7 @@ def main():
         print("  无变更，跳过推送")
         return
     
-    subprocess.run(["git", "commit", "-m", f"周日行业补全 v6.13.39 (一级{new_primary}+二级{new_secondary})"], capture_output=True, timeout=10)
+    subprocess.run(["git", "commit", "-m", f"周日行业补全 (一级{new_primary}+二级{new_secondary})"], capture_output=True, timeout=10)
     push_result = _git_with_token(["git", "push", "origin", "main"], timeout=60, check=False)
     if push_result.returncode == 0:
         print("  ✅ 推送成功")
