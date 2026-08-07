@@ -9,9 +9,17 @@ v6.13.39: 用东方财富clist真实A股清单替换暴力枚举代码区间（�
 v6.20.12(维护更新): 新增行业分类校正白名单 _INDUSTRY_CORRECTION，强制覆盖东方财富
           API (jbzl.sszjhhy / jbzl.sshy) 返回的明显错误分类（一级+二级）；每周日运行时
           强制回写所有白名单代码的缓存，覆盖历史已缓存的错误值。白名单值经 schema 校验防脏数据。
+v6.20.12 治理(P0-4): 白名单配套治理机制——(1)条目强制 source/effective_date/ttl_days；
+          (2)多源交叉校验(东方财富+申万+同花顺，两源一致才采信，不一致查白名单并告警)；
+          (3)月度自动复核(>=30天)：上游已自修正条目自动摘除(removed)、TTL过期标记需复核；
+          复核记录落盘 行业白名单复核记录.json。白名单仍为兜底而非根治，防无限膨胀。
 """
 import urllib.request, json, os, time, subprocess, sys, tempfile, shutil
+import ssl, random, re
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+_EM_CTX = ssl._create_unverified_context()  # 东方财富/push2 部分节点需关闭证书校验
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 if not GITHUB_TOKEN:
@@ -125,32 +133,248 @@ def _zjh_to_shenwan(zjh):
     return None
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 行业分类校正白名单（v6.20.12 新增）
-# 覆盖东方财富 CompanySurvey API (jbzl.sszjhhy / jbzl.sshy) 返回的明显错误分类。
-# key = 6位股票代码；value = (正确的一级行业, 正确二级行业)。
-# 应用策略：
-#   - 命中白名单时，无论 API 是否返回、返回是否正确，均强制覆盖为人工核定值。
-#   - 每周日运行时会强制回写所有白名单代码的缓存（覆盖历史已缓存的错误值）。
-#   - 仅当白名单值经 _is_valid_industry 校验通过才生效，避免白名单自身引入脏数据。
-#   - 二级行业留空字符串 '' 表示仅校正一级、保留 API 的二级值。
-# 维护说明：发现某代码行业被东方财富明显误分类时，在此追加一条即可；
-#           下表为初始种子条目（均为确凿的正确申万分类，可作格式示例，请按需增补实测误分类）。
+# 行业分类校正白名单 + 治理机制（v6.20.12 治理增强，对应 P0-4）
+# 白名单不再是"无限膨胀的兜底"，而是受 TTL + 来源 + 复核记录 治理：
+#   1) 每条目强制字段：primary(一级)/secondary(二级)/source(来源)/effective_date(生效日期)/ttl_days(TTL)
+#   2) 多源交叉校验：东方财富 + 申万(push2 f127) + 同花顺(最佳努力)；两源一致才采信，
+#      不一致才查白名单并告警；下游已自修正的条目由月度复核自动摘除。
+#   3) 月度自动复核(>=30天)：上游已与白名单一致 → 自动摘除(记录 removed，运行时抑制)；
+#      TTL 过期 → 标记需人工复核(保留应用+告警)。复核记录落盘 行业白名单复核记录.json。
+# 维护：新增条目请在 _INDUSTRY_CORRECTION 追加一条含 source/effective_date/ttl_days 的记录；
+#       命中月度复核"upstream_corrected"摘除后，可同步删除本处对应条目以保持单一事实源。
 # ─────────────────────────────────────────────────────────────────────────────
+_DEFAULT_TTL_DAYS = 90
+_REVIEW_LOG_FILE = "行业白名单复核记录.json"   # 与缓存同目录(仓库根)
+_AUDIT_SAMPLE = 60                            # 月度审计抽样非白名单标的数
+
 _INDUSTRY_CORRECTION = {
-    '600519': ('食品饮料', '白酒'),          # 贵州茅台
-    '300750': ('电力设备', '电池'),          # 宁德时代
-    '002594': ('汽车', '乘用车'),            # 比亚迪
-    '601318': ('非银金融', '保险'),          # 中国平安
+    '600519': {'primary': '食品饮料', 'secondary': '白酒',   'source': '人工核定:贵州茅台2025年报+申万指数成份', 'effective_date': '2026-08-06', 'ttl_days': 90},
+    '300750': {'primary': '电力设备', 'secondary': '电池',   'source': '人工核定:宁德时代2025年报+申万指数成份', 'effective_date': '2026-08-06', 'ttl_days': 90},
+    '002594': {'primary': '汽车',     'secondary': '乘用车', 'source': '人工核定:比亚迪2025年报+申万指数成份',   'effective_date': '2026-08-06', 'ttl_days': 90},
+    '601318': {'primary': '非银金融', 'secondary': '保险',   'source': '人工核定:中国平安2025年报+申万指数成份', 'effective_date': '2026-08-06', 'ttl_days': 90},
 }
 
-def _apply_correction(code, primary, secondary):
-    """白名单强制校正：命中白名单返回人工核定分类，否则原样返回。"""
-    corr = _INDUSTRY_CORRECTION.get(code)
-    if not corr:
-        return primary, secondary
-    c_pri = corr[0] if _is_valid_industry(corr[0]) else primary
-    c_sec = corr[1] if (len(corr) > 1 and corr[1] and _is_valid_industry(corr[1])) else secondary
-    return c_pri, c_sec
+def _is_date(s):
+    try:
+        datetime.strptime(s, '%Y-%m-%d')
+        return True
+    except Exception:
+        return False
+
+def _valid_corr_entry(code, entry):
+    """白名单条目 schema 校验：primary/source/effective_date 必填且合法，secondary 可选。"""
+    if not isinstance(entry, dict):
+        return False
+    if not entry.get('primary') or not _is_valid_industry(entry['primary']):
+        return False
+    if not isinstance(entry.get('source'), str) or not entry['source'].strip():
+        return False
+    if not _is_date(entry.get('effective_date', '')):
+        return False
+    sec = entry.get('secondary', '')
+    if sec and not _is_valid_industry(sec):
+        return False
+    return True
+
+def _corr_tuple(entry):
+    return entry.get('primary'), entry.get('secondary', '')
+
+def _is_expired(entry, today_str):
+    try:
+        ed = datetime.strptime(entry.get('effective_date', ''), '%Y-%m-%d')
+        td = datetime.strptime(today_str, '%Y-%m-%d')
+        return (td - ed).days > int(entry.get('ttl_days', _DEFAULT_TTL_DAYS))
+    except Exception:
+        return False
+
+def _load_review_state(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            d = json.load(f)
+        if isinstance(d, dict):
+            d.setdefault('removed', {})
+            d.setdefault('reviews', [])
+            d.setdefault('last_review_date', '')
+            return d
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return {'removed': {}, 'reviews': [], 'last_review_date': ''}
+
+def _save_review_state(path, state):
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+# ── 多源抓取（东方财富 + 申万 + 同花顺，最佳努力）──────────────────────────────
+def _fetch_em_industry(code):
+    """源1 东方财富 CompanySurvey（证监会行业→申万 + 二级行业），复用现有实现。"""
+    return _fetch_industry(code)
+
+def _fetch_shenwan_industry(code):
+    """源2 申万（东方财富 push2 f127/f128 直出申万一/二级），最佳努力，失败返回 None。"""
+    try:
+        secid = ('1.' if code.startswith(('6', '9')) else '0.') + code
+        url = (f"https://push2.eastmoney.com/api/qt/stock/get?secid={secid}"
+               f"&fields=f127,f128&_={int(time.time() * 1000)}")
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0', 'Referer': 'https://quote.eastmoney.com/'})
+        with urllib.request.urlopen(req, timeout=3, context=_EM_CTX) as resp:
+            d = json.loads(resp.read().decode())
+        data = d.get('data') or {}
+        f127 = (data.get('f127') or '').strip()
+        f128 = (data.get('f128') or '').strip()
+        if f127 and _is_valid_industry(f127):
+            return f127, f128
+    except Exception:
+        pass
+    return None, None
+
+def _fetch_ths_industry(code):
+    """源3 同花顺（最佳努力，失败返回 None 不参与校验）。"""
+    try:
+        url = (f"https://d.10jqka.com.cn/v4/stock/handle/api.php?token=105cbf3b4b1c1d6b6a8d4d0c4c2d8b0c"
+               f"&code={code}&type=stock_api&_={int(time.time() * 1000)}")
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0', 'Referer': 'https://stockpage.10jqka.com.cn/'})
+        with urllib.request.urlopen(req, timeout=3, context=_EM_CTX) as resp:
+            t = resp.read().decode('utf-8', 'ignore')
+        m = re.search(r'"hy"\s*:\s*"([^"]+)"', t) or re.search(r'行业[":\s]+([一-龥]+)', t)
+        if m:
+            val = m.group(1).strip()
+            if _is_valid_industry(val):
+                return val, ''
+    except Exception:
+        pass
+    return None, None
+
+def _cross_validate(code):
+    """返回可用源列表 [(源名, primary, secondary)]；不可达源返回 None 不计入。"""
+    out = []
+    em_p, em_s = _fetch_em_industry(code)
+    if em_p:
+        out.append(('东方财富', em_p, em_s))
+    sw_p, sw_s = _fetch_shenwan_industry(code)
+    if sw_p:
+        out.append(('申万', sw_p, sw_s))
+    ths_p, ths_s = _fetch_ths_industry(code)
+    if ths_p:
+        out.append(('同花顺', ths_p, ths_s))
+    return out
+
+def _consensus(results):
+    """两源一致(同一(primary,secondary)>=2源)即采信，返回 (primary, secondary, agree)。"""
+    pairs = {}
+    for _, p, s in results:
+        key = (p, s)
+        pairs[key] = pairs.get(key, 0) + 1
+    for (p, s), cnt in pairs.items():
+        if cnt >= 2:
+            return p, s, True
+    if len(results) == 1:
+        return results[0][1], results[0][2], False
+    return None, None, False
+
+def _apply_whitelist(code, primary, secondary, today_str, review_state):
+    """查白名单：命中且未被月度摘除 → 强制覆盖；返回 (primary, secondary, applied, expired)。"""
+    if code in review_state.get('removed', {}):
+        return primary, secondary, False, False
+    entry = _INDUSTRY_CORRECTION.get(code)
+    if not entry or not _valid_corr_entry(code, entry):
+        return primary, secondary, False, False
+    expired = _is_expired(entry, today_str)
+    c_pri = entry['primary'] if _is_valid_industry(entry['primary']) else primary
+    c_sec = entry['secondary'] if (entry.get('secondary') and _is_valid_industry(entry['secondary'])) else secondary
+    return c_pri, c_sec, True, expired
+
+def _resolve_industry(code, em_p, em_s, today_str, review_state, xv):
+    """多源交叉校验 + 白名单决策（热循环用：东方财富已抓取，仅补抓申万/同花顺）。
+    xv: 失败探针 {'sw':bool,'ths':bool,'sw_fail':int,'ths_fail':int}，某源连续失败达阈值即全局禁用，
+        避免不可达源拖垮墙钟。返回 (primary, secondary, meta)。"""
+    meta = {'applied_whitelist': False, 'expired': False, 'agree': False, 'alert': None}
+    # 1) 白名单优先（受 removed/TTL 治理约束）
+    wp, ws, applied, expired = _apply_whitelist(code, em_p, em_s, today_str, review_state)
+    if applied:
+        meta['applied_whitelist'] = True
+        meta['expired'] = expired
+        if expired:
+            meta['alert'] = f"白名单条目过期(TTL): {code} 仍强制覆盖 {wp}/{ws}，请人工复核"
+        return wp, ws, meta
+    # 2) 多源交叉校验（申万 + 同花顺，最佳努力）
+    results = [('东方财富', em_p, em_s)]
+    if xv['sw']:
+        sw_p, sw_s = _fetch_shenwan_industry(code)
+        if sw_p:
+            results.append(('申万', sw_p, sw_s))
+        else:
+            xv['sw_fail'] += 1
+            if xv['sw_fail'] >= 20:
+                xv['sw'] = False
+    if xv['ths']:
+        ths_p, ths_s = _fetch_ths_industry(code)
+        if ths_p:
+            results.append(('同花顺', ths_p, ths_s))
+        else:
+            xv['ths_fail'] += 1
+            if xv['ths_fail'] >= 20:
+                xv['ths'] = False
+    prim, sec, agree = _consensus(results)
+    if agree and prim:
+        meta['agree'] = True
+        return prim, sec, meta  # 多源一致 → 采信共识
+    if len(results) >= 2:
+        meta['alert'] = (f"多源不一致且无白名单: {code} 东方财富={em_p}/{em_s} "
+                         f"申万={results[1][1] if len(results) > 1 else 'N/A'} "
+                         f"建议评估补白名单")
+    return em_p, em_s, meta
+
+def _monthly_review(today_str, review_state):
+    """月度自动复核(>=30天)：上游已自修正→自动摘除(removed)；TTL过期→标记需复核。返回 (state, actions)。"""
+    last = review_state.get('last_review_date', '')
+    if last and _is_date(last):
+        try:
+            if (datetime.strptime(today_str, '%Y-%m-%d') - datetime.strptime(last, '%Y-%m-%d')).days < 30:
+                return review_state, []
+        except Exception:
+            pass
+    removed = dict(review_state.get('removed', {}))
+    actions = []
+    for code, entry in _INDUSTRY_CORRECTION.items():
+        if not _valid_corr_entry(code, entry):
+            continue
+        results = _cross_validate(code)
+        prim, sec, agree = _consensus(results)
+        wp, ws = entry['primary'], entry.get('secondary', '')
+        upstream_ok = agree and prim == wp and (ws == '' or sec == ws)
+        expired = _is_expired(entry, today_str)
+        if upstream_ok and code not in removed:
+            removed[code] = {'date': today_str, 'reason': 'upstream_corrected',
+                             'upstream': f"{prim}/{sec}"}
+            actions.append({'code': code, 'action': 'remove', 'reason': 'upstream_corrected',
+                            'upstream': f"{prim}/{sec}"})
+        elif expired:
+            actions.append({'code': code, 'action': 'expired', 'reason': 'ttl_expired'})
+        else:
+            actions.append({'code': code, 'action': 'keep'})
+    review_state['removed'] = removed
+    review_state['last_review_date'] = today_str
+    review_state.setdefault('reviews', []).append({'date': today_str, 'actions': actions})
+    return review_state, actions
+
+def _audit_sample(codes, today_str, n=_AUDIT_SAMPLE):
+    """月度审计抽样：对非白名单标的做多源交叉校验，发现不一致→返回候选告警(建议补白名单)。"""
+    alerts = []
+    cand = [c for c in codes if c not in _INDUSTRY_CORRECTION]
+    if not cand:
+        return alerts
+    random.seed(today_str)
+    sample = random.sample(cand, min(n, len(cand)))
+    for code in sample:
+        results = _cross_validate(code)
+        prim, sec, agree = _consensus(results)
+        if not agree and len(results) >= 2:
+            em = dict((r[0], (r[1], r[2])) for r in results).get('东方财富', (None, None))
+            alerts.append(f"审计抽样不一致: {code} 源={[r[0] for r in results]} "
+                          f"东方财富={em[0]}/{em[1]} 建议评估是否补白名单")
+    return alerts
 
 def _fetch_all_a_codes():
     """v6.13.39: 获取全部真实A股6位代码（东方财富clist优先，新浪批量降级）。
@@ -256,7 +480,9 @@ def main():
     print("=" * 60)
     print("周日行业补全拉取 v6.20.12")
     print("=" * 60)
-    
+
+    today_str = datetime.now().strftime('%Y-%m-%d')
+
     # 1. Clone repo
     print("\n[1] 拉取仓库...")
     if os.path.exists(WORK_DIR):
@@ -270,12 +496,13 @@ def main():
         print(f"ERROR: git clone失败: {result.stderr}")
         sys.exit(1)
     print("  克隆成功")
-    
-    # 2. Load existing caches
+
+    # 2. Load existing caches + 白名单复核状态
     print("\n[2] 加载现有缓存...")
     cache_file = f"{WORK_DIR}/行业缓存.json"
     sub_cache_file = f"{WORK_DIR}/二级行业缓存.json"
-    
+    review_file = f"{WORK_DIR}/{_REVIEW_LOG_FILE}"
+
     industry_cache = {}
     sub_industry_cache = {}
     if os.path.exists(cache_file):
@@ -286,6 +513,10 @@ def main():
         with open(sub_cache_file, 'r', encoding='utf-8') as f:
             sub_industry_cache = json.load(f)
         print(f"  二级行业缓存: {len(sub_industry_cache)} 条")
+
+    review_state = _load_review_state(review_file)
+    print(f"  白名单复核状态: 已摘除 {len(review_state.get('removed', {}))} 条, "
+          f"上次复核 {review_state.get('last_review_date') or '无'}")
     
     # 3. Build code list (real A-share stocks only)
     print("\n[3] 构建全量代码列表(真实A股)...")
@@ -309,8 +540,10 @@ def main():
         return
     
     # 5. Fetch industry data（并发，设墙钟上限防超时）
-    print(f"\n[4] 开始并发拉取 {len(to_fetch)} 只股票行业分类...")
+    print(f"\n[4] 开始并发拉取 {len(to_fetch)} 只股票行业分类(东方财富+多源交叉校验)...")
     new_primary = 0; new_secondary = 0; fail_count = 0
+    alerts = []   # 多源不一致/白名单过期 告警
+    xv = {'sw': True, 'ths': True, 'sw_fail': 0, 'ths_fail': 0}  # 多源失败探针
     start = time.time()
     WALL = 1500  # 总墙钟上限 25 分钟，到点即停并保存已有成果（根治超时兜底）
     executor = ThreadPoolExecutor(max_workers=20)
@@ -321,8 +554,11 @@ def main():
             code = futures[future]
             try:
                 primary, secondary = future.result()
-                # 应用校正白名单：覆盖东方财富API明显错误分类（命中时强制覆盖）
-                primary, secondary = _apply_correction(code, primary, secondary)
+                # 多源交叉校验 + 白名单治理（东方财富已抓取，补抓申万/同花顺，失败探针防拖垮墙钟）
+                primary, secondary, meta = _resolve_industry(
+                    code, primary, secondary, today_str, review_state, xv)
+                if meta.get('alert'):
+                    alerts.append(meta['alert'])
                 if primary and code not in industry_cache:
                     industry_cache[code] = primary
                     new_primary += 1
@@ -342,19 +578,51 @@ def main():
                     break
     finally:
         executor.shutdown(wait=False)
-    
+
+    if not xv['sw']:
+        print("  [多源] 申万源连续失败，本次运行已禁用申万交叉校验(仅信任东方财富+白名单)")
+    if not xv['ths']:
+        print("  [多源] 同花顺源连续失败，本次运行已禁用同花顺交叉校验")
+
     print(f"\n[5] 拉取完成: 一级{len(industry_cache)}条, 二级{len(sub_industry_cache)}条, 失败{fail_count}条")
 
-    # 5.4 校正白名单强制回写（覆盖已缓存的错误分类，保证白名单代码始终正确）
+    # 5.3 白名单治理：月度自动复核 + 审计抽样（>=30天触发；保护墙钟，仅月度执行）
+    print("\n[5.3] 白名单治理(月度复核+审计)...")
+    review_state, review_actions = _monthly_review(today_str, review_state)
+    if review_actions:
+        removed = [a for a in review_actions if a['action'] == 'remove']
+        expired = [a for a in review_actions if a['action'] == 'expired']
+        kept = [a for a in review_actions if a['action'] == 'keep']
+        print(f"  [月度复核] 自动摘除 {len(removed)} 条, TTL过期需复核 {len(expired)} 条, 保留 {len(kept)} 条")
+        for a in removed:
+            print(f"    🗑 摘除 {a['code']} (上游已自修正: {a.get('upstream')})")
+        for a in expired:
+            print(f"    ⏰ TTL过期 {a['code']} 仍保留应用，请人工复核/摘除")
+        # 自动摘除后，从运行期白名单抑制已摘除条目（review_state['removed'] 已记录）
+    else:
+        print("  [月度复核] 未到月度窗口(>=30天)，跳过")
+    audit_alerts = _audit_sample(codes, today_str)
+    if audit_alerts:
+        print(f"  [审计抽样] 发现 {len(audit_alerts)} 处多源不一致(候选补白名单):")
+        for a in audit_alerts[:10]:
+            print(f"    ⚠ {a}")
+        alerts.extend(audit_alerts)
+
+    # 5.4 校正白名单强制回写（覆盖已缓存的错误分类，保证白名单代码始终正确；跳过已摘除条目）
     print("\n[5.4] 校正白名单强制回写...")
+    removed_set = set(review_state.get('removed', {}).keys())
     if _INDUSTRY_CORRECTION:
         corr_p = corr_s = 0
-        for code, corr in _INDUSTRY_CORRECTION.items():
+        for code, entry in _INDUSTRY_CORRECTION.items():
+            if code in removed_set:
+                continue  # 月度复核已判定上游自修正→抑制，不强制回写
+            if not _valid_corr_entry(code, entry):
+                continue
             # 不在缓存中（如已退市）则跳过，避免向缓存注入脏数据
             if code not in industry_cache and code not in sub_industry_cache:
                 continue
-            c_pri = corr[0] if _is_valid_industry(corr[0]) else None
-            c_sec = corr[1] if (len(corr) > 1 and corr[1] and _is_valid_industry(corr[1])) else None
+            c_pri = entry['primary'] if _is_valid_industry(entry['primary']) else None
+            c_sec = entry['secondary'] if (entry.get('secondary') and _is_valid_industry(entry['secondary'])) else None
             if c_pri and industry_cache.get(code) != c_pri:
                 industry_cache[code] = c_pri
                 corr_p += 1
@@ -381,34 +649,50 @@ def main():
     else:
         print("  [schema校验] 全部合法")
 
-    # 6. Save caches
+    # 6. Save caches + 复核状态
     print("\n[6] 保存缓存文件...")
     with open(cache_file, 'w', encoding='utf-8') as f:
         json.dump(industry_cache, f, ensure_ascii=False, indent=2)
     with open(sub_cache_file, 'w', encoding='utf-8') as f:
         json.dump(sub_industry_cache, f, ensure_ascii=False, indent=2)
+    _save_review_state(review_file, review_state)
     print(f"  行业缓存: {cache_file}")
     print(f"  二级行业缓存: {sub_cache_file}")
-    
+    print(f"  白名单复核记录: {review_file}")
+
     # 7. Push to GitHub
     print("\n[7] 推送到GitHub...")
     os.chdir(WORK_DIR)
     subprocess.run(["git", "config", "user.email", "bot@trae.ai"], capture_output=True, timeout=10)
     subprocess.run(["git", "config", "user.name", "Trae Bot"], capture_output=True, timeout=10)
-    subprocess.run(["git", "add", "行业缓存.json", "二级行业缓存.json"], capture_output=True, timeout=10)
-    
+    subprocess.run(["git", "add", "行业缓存.json", "二级行业缓存.json", _REVIEW_LOG_FILE],
+                   capture_output=True, timeout=10)
+
+    # 打印累计告警
+    if alerts:
+        print(f"\n  ⚠️ 本次告警 {len(alerts)} 条:")
+        for a in alerts[:20]:
+            print(f"    - {a}")
+
     result = subprocess.run(["git", "diff", "--cached", "--quiet"], capture_output=True, timeout=10)
     if result.returncode == 0:
         print("  无变更，跳过推送")
         return
-    
-    subprocess.run(["git", "commit", "-m", f"周日行业补全 (一级{new_primary}+二级{new_secondary})"], capture_output=True, timeout=10)
+
+    wl_note = ""
+    if review_actions:
+        n_rm = len([a for a in review_actions if a['action'] == 'remove'])
+        if n_rm:
+            wl_note = f" | 白名单自动摘除{n_rm}"
+    subprocess.run(["git", "commit", "-m",
+                    f"周日行业补全 (一级{new_primary}+二级{new_secondary}){wl_note}"],
+                   capture_output=True, timeout=10)
     push_result = _git_with_token(["git", "push", "origin", "main"], timeout=60, check=False)
     if push_result.returncode == 0:
         print("  ✅ 推送成功")
     else:
         print(f"  ⚠️ 推送失败: {push_result.stderr[:200]}")
-    
+
     print("\n✅ 周日行业补全完成！")
 
 if __name__ == "__main__":
