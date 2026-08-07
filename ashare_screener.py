@@ -2,14 +2,14 @@
 # -*- coding: utf-8 -*-
 """
 A股每日盘前短线标的智能筛选 v6.20.12
-37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(v6.14.0) | 极端行情修复监测(v6.15.0) | CLS电报v2(v6.16.0) | 麦蕊智数涨停/跌停/公告(v6.16.1) | 新闻筛查修复(v6.16.16) | 五项整改(v6.16.35)
+37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 
-# v6.13.42: axdata K线降级（需要Python 3.11+）
+# @since v6.13.42: axdata K线降级（需要Python 3.11+）
 _axdata_available = False
 _AXDATA_CLIENT = None
 try:
@@ -21,23 +21,23 @@ except Exception:
 
 import http.client
 
-# v6.12.23: 全局socket超时+SSL未验证上下文，解决沙箱网络限制
-socket.setdefaulttimeout(12)  # v6.13.49: 8→12
+# @since v6.12.23: 全局socket超时+SSL未验证上下文，解决沙箱网络限制
+socket.setdefaulttimeout(12)  # @since v6.13.49: 8→12
 
-# v6.12.23: 全局SSL未验证上下文
+# @since v6.12.23: 全局SSL未验证上下文
 _SSL_CTX = ssl._create_unverified_context()
 
 # ============================================================
-# v6.13.55: 死代码清理 — 移除未使用的连接池/_PooledResponse(约100行)
+# @since v6.13.55: 死代码清理 — 移除未使用的连接池/_PooledResponse(约100行)
 # 实际使用 _http_retry(urlopen) 而非连接池，清理避免维护混淆
 # ============================================================
-_HTTP_RETRY_DEFAULT = 2  # v6.13.49: 3→2(任务级重试已覆盖)
-_HTTP_RETRY_BACKOFF_BASE = 1.5  # v6.16.29: 1.0→1.5（1.0导退避恒为1s，指数退避失效）
+_HTTP_RETRY_DEFAULT = 2  # @since v6.13.49: 3→2(任务级重试已覆盖)
+_HTTP_RETRY_BACKOFF_BASE = 1.5  # @since v6.16.29: 1.0→1.5（1.0导退避恒为1s，指数退避失效）
 
 def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
-    """HTTP请求超时自动重试+指数退避。v6.13.52: 连接池改用urlopen(沙箱兼容)
-    v6.16.24: 新增HTTP错误码(403/429/502/503)重试
-    v6.16.29: 退避底数恢复1.5(指数递增) + 429解析Retry-After头"""
+    """HTTP请求超时自动重试+指数退避。@since v6.13.52: 连接池改用urlopen(沙箱兼容)
+    @since v6.16.24: 新增HTTP错误码(403/429/502/503)重试
+    @since v6.16.29: 退避底数恢复1.5(指数递增) + 429解析Retry-After头"""
     import http.client as _hc
     last_error = None
     for attempt in range(retries):
@@ -46,7 +46,7 @@ def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
             status = resp.getcode()
             if 400 <= status < 600:
                 if attempt < retries - 1:
-                    # v6.16.29: 429限流时优先使用服务端Retry-After，否则指数退避
+                    # @since v6.16.29: 429限流时优先使用服务端Retry-After，否则指数退避
                     if status == 429:
                         retry_after = resp.getheader('Retry-After')
                         if retry_after:
@@ -95,10 +95,10 @@ def _http_retry(url, timeout=10, retries=_HTTP_RETRY_DEFAULT, label="HTTP"):
 from openpyxl import load_workbook
 from lib.factor import compute_main_force_position, compute_short_term_breakout, resonance_check
 from lib.microstructure import microstructure_filter
-from lib.analyst import generate_ai_report, generate_candidate_analysis  # v6.14.0: 冠军深度分析
+from lib.analyst import generate_ai_report, generate_candidate_analysis  # @since v6.14.0: 冠军深度分析
 from lib.backtest import run_backtest, generate_backtest_report, generate_backtest_html, push_backtest_to_feishu, _build_backtest_lookup
 from lib.core import DATA_DIR
-from lib.session import init_session, save_step, finish_session, get_progress  # v6.13.26: 会话记忆
+from lib.session import init_session, save_step, finish_session, get_progress  # @since v6.13.26: 会话记忆
 
 def _load_builtin_version():
     """单一版本号真相源(SSOT)：版本号从仓库根 VERSION 文件读取，避免硬编码漂移。
@@ -120,24 +120,24 @@ def _load_builtin_version():
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"
-BOT_AUTHOR_NAME = "ashare-screener"  # v6.20.2: 统一机器人提交身份(治理整改#4)
+BOT_AUTHOR_NAME = "ashare-screener"  # @since v6.20.2: 统一机器人提交身份(治理整改#4)
 BOT_AUTHOR_EMAIL = "ashare-bot@github.com"
 beijing_now = None; beijing_date = None; beijing_weekday = None
-_beijing_api_ok = False  # v6.13.11: 北京时间API是否正常
+_beijing_api_ok = False  # @since v6.13.11: 北京时间API是否正常
 data_date = None; prediction_date = None; pred_yyyymmdd = None
 # 2026年中国A股节假日（非交易日）— 需年初更新
 _CN_HOLIDAYS_2026 = [
     "2026-01-01","2026-01-02","2026-02-16","2026-02-17","2026-02-18","2026-02-19","2026-02-20",
     "2026-04-06","2026-05-01","2026-06-19","2026-06-20","2026-06-21",
-    "2026-09-25",  # v6.14.1: 补全中秋节休市
+    "2026-09-25",  # @since v6.14.1: 补全中秋节休市
     "2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07"
 ]
 file_version = BUILTIN_VERSION; params = {}
-_pl_sorted = []  # v6.12.10: 模块级初始化，防止 NameError
+_pl_sorted = []  # @since v6.12.10: 模块级初始化，防止 NameError
 market_condition = "震荡"; position_pct = 55
 index_data = {}  # 三大指数行情(供HTML使用)
-MIN_POSITION_PCT = 20  # v6.8.7: 全局仓位下限
-_step_status = []  # v6.13.11: 步骤执行状态追踪
+MIN_POSITION_PCT = 20  # @since v6.8.7: 全局仓位下限
+_step_status = []  # @since v6.13.11: 步骤执行状态追踪
 
 def _load_credential(env_key, file_path, fallback=""):
     if env_key in os.environ: return os.environ[env_key]
@@ -149,19 +149,19 @@ def _load_credential(env_key, file_path, fallback=""):
 GITHUB_TOKEN = _load_credential("GITHUB_TOKEN", "/workspace/.github_token")
 FEISHU_WEBHOOK = _load_credential("FEISHU_WEBHOOK", "/workspace/.feishu_webhook")
 
-# --- v6.15.3: Token/Webhook 格式校验
+# --- @since v6.15.3: Token/Webhook 格式校验
 if GITHUB_TOKEN and not (GITHUB_TOKEN.startswith("ghp_") or GITHUB_TOKEN.startswith("github_pat_")):
     log_alert("WARNING", "凭证校验", "GITHUB_TOKEN格式异常，推送可能失败")
 if FEISHU_WEBHOOK and not FEISHU_WEBHOOK.startswith("https://open.feishu.cn/open-apis/bot/v2/hook/"):
     log_alert("WARNING", "凭证校验", "FEISHU_WEBHOOK格式异常，推送可能失败")
 
-# v6.16.0: 麦蕊智数API配置（免费版500次/天, 需注册获取licence）
+# @since v6.16.0: 麦蕊智数API配置（免费版500次/天, 需注册获取licence）
 # 注册地址: https://www.mairui.club/gratis (需手机号+短信验证码)
 MAIRUI_LICENCE = _load_credential("MAIRUI_LICENCE", "/workspace/.mairui_licence")
 MAIRUI_BASE = 'http://api.mairui.club'
 MAIRUI_BASE_V2 = 'https://a.mairuiapi.com'
 
-# v6.16.0: CLS财联社电报签名算法
+# @since v6.16.0: CLS财联社电报签名算法
 def _cls_sign(params_dict):
     """CLS sign: 按键排序 → key=value拼接 → SHA1 → MD5"""
     sorted_keys = sorted(params_dict.keys())
@@ -169,7 +169,7 @@ def _cls_sign(params_dict):
     sha1_hash = hashlib.sha1(raw.encode()).hexdigest()
     return hashlib.md5(sha1_hash.encode()).hexdigest()
 
-# v6.16.0: CLS电报缓存（单次运行内复用）
+# @since v6.16.0: CLS电报缓存（单次运行内复用）
 _cls_telegraph_cache = None
 
 def _fetch_cls_telegraphs(pages=3):
@@ -196,12 +196,12 @@ def _fetch_cls_telegraphs(pages=3):
     _cls_telegraph_cache = all_items
     return all_items
 
-# v6.16.20: 涨跌停精确判定（按板块区分阈值，排除北交所/新股/ST等伪涨停）
+# @since v6.16.20: 涨跌停精确判定（按板块区分阈值，排除北交所/新股/ST等伪涨停）
 def _is_limit_up(code, chg):
     """精确判断涨停：主板±10%→≥9.5%, 创业板/科创±20%→≥19.5%, 北交所±30%→≥29.5%"""
     if chg is None: return False
     code = str(code)
-    # v6.16.23: 收紧北交所前缀，使用精确的82/83/87/88/92/43替代泛化的'8'/'4'
+    # @since v6.16.23: 收紧北交所前缀，使用精确的82/83/87/88/92/43替代泛化的'8'/'4'
     if code.startswith(('82', '83', '87', '88', '92', '43')): return chg >= 29.5  # 北交所/老三板±30%
     if code.startswith(('300', '301', '688')): return chg >= 19.5  # 创业板/科创±20%
     return chg >= 9.5  # 主板/中小板±10%
@@ -210,16 +210,16 @@ def _is_limit_down(code, chg):
     """精确判断跌停：主板±10%→≤-9.5%, 创业板/科创±20%→≤-19.5%, 北交所±30%→≤-29.5%"""
     if chg is None: return False
     code = str(code)
-    # v6.16.23: 收紧北交所前缀，与_is_limit_up保持一致
+    # @since v6.16.23: 收紧北交所前缀，与_is_limit_up保持一致
     if code.startswith(('82', '83', '87', '88', '92', '43')): return chg <= -29.5  # 北交所/老三板±30%
     if code.startswith(('300', '301', '688')): return chg <= -19.5  # 创业板/科创±20%
     return chg <= -9.5  # 主板/中小板±10%
 
-# v6.16.0: 麦蕊智数API封装
+# @since v6.16.0: 麦蕊智数API封装
 # 跌停/涨停股池缓存（单次运行内复用）
 _mairui_dt_cache = None
 _mairui_zt_cache = None
-# v6.16.20: 自算跌停池缓存（从all_stocks构建，替代残缺的麦蕊API）
+# @since v6.16.20: 自算跌停池缓存（从all_stocks构建，替代残缺的麦蕊API）
 _self_dt_cache = None
 
 def _mairui_fetch_dt_pool(date_str=None, licence=None):
@@ -261,7 +261,7 @@ def _mairui_fetch_zt_pool(date_str=None, licence=None):
     except Exception: return []
 
 def _mairui_longhubang_for_top10(code):
-    """v6.16.1: 麦蕊涨停股池格式化(TOP10增强用)"""
+    """@since v6.16.1: 麦蕊涨停股池格式化(TOP10增强用)"""
     if not MAIRUI_LICENCE: return ''
     try:
         zt_pool = _mairui_fetch_zt_pool()
@@ -280,7 +280,7 @@ def _mairui_longhubang_for_top10(code):
     except Exception: return ''
 
 def _mairui_announcements(code, licence=None):
-    """v6.16.0: 获取个股最新公告"""
+    """@since v6.16.0: 获取个股最新公告"""
     if licence is None: licence = MAIRUI_LICENCE
     if not licence: return None
     try:
@@ -292,11 +292,11 @@ def _mairui_announcements(code, licence=None):
             return data if isinstance(data, list) else data.get('data', data.get('result', []))
     except Exception: return None
 
-# v6.13.11: 步骤执行状态追踪
+# @since v6.13.11: 步骤执行状态追踪
 def record_step_status(step_name, status, detail=""):
-    """记录步骤执行状态: status='OK'|'SKIP'|'WARN'|'FAIL'。v6.13.26: 同步写入会话记忆"""
+    """记录步骤执行状态: status='OK'|'SKIP'|'WARN'|'FAIL'。@since v6.13.26: 同步写入会话记忆"""
     _step_status.append({"step": step_name, "status": status, "detail": detail})
-    save_step(step_name, status, detail)  # v6.13.26: 会话持久化
+    save_step(step_name, status, detail)  # @since v6.13.26: 会话持久化
 
 def print_step_status_summary():
     """打印步骤执行状态摘要"""
@@ -315,14 +315,14 @@ def print_step_status_summary():
     print(f"  合计: 通过{ok_count} 警告{warn_count} 跳过{skip_count} 失败{fail_count}")
     print("="*60)
 
-# v6.9.34: 东方财富HTTP行业分类（替代Baostock TCP，解决沙箱网络限制）
+# @since v6.9.34: 东方财富HTTP行业分类（替代Baostock TCP，解决沙箱网络限制）
 INDUSTRY_CACHE_FILE = "/workspace/行业缓存.json"
 _industry_cache = {}          # {code: "申万一级行业"}
-# v6.9.35: 二级行业缓存（东方财富sshy，与一级行业同源拉取）
+# @since v6.9.35: 二级行业缓存（东方财富sshy，与一级行业同源拉取）
 SUB_INDUSTRY_CACHE_FILE = "/workspace/二级行业缓存.json"
 _sub_industry_cache = {}      # {code: "东方财富二级行业"}
 
-# v6.9.34: 证监会行业 → 申万一级行业映射表
+# @since v6.9.34: 证监会行业 → 申万一级行业映射表
 _ZJH_TO_SHENWAN = {
     # 制造业（子类映射）
     '制造业-计算机、通信和其他电子设备制造业': '电子',
@@ -394,7 +394,7 @@ _ZJH_TO_SHENWAN = {
     '居民服务、修理和其他服务业': '社会服务',
 }
 
-# v6.16.36: 申万一级行业合法值白名单（schema校验用，与_ZJH_TO_SHENWAN映射目标一致）
+# @since v6.16.36: 申万一级行业合法值白名单（schema校验用，与_ZJH_TO_SHENWAN映射目标一致）
 _VALID_SHENWAN_INDUSTRIES = frozenset([
     '电子', '电力设备', '机械设备', '基础化工', '医药生物', '汽车', '食品饮料',
     '纺织服饰', '建筑材料', '有色金属', '钢铁', '国防军工', '轻工制造', '石油石化',
@@ -421,7 +421,7 @@ _STRATEGY_TAKE_PROFIT = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 
 
 def _tie_key(c):
     """模块级平局打破键：策略优先级→评分→平局分→量比→换手偏离"""
-    vr = c.get('volume_ratio', 0)  # v6.13.20: 添加默认值防止NoneType比较 or 0
+    vr = c.get('volume_ratio', 0)  # @since v6.13.20: 添加默认值防止NoneType比较 or 0
     to = c.get('turnover') or 0
     to_penalty = abs(to - 10) if to > 0 else 99
     return (-c.get('score', 0), _STRATEGY_ORDER.get(c.get('strategy', 'Z'), 99),
@@ -431,7 +431,7 @@ def _tie_key(c):
 # 工具函数
 # ============================================================
 def _industry_str(c):
-    """v6.9.36: 安全提取行业字符串，处理dict类型的industry值"""
+    """@since v6.9.36: 安全提取行业字符串，处理dict类型的industry值"""
     ind = c.get('industry', '')
     if isinstance(ind, dict):
         return ind.get('sshy', '') or '未知'
@@ -480,7 +480,7 @@ def _version_cmp(v):
     return tuple(int(n) for n in nums)
 
 # ============================================================
-# 腾讯行情API (v6.6.27: 替代新浪)
+# 腾讯行情API (@since v6.6.27: 替代新浪)
 # ============================================================
 TENCENT_API = "https://qt.gtimg.cn/q="
 
@@ -541,7 +541,7 @@ def fetch_tencent_stocks(codes):
                     high = _parse_tencent_field(raw, 33, close)
                     low = _parse_tencent_field(raw, 34, close)
                     # 腾讯API字段: [37]=amount(万元) [38]=turnover(%) [39]=pe_ttm [43]=amplitude(%) [44]=total_cap(亿元) [45]=high(冗余) [46]=low(冗余) [49]=volume_ratio [62]=年初至今涨跌幅(%) [86]=未知资金流向
-                    # v6.13.43: 字段62非主力净流入(实为YTD涨跌幅)，主力净流入单独从东方财富API获取
+                    # @since v6.13.43: 字段62非主力净流入(实为YTD涨跌幅)，主力净流入单独从东方财富API获取
                     result.append({
                         "code": code, "name": name,
                         "open": open_p, "close": close,
@@ -552,12 +552,12 @@ def fetch_tencent_stocks(codes):
                         "amplitude": _parse_tencent_field(raw, 43, 0),
                         "volume_ratio": _parse_tencent_field(raw, 49, None),
                         "pe_ttm": _parse_tencent_field(raw, 39, None),
-                        "total_cap": (_tc := _parse_tencent_field(raw, 44, None)) and _tc * 1e8,  # v6.12.10: fix dup call, 亿元→元
-                        "ytd_change_pct": _parse_tencent_field(raw, 62, None),  # v6.13.43: 字段62=年初至今涨跌幅(%)
-                        "main_inflow": None,  # v6.13.43: 腾讯API无主力净流入字段，由step10C单独获取
+                        "total_cap": (_tc := _parse_tencent_field(raw, 44, None)) and _tc * 1e8,  # @since v6.12.10: fix dup call, 亿元→元
+                        "ytd_change_pct": _parse_tencent_field(raw, 62, None),  # @since v6.13.43: 字段62=年初至今涨跌幅(%)
+                        "main_inflow": None,  # @since v6.13.43: 腾讯API无主力净流入字段，由step10C单独获取
                     })
                 except (ValueError, TypeError, IndexError, AttributeError): pass
-            time.sleep(0.01)  # v6.16.29: 0.05→0.01s(减少排队等待)
+            time.sleep(0.01)  # @since v6.16.29: 0.05→0.01s(减少排队等待)
         except Exception as e: log_alert("WARNING", "腾讯个股", f"批次失败: {str(e)[:40]}")
     return result
 
@@ -603,7 +603,7 @@ def step0_get_beijing_time():
     # data_date: 盘前/交易时段→昨日，收盘后→当日，周末回退到周五
     if beijing_weekday == 5: data_date = (beijing_now - timedelta(days=1)).strftime('%Y-%m-%d')
     elif beijing_weekday == 6: data_date = (beijing_now - timedelta(days=2)).strftime('%Y-%m-%d')
-    elif beijing_weekday == 0 and is_pre_market: data_date = (beijing_now - timedelta(days=3)).strftime('%Y-%m-%d')  # v6.8.5: 周一盘前回退到周五
+    elif beijing_weekday == 0 and is_pre_market: data_date = (beijing_now - timedelta(days=3)).strftime('%Y-%m-%d')  # @since v6.8.5: 周一盘前回退到周五
     elif is_pre_market or not is_post_market: data_date = (beijing_now - timedelta(days=1)).strftime('%Y-%m-%d')
     else: data_date = beijing_date
     # prediction_date: 盘前→当日，收盘后→下一交易日，周末→周一
@@ -640,7 +640,7 @@ def step0_get_beijing_time():
     log_alert("INFO", "北京时间", f"beijing={beijing_date} data={data_date} pred={prediction_date}")
 
 def _git_with_token(cmd_args, timeout=30, check=True, log_prefix=""):
-    """v6.16.7: GIT_ASKPASS主方案 + Token-in-URL降级。
+    """@since v6.16.7: GIT_ASKPASS主方案 + Token-in-URL降级。
     优先使用 GIT_ASKPASS 环境变量传递 Token（避免 Token 出现在进程列表中），
     沙箱中 GIT_ASKPASS 不可用时降级为 Token-in-URL 直连认证。
     修复 GIT_ASKPASS 在沙箱中不可用导致的 step0A/step26 全部失败和回测链接404。"""
@@ -702,7 +702,7 @@ def step0A_pull_holdings():
 # 步骤1-2：节假日 + 极端行情（腾讯API）
 # ============================================================
 def _is_valid_cache_file(path):
-    """v6.16.37: 校验行业缓存文件 — 存在 + JSON合法 + 非空dict。"""
+    """@since v6.16.37: 校验行业缓存文件 — 存在 + JSON合法 + 非空dict。"""
     try:
         with open(path, 'r', encoding='utf-8') as f:
             d = json.load(f)
@@ -711,13 +711,13 @@ def _is_valid_cache_file(path):
         return False
 
 def _industry_sync_failed(msg):
-    """v6.16.37: 缓存同步失败的硬性告警 + 中止筛选。"""
+    """@since v6.16.37: 缓存同步失败的硬性告警 + 中止筛选。"""
     log_alert("ERROR", "行业缓存", msg)
     _send_failure_alert(RuntimeError(f"行业缓存同步失败: {msg}"))
     raise RuntimeError(f"行业缓存无法确保({msg})，中止筛选以防行业分类错误")
 
 def step0B_sync_industry_cache():
-    """v6.16.37: 筛选前确保 /workspace 行业缓存文件存在且有效。
+    """@since v6.16.37: 筛选前确保 /workspace 行业缓存文件存在且有效。
     缺失/损坏时从 GitHub 仓库(lc132/lv)自动同步；同步失败则硬性告警并中止筛选，
     防止行业分类错误(回退到L2代码段映射)污染筛选结果。"""
     cache_files = [INDUSTRY_CACHE_FILE, SUB_INDUSTRY_CACHE_FILE]
@@ -771,7 +771,7 @@ def step2_extreme_market():
     cur = sh.get("price", 0); chg = sh.get("change_pct", 0)
     log_alert("INFO", "极端行情", f"上证{cur:.0f} 涨跌{chg:.2f}%")
     if chg <= -3:
-        # v6.15.0: 写入极端行情标记，供次日 step2A 修复监测使用
+        # @since v6.15.0: 写入极端行情标记，供次日 step2A 修复监测使用
         _write_extreme_flag(data_date, cur, chg, "暴跌")
         return True
     if chg >= 3:
@@ -779,7 +779,7 @@ def step2_extreme_market():
         position_pct = 30; market_condition = "强市(极端上涨/降仓防追高)"
     return False
 
-# v6.15.0: 极端行情标记文件读写
+# @since v6.15.0: 极端行情标记文件读写
 _EXTREME_FLAG_FILE = "/workspace/.extreme_market_flag"
 
 def _write_extreme_flag(date_str, price, chg_pct, tag):
@@ -804,7 +804,7 @@ def _clear_extreme_flag():
     except FileNotFoundError: pass
 
 def step2A_recovery_monitor():
-    """v6.15.0: 极端行情后修复监测——检测前一日极端行情后的市场修复力度，动态调整仓位和筛选参数"""
+    """@since v6.15.0: 极端行情后修复监测——检测前一日极端行情后的市场修复力度，动态调整仓位和筛选参数"""
     global position_pct, market_condition
     flag = _read_extreme_flag()
     if not flag: return False  # 无极端行情记录，正常流程
@@ -908,7 +908,7 @@ def step3_external_markets():
     except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError, ModuleNotFoundError, ImportError): pass
 
 def step3A_domestic_index_check():
-    """v6.8.7: 原名step3A_premarket_futures，实际使用深证成指作为大盘强弱代理指标"""
+    """@since v6.8.7: 原名step3A_premarket_futures，实际使用深证成指作为大盘强弱代理指标"""
     global position_pct, market_condition
     try:
         idx = fetch_tencent_index(["sz399001"])
@@ -1027,11 +1027,11 @@ def step4C_crisis_check(holdings):
             if code.startswith(('82', '83', '87', '88', '92')): triggers.append("北交所")
             if triggers:
                 m = f"⚠️ {code} {name} 触发L1: {', '.join(triggers)}"
-                alerts.append(m); log_alert("INFO", "持仓L1", m)  # v6.8.6: L1条件降级为INFO
+                alerts.append(m); log_alert("INFO", "持仓L1", m)  # @since v6.8.6: L1条件降级为INFO
     return alerts
 
 # ============================================================
-# v6.16.24: 回撤断路器+兑现率闭环（从pipeline.py集成到主流程）
+# @since v6.16.24: 回撤断路器+兑现率闭环（从pipeline.py集成到主流程）
 # ============================================================
 def step9B_circuit_breaker():
     """回撤断路器：任一持仓当日亏损>threshold%触发"""
@@ -1159,7 +1159,7 @@ def step6_file_init():
     if adj and len(adj) > 0:
         file_version = adj[0].get('version', BUILTIN_VERSION); params = adj[0].get('params', {})
     else: file_version = BUILTIN_VERSION; params = {}
-    # v6.9.53: 若内置版本比策略记录版本新，以内置版本为准并更新记录
+    # @since v6.9.53: 若内置版本比策略记录版本新，以内置版本为准并更新记录
     if _version_cmp(file_version) < _version_cmp(BUILTIN_VERSION):
         file_version = BUILTIN_VERSION
         if adj and len(adj) > 0:
@@ -1172,7 +1172,7 @@ def step6_file_init():
     for f in sorted(os.listdir('/workspace')):
         if f.startswith('推荐历史_') and f.endswith('.json'):
             all_h.extend(safe_read_json(os.path.join('/workspace', f)))
-    # v6.13.20: 检查已存在版本集合，避免重复记录
+    # @since v6.13.20: 检查已存在版本集合，避免重复记录
     existing_versions = set()
     for r in all_h:
         if r.get('type') == 'strategy_check':
@@ -1196,7 +1196,7 @@ def step8_market_environment():
     pre_condition = market_condition
     pre_position = position_pct
     idx = fetch_tencent_index(["sh000001", "sz399001", "sz399006"])
-    # v6.12.4: 键名映射为 analyst.py 期望的 sh/sz/cy 格式
+    # @since v6.12.4: 键名映射为 analyst.py 期望的 sh/sz/cy 格式
     index_data = {'sh': idx.get('sh000001', {}), 'sz': idx.get('sz399001', {}), 'cy': idx.get('sz399006', {})}
     if idx:
         sh = idx.get("sh000001", {})
@@ -1233,7 +1233,7 @@ def step8_market_environment():
         elif chg < -1: market_condition = "弱市"; position_pct = 35
         else: market_condition = "震荡"; position_pct = 55
     # 保护前置步骤的保守设置：不覆盖更弱的条件
-    # v6.16.24: 保护前置步骤的保守设置，用"弱市" in覆盖子类型
+    # @since v6.16.24: 保护前置步骤的保守设置，用"弱市" in覆盖子类型
     if "弱市" in pre_condition and "弱市" not in market_condition:
         market_condition = "弱市"
         position_pct = min(position_pct, pre_position)
@@ -1245,10 +1245,10 @@ def step8_market_environment():
 # 步骤10A：全市场拉取（三级降级，Tier2改为腾讯）
 # ============================================================
 def step10A_fetch_all_stocks():
-    # Tier 1: 腾讯API (v6.6.28 一级数据源)
+    # Tier 1: 腾讯API (@since v6.6.28 一级数据源)
     try:
         codes = []
-        for i in range(600000, 610000): codes.append(f"sh{i}")  # v6.8.8: 扩展至610000覆盖预留段
+        for i in range(600000, 610000): codes.append(f"sh{i}")  # @since v6.8.8: 扩展至610000覆盖预留段
         for i in range(1, 5000): codes.append(f"sz{i:06d}")
         for i in range(300000, 302000): codes.append(f"sz{i}")
         # 注：688xxx(科创板)未纳入拉取，step11硬排除科创板，拉取也无意义
@@ -1258,7 +1258,7 @@ def step10A_fetch_all_stocks():
     except Exception as e:
         log_alert("WARNING", "行情采集", f"腾讯一级失败: {str(e)[:60]}")
     
-    # Tier 2: 新浪批量API (v6.6.28 二级降级)
+    # Tier 2: 新浪批量API (@since v6.6.28 二级降级)
     log_alert("INFO", "行情采集", "降级为新浪批量API(二级)")
     try:
         code_ranges = []
@@ -1297,7 +1297,7 @@ def step10A_fetch_all_stocks():
                             "amount": float(parts[9]) if len(parts) > 9 and parts[9] else 0,
                             "high": high_v, "low": low_v, "prev_close": prev_close,
                             "turnover": 0, "amplitude": amplitude_v,
-                            "volume_ratio": None, "main_inflow": None, "total_cap": float(parts[14]) * 1e8 if len(parts) > 14 and parts[14] else None,  # v6.9.43: 新浪API补充total_cap
+                            "volume_ratio": None, "main_inflow": None, "total_cap": float(parts[14]) * 1e8 if len(parts) > 14 and parts[14] else None,  # @since v6.9.43: 新浪API补充total_cap
                         })
                     except (ValueError, TypeError, IndexError): continue
                 if i % (batch_size * 10) == 0: time.sleep(0.02)
@@ -1346,7 +1346,7 @@ def step10A_fetch_all_stocks():
             except Exception: log_alert("DEBUG", "行情采集", "api.disconnect()失败")
 
 # ==========================================================
-# 步骤10B：行业查表 v6.6.29 （全代码段覆盖，零未知）
+# 步骤10B：行业查表 @since v6.6.29 （全代码段覆盖，零未知）
 # 覆盖范围：600-606xxx / 000-004xxx / 300-302xxx 所有100段
 # ==========================================================
 INDUSTRY_MAP = {
@@ -1474,14 +1474,14 @@ INDUSTRY_MAP = {
     '304200-304299': '建筑装饰', '304300-304399': '基础化工',
 }
 def lookup_industry(code):
-    """v6.16.36: 行业查表 — L1/L2置信度分层，L2(代码段映射)结果禁止写入缓存。
+    """@since v6.16.36: 行业查表 — L1/L2置信度分层，L2(代码段映射)结果禁止写入缓存。
     优先级: L1-硬编码(HARDCODED_INDUSTRY) → L1-东财HTTP缓存(industry_cache) → L2-代码段映射(INDUSTRY_MAP, 不准, 仅兜底)
-    v6.13.53: 缓存未加载时自动加载，防止回退到错误的代码段映射"""
+    @since v6.13.53: 缓存未加载时自动加载，防止回退到错误的代码段映射"""
     # 1. 硬编码覆盖优先（L1: 手动校对，最高置信度）
     if code in HARDCODED_INDUSTRY:
         return HARDCODED_INDUSTRY[code]
-    # 2. 东方财富缓存（L1: HTTP直取，高置信度）。v6.9.36: 兼容dict格式值
-    # v6.13.53: 缓存为空时自动加载，防止回退到不准确的代码段映射
+    # 2. 东方财富缓存（L1: HTTP直取，高置信度）。@since v6.9.36: 兼容dict格式值
+    # @since v6.13.53: 缓存为空时自动加载，防止回退到不准确的代码段映射
     if not _industry_cache:
         _load_industry_cache()
     if code in _industry_cache and _industry_cache[code]:
@@ -1501,7 +1501,7 @@ def lookup_industry(code):
     return "未知"
 
 # ==========================================================
-# v6.9.34: 东方财富HTTP行业分类预加载（替代Baostock TCP）
+# @since v6.9.34: 东方财富HTTP行业分类预加载（替代Baostock TCP）
 # ==========================================================
 def _zjh_to_shenwan(zjh):
     """证监会行业 → 申万一级行业映射"""
@@ -1517,7 +1517,7 @@ def _zjh_to_shenwan(zjh):
     return None
 
 def _validate_industry_schema(cache, cache_name=""):
-    """v6.16.36: 落盘前/加载后schema校验。
+    """@since v6.16.36: 落盘前/加载后schema校验。
     一级行业缓存：值必须是_VALID_SHENWAN_INDUSTRIES中的合法申万行业。
     二级行业缓存：值必须是非空字符串。
     返回: (合法条目数, 非法条目数, 缺失率)"""
@@ -1535,14 +1535,14 @@ def _validate_industry_schema(cache, cache_name=""):
     return valid, invalid, missing_rate
 
 def _load_industry_cache():
-    """v6.16.36: 从磁盘加载行业缓存 + 完整性自检。
+    """@since v6.16.36: 从磁盘加载行业缓存 + 完整性自检。
     返回: (一级需要重建, 二级需要重建) — 缺失率>5%触发重建。"""
     global _industry_cache, _sub_industry_cache
     indy_rebuild = False; sub_rebuild = False
     try:
         with open(INDUSTRY_CACHE_FILE, 'r', encoding='utf-8') as f:
             _industry_cache = json.load(f)
-        # v6.9.36: 兼容旧格式dict值自动转字符串
+        # @since v6.9.36: 兼容旧格式dict值自动转字符串
         _industry_cache = {k: (v.get('sshy', '') or '未知') if isinstance(v, dict) else v for k, v in _industry_cache.items()}
         total = len(_industry_cache)
         if total > 0:
@@ -1586,7 +1586,7 @@ def _load_industry_cache():
     return indy_rebuild, sub_rebuild
 
 def _save_industry_cache():
-    """v6.16.36: 保存行业缓存到磁盘 — 落盘前schema校验，剔除非法条目。"""
+    """@since v6.16.36: 保存行业缓存到磁盘 — 落盘前schema校验，剔除非法条目。"""
     if _industry_cache:
         # Schema校验：仅保留合法申万一级行业
         clean = {k: v for k, v in _industry_cache.items()
@@ -1617,7 +1617,7 @@ def _save_industry_cache():
             print(f"[WARNING] 二级行业缓存保存失败: {e}")
 
 def _rebuild_industry_from_http(all_stocks):
-    """v6.16.36: 通过东方财富HTTP API批量重建行业缓存（完整性自检触发）。
+    """@since v6.16.36: 通过东方财富HTTP API批量重建行业缓存（完整性自检触发）。
     并发拉取，仅写入L1(HTTP直取)结果，L2(代码段映射)不上缓存。"""
     global _industry_cache, _sub_industry_cache
     _industry_cache = {}; _sub_industry_cache = {}
@@ -1644,10 +1644,10 @@ def _rebuild_industry_from_http(all_stocks):
     _save_industry_cache()
 
 def _fetch_zjh_industry(code):
-    """v6.9.35: 通过东方财富HTTP API获取证监会行业和二级行业(sshy)。
+    """@since v6.9.35: 通过东方财富HTTP API获取证监会行业和二级行业(sshy)。
     返回: (申万一级行业, 二级行业) 或 (None, None)"""
     try:
-        market = 'SH' if code.startswith('6') else 'SZ'  # v6.9.43: 去除'9'前缀误匹配（9xxxxx不进入此函数）
+        market = 'SH' if code.startswith('6') else 'SZ'  # @since v6.9.43: 去除'9'前缀误匹配（9xxxxx不进入此函数）
         secode = f'{market}{code}'
         url = f'https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/CompanySurveyAjax?code={secode}'
         req = urllib.request.Request(url, headers={
@@ -1664,9 +1664,9 @@ def _fetch_zjh_industry(code):
         return None, None
 
 def _preload_industry_from_eastmoney(all_stocks):
-    """v6.16.36: 加载行业缓存 + 完整性自检 + 缺失率>5%自动HTTP重建。
-    v6.9.59: 所有日期统一优先读取磁盘缓存（行业缓存由sunday_industry_pull.py单独维护）。
-    v6.16.36: 缓存损坏(缺失率>5%)时自动触发HTTP重建，无需等待周日脚本。"""
+    """@since v6.16.36: 加载行业缓存 + 完整性自检 + 缺失率>5%自动HTTP重建。
+    @since v6.9.59: 所有日期统一优先读取磁盘缓存（行业缓存由sunday_industry_pull.py单独维护）。
+    @since v6.16.36: 缓存损坏(缺失率>5%)时自动触发HTTP重建，无需等待周日脚本。"""
     global _industry_cache, _sub_industry_cache
     indy_rebuild, sub_rebuild = _load_industry_cache()
     
@@ -1682,13 +1682,13 @@ def _preload_industry_from_eastmoney(all_stocks):
         print(f"[INFO] 行业缓存: 仅读取缓存 (一级{len(_industry_cache)}条, 二级{len(_sub_industry_cache)}条)")
     return
 
-# v6.6.29: 知名股票硬编码覆盖（代码段查表无法精确区分时）
+# @since v6.6.29: 知名股票硬编码覆盖（代码段查表无法精确区分时）
 HARDCODED_INDUSTRY = {
     '601225': '煤炭',      # 陕西煤业（在601200-601299段但非非银金融）
     '601628': '非银金融',  # 中国人寿（在601600-601699段但非煤炭）
     '300750': '电力设备',  # 宁德时代（在300700-300799段但非机械设备）
     '002415': '电子',      # 海康威视（在002400-002499段但非传媒）
-    # v6.6.30: 12只行业修正（基于2026-06-16筛选结果校对）
+    # @since v6.6.30: 12只行业修正（基于2026-06-16筛选结果校对）
     '002112': '电力设备',  # 三变科技（输变电设备，在002100-002199段但非医药生物）
     '002174': '传媒',      # 游族网络（游戏公司，在002100-002199段但非医药生物）
     '600203': '电子',      # 福日电子（电子制造，在600200-600299段但非医药生物）
@@ -1701,7 +1701,7 @@ HARDCODED_INDUSTRY = {
     '000700': '汽车',      # 模塑科技（汽车零部件，在000700-000799段但非钢铁）
     '002354': '传媒',      # 天娱数科（数字娱乐/游戏，在002300-002399段但非电力设备）
     '002490': '机械设备',  # 山东墨龙（石油机械设备，在002400-002499段但非传媒）
-    # v6.6.33: 28只行业修正（基于2026-06-17筛选结果全量校对）
+    # @since v6.6.33: 28只行业修正（基于2026-06-17筛选结果全量校对）
     '002725': '汽车',      # 跃岭股份（汽车轮毂，在002700-002799段但非机械设备）
     '002745': '电子',      # 木林森（LED照明，在002700-002799段但非机械设备）
     '600459': '有色金属',  # 贵研铂业（铂族金属，在600400-600499段但非电力设备）
@@ -1743,7 +1743,7 @@ HARDCODED_INDUSTRY = {
     '002192': '有色金属',  # 融捷股份（锂矿，在002100-002199段但非医药生物）
     '300853': '机械设备',  # 申昊科技（巡检机器人，在300800-300899段但非环保）
     '300802': '机械设备',  # 矩子科技（AOI检测设备，在300800-300899段但非环保）
-    # v6.6.35: 17只行业修正（基于2026-06-17筛选结果第二轮校对）
+    # @since v6.6.35: 17只行业修正（基于2026-06-17筛选结果第二轮校对）
     '300131': '电子',      # 英唐智控（电子元器件分销，在300100-300199段但非汽车）
     '002167': '有色金属',  # 东方锆业（锆制品，在002100-002199段但非医药生物）
     '002171': '有色金属',  # 楚江新材（铜加工，在002100-002199段但非医药生物）
@@ -1760,7 +1760,7 @@ HARDCODED_INDUSTRY = {
     '300606': '机械设备',  # 金太阳（研磨抛光材料，在300600-300699段但非国防军工）
     '600505': '公用事业',  # 西昌电力（电力供应，在600500-600599段但非食品饮料）
     '301458': '电子',      # 钧崴电子（精密电阻，在301400-301499段但非通信）
-    # v6.6.36: 7只行业修正（三轮校对）
+    # @since v6.6.36: 7只行业修正（三轮校对）
     '300398': '基础化工',  # 飞凯材料（电子化学品，在300300-300399段但非计算机）
     '002185': '电子',      # 华天科技（半导体封测，在002100-002199段但非医药生物）
     '300902': '机械设备',  # 国安达（消防设备，在300900-300999段但非电力设备）
@@ -1768,7 +1768,7 @@ HARDCODED_INDUSTRY = {
     '300554': '机械设备',  # 三超新材（金刚石线，在300500-300599段但非建筑装饰）
     '300571': '传媒',      # 平治信息（数字阅读，在300500-300599段但非建筑装饰）
     '003026': '电子',      # 中晶科技（半导体硅片，在003000-003999段但非食品饮料）
-    # v6.6.42: 14只行业修正（基于2026-06-18筛选结果校对）
+    # @since v6.6.42: 14只行业修正（基于2026-06-18筛选结果校对）
     '600549': '有色金属',  # 厦门钨业（钨钼冶炼，在600500-600599段但非食品饮料）
     '000722': '公用事业',  # 湖南发展（水电，在000700-000799段但非钢铁）
     '600589': '计算机',    # 大位科技（IT服务，在600500-600599段但非食品饮料）
@@ -1783,7 +1783,7 @@ HARDCODED_INDUSTRY = {
     '600460': '电子',      # 士兰微（半导体，在600400-600499段但非电力设备）
     '605358': '电子',      # 立昂微（半导体硅片，在605300-605399段但非食品饮料）
     '603678': '电子',      # 火炬电子（MLCC电容，在603600-603699段但非轻工制造）
-    # v6.6.42: 第二轮校对（2026-06-18 余量修正）
+    # @since v6.6.42: 第二轮校对（2026-06-18 余量修正）
     '000636': '电子',      # 风华高科（MLCC电容，在000600-000699段但非公用事业）
     '002378': '有色金属',  # 章源钨业（钨矿开采，在002300-002399段但非电力设备）
     '002149': '有色金属',  # 西部材料（稀有金属材料，在002100-002199段但非医药生物）
@@ -1792,10 +1792,10 @@ HARDCODED_INDUSTRY = {
     '300632': '电子',      # 光莆股份（LED照明，在300600-300699段但非国防军工）
     '600522': '通信',      # 中天科技（光纤光缆，在600500-600599段但非食品饮料）
     '000767': '公用事业',  # 晋控电力（火力发电，在000700-000799段但非钢铁）
-    # v6.6.42: 第三轮校对（2026-06-18 最终余量）
+    # @since v6.6.42: 第三轮校对（2026-06-18 最终余量）
     '002129': '电力设备',  # TCL中环（光伏硅片，在002100-002199段但非医药生物）
     '000510': '基础化工',  # 新金路（PVC树脂，在000500-000599段但非公用事业）
-    # v6.6.47: 36只行业修正（基于2026-06-19筛选结果全量校对）
+    # @since v6.6.47: 36只行业修正（基于2026-06-19筛选结果全量校对）
     '300624': '计算机',    # 万兴科技（视频创意软件，在300600-300699段但非国防军工）
     '002106': '电子',      # 莱宝高科（液晶显示触控，在002100-002199段但非医药生物）
     '002177': '计算机',    # 御银股份（ATM/金融设备，在002100-002199段但非医药生物）
@@ -1832,7 +1832,7 @@ HARDCODED_INDUSTRY = {
     '300900': '国防军工',  # 广联航空（航空航天，在300900-300999段但非电力设备）
     '002446': '通信',      # 盛路通信（通信设备，在002400-002499段但非传媒）
     '301596': '机械设备',  # 瑞迪智驱（精密传动，在301500-301599段但非汽车）
-    # v6.6.48: 21只行业修正（基于2026-06-19筛选结果第二轮全量校对）
+    # @since v6.6.48: 21只行业修正（基于2026-06-19筛选结果第二轮全量校对）
     '002990': '计算机',    # 盛视科技（智慧口岸/安防，在002900-002999段但非电子）
     '301617': '基础化工',  # 博苑新材（化学制品，在301600-301699段但非电子）
     '603262': '食品饮料',  # 技源集团（保健品，在603200-603299段但非基础化工）
@@ -1854,7 +1854,7 @@ HARDCODED_INDUSTRY = {
     '300975': '电子',      # 商络电子（电子元器件分销，在300900-300999段但非电力设备）
     '300825': '汽车',      # 阿尔特（汽车设计，在300800-300899段但非环保）
     '002272': '机械设备',  # 川润股份（润滑液压设备，在002200-002299段但非建筑装饰）
-    # v6.6.49: 8只行业修正（基于2026-06-19筛选结果第三轮校对）
+    # @since v6.6.49: 8只行业修正（基于2026-06-19筛选结果第三轮校对）
     '301638': '计算机',    # 南网数字（IT服务/电力信息化，在301600-301699段但非电子）
     '301280': '家用电器',  # 珠城科技（家电连接器，在301200-301299段但非电子）
     '603270': '机械设备',  # 金帝股份（精密轴承/通用设备，在603200-603299段但非基础化工）
@@ -1863,11 +1863,11 @@ HARDCODED_INDUSTRY = {
     '301528': '机械设备',  # 多浦乐（超声检测设备，在301500-301599段但非汽车）
     '002125': '电力设备',  # 湘潭电化（电池材料/电解二氧化锰，在002100-002199段但非医药生物）
     '002194': '通信',      # 武汉凡谷（射频器件/通信设备，在002100-002199段但非医药生物）
-    # v6.6.50: 3只行业修正（基于2026-06-19筛选结果第四轮校对）
+    # @since v6.6.50: 3只行业修正（基于2026-06-19筛选结果第四轮校对）
     '600366': '有色金属',  # 宁波韵升（稀土永磁/钕铁硼，在600300-600399段但非基础化工）
     '300174': '基础化工',  # 元力股份（活性炭，在300100-300199段但非汽车）
     '300145': '机械设备',  # 南方泵业（不锈钢离心泵，在300100-300199段但非汽车）
-    # v6.9.3: 石油石化/美容护理/社会服务一行覆盖
+    # @since v6.9.3: 石油石化/美容护理/社会服务一行覆盖
     '601857': '石油石化',  # 中国石油
     '600028': '石油石化',  # 中国石化
     '600938': '石油石化',  # 中国海油
@@ -1878,13 +1878,13 @@ HARDCODED_INDUSTRY = {
     '300144': '社会服务',  # 宋城演艺
     '600754': '社会服务',  # 锦江酒店
     '600258': '社会服务',  # 首旅酒店
-    # v6.9.7: 5只行业修正（基于2026-06-22筛选结果东方财富F10校对）
+    # @since v6.9.7: 5只行业修正（基于2026-06-22筛选结果东方财富F10校对）
     '301280': '电子',      # 珠城科技（连接器/电子元件，在301200-301299段但非家用电器）
     '301512': '机械设备',  # 智信精密（专用设备，在301500-301599段但非汽车）
     '301566': '电子',      # 达利凯普（电子元件/MLCC，在301500-301599段但非汽车）
     '001237': '机械设备',  # 惠康科技（机械设备，在001200-001299段但非基础化工）
     '600184': '机械设备',  # 光电股份（专用设备/光学仪器，在600100-600199段但非电子）
-    # v6.9.29: 12只行业修正（基于2026-06-22筛选结果全量校对）
+    # @since v6.9.29: 12只行业修正（基于2026-06-22筛选结果全量校对）
     '300576': '电子',      # 容大感光（PCB光刻胶/电子化学品，在300500-300599段但非建筑装饰）
     '300331': '电子',      # 苏大维格（微纳光学制造，在300300-300399段但非计算机）
     '600237': '电子',      # 铜峰电子（薄膜电容器，在600200-600299段但非医药生物）
@@ -1897,7 +1897,7 @@ HARDCODED_INDUSTRY = {
     '300556': '计算机',    # 丝路视觉（CG创意/数字视觉，在300500-300599段但非建筑装饰）
     '002213': '电子',      # 大为股份（半导体存储器/DRAM，在002200-002299段但非建筑装饰）
     '300566': '电子',      # 激智科技（光学膜/显示材料，在300500-300599段但非建筑装饰）
-    # v6.9.32: 17只行业修正（基于2026-06-22筛选结果全量校对）
+    # @since v6.9.32: 17只行业修正（基于2026-06-22筛选结果全量校对）
     '300058': '传媒',      # 蓝色光标（数字营销/公关，在300000-300099段但非电子）
     '603001': '纺织服饰',  # 奥康国际（鞋业制造，在603000-603099段但非电子）
     '002455': '基础化工',  # 百川股份（精细化工/新材料，在002400-002499段但非传媒）
@@ -1916,13 +1916,13 @@ HARDCODED_INDUSTRY = {
     '300438': '电力设备',  # 鹏辉能源（锂离子电池，在300400-300499段但非机械设备）
     '300538': '基础化工',  # 同益股份（化工材料分销，在300500-300599段但非建筑装饰）
     '300938': '社会服务',  # 信测标准（检测认证服务，在300900-300999段但非电力设备）
-    # v6.9.44: 5只行业修正（基于2026-06-25筛选结果校对，行业缓存补全后余量修正）
+    # @since v6.9.44: 5只行业修正（基于2026-06-25筛选结果校对，行业缓存补全后余量修正）
     '000688': '有色金属',  # 国城矿业（铅锌铜矿开采，在000600-000699段但非公用事业）
     '600598': '农林牧渔',  # 北大荒（农业种植，在600500-600599段但非食品饮料）
     '000672': '建筑材料',  # 上峰材料（水泥建材，在000600-000699段但非公用事业）
     '002549': '环保',      # 凯美特气（工业废气回收，在002500-002599段但非基础化工）
     '002015': '公用事业',  # 协鑫能科（清洁能源发电，在002000-002099段但非电子）
-    # v6.12.3: 23只行业修正（基于2026-06-29筛选结果，行业缓存为空时代码段映射错误修正）
+    # @since v6.12.3: 23只行业修正（基于2026-06-29筛选结果，行业缓存为空时代码段映射错误修正）
     '002126': '汽车',      # 银轮股份（热管理/汽车零部件，在002100-002199段但非医药生物）
     '002515': '食品饮料',  # 金字火腿（火腿肉制品，在002500-002599段但非基础化工）
     '601208': '基础化工',  # 东材科技（高分子功能材料，在601200-601299段但非非银金融）
@@ -1946,21 +1946,21 @@ HARDCODED_INDUSTRY = {
     '600596': '基础化工',  # 新安股份（有机硅/化工，在600500-600599段但非食品饮料）
     '603688': '基础化工',  # 石英股份（石英材料，在603600-603699段但非轻工制造）
     '605020': '基础化工',  # 永和股份（氟化工，在605000-605099段但非机械设备）
-    # v6.12.5: 2只行业修正（基于2026-06-29筛选结果校对）
+    # @since v6.12.5: 2只行业修正（基于2026-06-29筛选结果校对）
     '603045': '有色金属',  # 福达合金（电接触材料/合金材料，在603000-603099段但非电子）
     '600226': '农林牧渔',  # 亨通股份（农药兽药/生物制药，在600200-600299段但非医药生物）
-    # v6.12.15: 3只行业修正（基于2026-06-29筛选结果校对）
+    # @since v6.12.15: 3只行业修正（基于2026-06-29筛选结果校对）
     '000921': '家用电器',  # 海信家电（家电制造，在000900-000999段但非非银金融）
     '600839': '家用电器',  # 四川长虹（电视/家电制造，在600800-600899段但非煤炭）
     '603119': '电力设备',  # 浙江荣泰（新能源车热失控防护/云母制品，在603100-603199段但非电子）
-    # v6.13.11: 6只行业修正（基于2026-07-07筛选结果校对）
+    # @since v6.13.11: 6只行业修正（基于2026-07-07筛选结果校对）
     '002422': '医药生物',  # 科伦药业（大输液/抗生素，在002400-002499段但非传媒）
     '002294': '医药生物',  # 信立泰（心血管药物，在002200-002299段但非建筑装饰）
     '002158': '机械设备',  # 汉钟精机（压缩机/真空泵，在002100-002199段但非医药生物）
     '601918': '煤炭',      # 新集能源（煤炭开采，在601900-601999段但非传媒）
     '000338': '汽车',      # 潍柴动力（重型发动机/整车，在000300-000399段但非医药生物）
     '002138': '电子',      # 顺络电子（电感/电子元器件，在002100-002199段但非医药生物）
-    # v6.13.27: 27只行业修正（基于2026-07-10筛选结果全量校对）
+    # @since v6.13.27: 27只行业修正（基于2026-07-10筛选结果全量校对）
     '000779': '建筑装饰',  # 甘咨询（工程咨询服务，在000700-000799段但非钢铁）
     '603118': '通信',      # 共进股份（通信设备/ODM，在603100-603199段但非机械设备）
     '002025': '国防军工',  # 航天电器（军工连接器/继电器，在002000-002099段但非电子）
@@ -1988,19 +1988,19 @@ HARDCODED_INDUSTRY = {
     '603683': '基础化工',  # 晶华新材（胶粘材料/功能性薄膜，在603600-603699段但非轻工制造）
     '000725': '电子',      # 京东方A（半导体显示面板，在000700-000799段但非钢铁）
     '600999': '非银金融',  # 招商证券（证券公司，在600900-600999段但非银行）
-    # v6.16.2: 行业修正
+    # @since v6.16.2: 行业修正
     '002739': '传媒',      # 万达电影/儒意电影（影视传媒，在002700-002799段但非机械设备）
-    # v6.16.7: 行业修正
+    # @since v6.16.7: 行业修正
     '600021': '公用事业',  # 上海电力（火力发电，在600000-600099段但非银行）
-    # v6.16.13: 行业修正
+    # @since v6.16.13: 行业修正
     '003035': '公用事业',  # 南网能源（综合能源服务/电力，在003000-003999段但非食品饮料）
 }
 
 # ============================================================
-# 步骤10C：历史K线批量拉取（v6.9.0: 支撑均线/形态策略）
+# 步骤10C：历史K线批量拉取（@since v6.9.0: 支撑均线/形态策略）
 # ============================================================
 def step10C_fetch_klines(candidates):
-    """v6.9.3: 扩展KDJ+布林带+涨停标记，支撑完整技术指标体系
+    """@since v6.9.3: 扩展KDJ+布林带+涨停标记，支撑完整技术指标体系
     返回: {code: {ma5,ma10,ma20,dif,dea,macd_hist,rsi14,k,d,j,boll_upper,boll_mid,boll_lower,
                  high20,low20,days_listed,limit_up_days,closes,highs,lows,volumes}}
     """
@@ -2110,7 +2110,7 @@ def step10C_fetch_klines(candidates):
                     if first_date:
                         try:
                             fd = datetime.strptime(str(first_date)[:8], '%Y%m%d')
-                            # v6.9.43: 使用data_date替代datetime.now()保持一致性
+                            # @since v6.9.43: 使用data_date替代datetime.now()保持一致性
                             ref_date = datetime.strptime(data_date, '%Y-%m-%d') if data_date else datetime.now()
                             days_listed = (ref_date - fd).days
                         except (ValueError, TypeError): pass
@@ -2141,7 +2141,7 @@ def step10C_fetch_klines(candidates):
 # pytdx在沙箱网络中无法连接时，使用HTTP备选方案
 # ============================================================
 def step10C_fetch_klines_http(candidates):
-    """v6.12.15-fix: HTTP备选K线拉取（腾讯日K线API，东方财富SSL不可达时使用）
+    """@since v6.12.15-fix: HTTP备选K线拉取（腾讯日K线API，东方财富SSL不可达时使用）
     返回格式与 step10C_fetch_klines 完全一致
     腾讯API格式: qfqday每项为 [date, open, close, high, low, volume]
     """
@@ -2168,7 +2168,7 @@ def step10C_fetch_klines_http(candidates):
 
 
 def _fetch_single_kline_tencent(c):
-    """v6.12.15-fix: 单只股票腾讯K线拉取+指标计算"""
+    """@since v6.12.15-fix: 单只股票腾讯K线拉取+指标计算"""
     code = c.get('code', '')
     if not code:
         return {}
@@ -2185,11 +2185,11 @@ def _fetch_single_kline_tencent(c):
         qfqday = data.get('data', {}).get(stock_key, {}).get('qfqday', [])
         # 过滤掉非列表元素（如分红信息字典）
         bars = [b for b in qfqday if isinstance(b, list) and len(b) >= 6]
-        # v6.13.42: qfq(前复权)对新股可能返回空数据，降级使用不复权数据
+        # @since v6.13.42: qfq(前复权)对新股可能返回空数据，降级使用不复权数据
         if not bars or len(bars) < 5:
             day_data = data.get('data', {}).get(stock_key, {}).get('day', [])
             bars = [b for b in day_data if isinstance(b, list) and len(b) >= 6]
-        # v6.16.9: 门槛从20降至5，新股(如惠科股份18天)可获取K线+计算days_listed触发硬排除
+        # @since v6.16.9: 门槛从20降至5，新股(如惠科股份18天)可获取K线+计算days_listed触发硬排除
         if not bars or len(bars) < 5:
             return {}
         # 腾讯格式: [date, open, close, high, low, volume]
@@ -2241,7 +2241,7 @@ def _fetch_single_kline_tencent(c):
             'high20': high20, 'low20': low20,
             'high60': max(highs[-60:]) if len(highs) >= 60 else (max(highs) if highs else 0),
             'low60': min(lows[-60:]) if len(lows) >= 60 else (min(lows) if lows else 0),
-            'days_listed': len(bars) if bars else 999, 'limit_up_days': 0,  # v6.16.9: 计算真实上市天数
+            'days_listed': len(bars) if bars else 999, 'limit_up_days': 0,  # @since v6.16.9: 计算真实上市天数
             'closes': closes, 'highs': highs, 'lows': lows, 'volumes': volumes
         }
     except (urllib.error.URLError, json.JSONDecodeError, OSError,
@@ -2249,7 +2249,7 @@ def _fetch_single_kline_tencent(c):
         return {}
 
 def _fetch_single_kline_eastmoney(c):
-    """v6.13.42: 东方财富HTTP单股K线降级（腾讯HTTP失败时的单股补救）
+    """@since v6.13.42: 东方财富HTTP单股K线降级（腾讯HTTP失败时的单股补救）
     使用东方财富日K线前复权API，无需API Key，返回格式与腾讯HTTP一致
     """
     code = c.get('code', '')
@@ -2267,7 +2267,7 @@ def _fetch_single_kline_eastmoney(c):
         with _http_retry(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
         klines = data.get('data', {}).get('klines', [])
-        if not klines or len(klines) < 5:  # v6.16.9: 门槛从20降至5
+        if not klines or len(klines) < 5:  # @since v6.16.9: 门槛从20降至5
             return {}
         # 东方财富格式: "date,open,close,high,low,volume,amount,amplitude,change_pct,change,turnover"
         bars = []
@@ -2276,7 +2276,7 @@ def _fetch_single_kline_eastmoney(c):
             if len(parts) >= 6:
                 bars.append([parts[0], float(parts[1]), float(parts[2]),
                             float(parts[3]), float(parts[4]), float(parts[5])])
-        if len(bars) < 5:  # v6.16.9: 门槛从20降至5
+        if len(bars) < 5:  # @since v6.16.9: 门槛从20降至5
             return {}
         closes = [b[2] for b in bars]
         highs = [b[3] for b in bars]
@@ -2334,7 +2334,7 @@ def _fetch_single_kline_eastmoney(c):
         return {}
 
 def _fetch_single_kline_axdata(c):
-    """v6.13.42: axdata单股K线降级（腾讯HTTP+东方财富HTTP均失败时）
+    """@since v6.13.42: axdata单股K线降级（腾讯HTTP+东方财富HTTP均失败时）
     使用腾讯财经K线接口，通过axdata框架统一调用，对qfq新股处理更稳定
     """
     if not _axdata_available:
@@ -2351,7 +2351,7 @@ def _fetch_single_kline_axdata(c):
             adjust="qfq",
             limit=60
         )
-        if kline is None or len(kline) < 5:  # v6.16.9: 门槛从20降至5
+        if kline is None or len(kline) < 5:  # @since v6.16.9: 门槛从20降至5
             return {}
         closes = kline['close'].tolist()
         highs = kline['high'].tolist()
@@ -2414,13 +2414,13 @@ def _fetch_single_kline_axdata(c):
 
 # ============================================================
 # 步骤10C-三级备选：iTick HTTP K线拉取（v6.12.15新增）
-# v6.13.11: 腾讯HTTP不可达时，iTick作为二级降级
+# @since v6.13.11: 腾讯HTTP不可达时，iTick作为二级降级
 # ============================================================
-_ITICK_API_KEY = os.environ.get("ITICK_API_KEY", "")  # v6.13.5: 移除硬编码默认值
+_ITICK_API_KEY = os.environ.get("ITICK_API_KEY", "")  # @since v6.13.5: 移除硬编码默认值
 _ITICK_BASE_URL = "https://api-free.itick.org"  # 生产环境；免费版可用 https://api-free.itick.org
 
 def _fetch_single_kline_itick(code, api_key, base_url):
-    """v6.16.28: 单只股票iTick K线拉取+指标计算（供并发调用）"""
+    """@since v6.16.28: 单只股票iTick K线拉取+指标计算（供并发调用）"""
     try:
         region = 'SH' if code.startswith('6') else 'SZ'
         url = (f'{base_url}/stock/kline?'
@@ -2489,7 +2489,7 @@ def _fetch_single_kline_itick(code, api_key, base_url):
 
 
 def step10C_fetch_klines_itick(candidates):
-    """v6.16.29: iTick HTTP备选K线拉取（三级降级，批次内并发+超时熔断）
+    """@since v6.16.29: iTick HTTP备选K线拉取（三级降级，批次内并发+超时熔断）
     返回格式与 step10C_fetch_klines 完全一致
     免费套餐限制: 默认10次/分钟，通过ITICK_RATE_LIMIT环境变量覆盖
     v6.16.29: 默认rate_limit 5→10 + 总等待超时熔断(300s)"""
@@ -2498,15 +2498,15 @@ def step10C_fetch_klines_itick(candidates):
         log_alert("WARNING", "K线iTick", "未配置ITICK_API_KEY环境变量，跳过")
         return kline_data
     try:
-        rate_limit = int(os.environ.get("ITICK_RATE_LIMIT", "10"))  # v6.16.29: 默认5→10
+        rate_limit = int(os.environ.get("ITICK_RATE_LIMIT", "10"))  # @since v6.16.29: 默认5→10
         batch_size = min(max(rate_limit // 2, 1), 10)  # 每批用一半配额，留余量防429
         wait_seconds = 60 / max(rate_limit / batch_size, 1)
         total = len(candidates)
         codes = [c.get('code', '') for c in candidates if c.get('code')]
         total_start = time.time()
-        _ITICK_MAX_WAIT = 120  # v6.16.30: 300→120s(总等待上限2分钟)，超时熔断
+        _ITICK_MAX_WAIT = 120  # @since v6.16.30: 300→120s(总等待上限2分钟)，超时熔断
         for batch_start in range(0, len(codes), batch_size):
-            # v6.16.29: 总等待超时熔断
+            # @since v6.16.29: 总等待超时熔断
             if time.time() - total_start > _ITICK_MAX_WAIT:
                 log_alert("WARNING", "K线iTick", f"总等待超{_ITICK_MAX_WAIT}s,已获取{len(kline_data)}只,提前退出")
                 break
@@ -2540,7 +2540,7 @@ def step10C_fetch_klines_itick(candidates):
 # 主力贡献系数：量比>1.5时0.20，量比>0.8时0.12，否则0.06
 # ============================================================
 def step10C_flow_fetch_main_inflow(candidates):
-    """v6.13.52: 所有外部资金流API不可达，使用成交额×涨跌幅代理估算主力净流入。
+    """@since v6.13.52: 所有外部资金流API不可达，使用成交额×涨跌幅代理估算主力净流入。
     代理逻辑：量比反映主力参与度，高量比→高主力贡献系数
     返回: {code: float} 字典，值为估算主力净流入(元)"""
     flow_data = {}
@@ -2562,16 +2562,16 @@ def step10C_flow_fetch_main_inflow(candidates):
     return flow_data
 
 # ============================================================
-# 步骤10D：东方财富批量质押/商誉数据拉取（v6.16.35: 新API替代已废弃dcfm）
-# v6.9.15: 旧dcfm.eastmoney.com API全部废弃。
-# v6.16.35: 迁移至datacenter-web新API:
+# 步骤10D：东方财富批量质押/商誉数据拉取（@since v6.16.35: 新API替代已废弃dcfm）
+# @since v6.9.15: 旧dcfm.eastmoney.com API全部废弃。
+# @since v6.16.35: 迁移至datacenter-web新API:
 #   - 质押比例: RPT_CSDC_LIST (字段PLEDGE_RATIO)
 #   - 商誉占比: RPT_GOODWILL_STOCKDETAILS (字段SUMSHEQUITY_RATIO)
 # 解禁数据已由step10F独立处理(RPT_LIFT_STAGE)，不再由step10D负责。
 # ROE/净利润由step10E（F10单股API）处理。
 # ============================================================
 def step10D_fetch_financials():
-    """v6.16.35: 批量拉取全市场质押比例和商誉占比数据。
+    """@since v6.16.35: 批量拉取全市场质押比例和商誉占比数据。
     返回: pledge_data{code: ratio_pct}, goodwill_data{code: ratio_decimal}
     """
     pledge_data = {}; goodwill_data = {}
@@ -2675,11 +2675,11 @@ def step10D_fetch_financials():
 
 # ============================================================
 # 步骤10E：F10财务数据拉取（ROE/净利润 — 单股逐只API）
-# v6.9.15: 替代已废弃的datacenter-web批量API，使用F10单股API逐只拉取。
+# @since v6.9.15: 替代已废弃的datacenter-web批量API，使用F10单股API逐只拉取。
 # 仅在step11硬排除后调用，对通过候选标的拉取最新财报ROE和净利润。
 # ============================================================
 def _fetch_single_f10(code):
-    """v6.16.28: 单只股票F10财务数据拉取（供并发调用）"""
+    """@since v6.16.28: 单只股票F10财务数据拉取（供并发调用）"""
     headers = {'User-Agent': 'Mozilla/5.0'}
     prefix = 'SH' if code.startswith('6') else 'SZ'
     secode = f'{prefix}{code}'
@@ -2727,7 +2727,7 @@ def _fetch_single_f10(code):
 
 
 def step10E_fetch_fundamentals(candidates):
-    """v6.16.28: 并发拉取F10财务数据（ThreadPoolExecutor max_workers=20）"""
+    """@since v6.16.28: 并发拉取F10财务数据（ThreadPoolExecutor max_workers=20）"""
     fundamental_data = {}
     fetched = 0; errors = 0
     codes = [c.get('code', '') for c in candidates if c.get('code')]
@@ -2756,10 +2756,10 @@ def step10E_fetch_fundamentals(candidates):
     return fundamental_data
 
 # ============================================================
-# 步骤10F：风险事件拉取（v6.9.27：限售解禁/可转债/业绩预告窗口）
+# 步骤10F：风险事件拉取（@since v6.9.27：限售解禁/可转债/业绩预告窗口）
 # ============================================================
 def step10F_fetch_risk_events():
-    """v6.9.27: 拉取未来15日内风险事件数据。
+    """@since v6.9.27: 拉取未来15日内风险事件数据。
     返回: {unlock_events: {code: {date,ratio}}, cb_events: {code: reason}, earnings_window: bool}"""
     unlock_events = {}
     cb_events = {}
@@ -2767,7 +2767,7 @@ def step10F_fetch_risk_events():
     
     end_date = (datetime.strptime(prediction_date, '%Y-%m-%d') + timedelta(days=15)).strftime('%Y-%m-%d')
     
-    # 1. 限售解禁数据 — 东财datacenter RPT_LIFT_STAGE (v6.16.21: 原qqjjsj.com已404)
+    # 1. 限售解禁数据 — 东财datacenter RPT_LIFT_STAGE (@since v6.16.21: 原qqjjsj.com已404)
     try:
         # 拉取prediction_date之后的解禁数据，升序排列，前500条即为最近解禁
         filter_str = f"(FREE_DATE>='{prediction_date}')"
@@ -2846,10 +2846,10 @@ def step10F_fetch_risk_events():
     return unlock_events, cb_events, earnings_window
 
 # ============================================================
-# 步骤10G：拥挤度数据拉取（v6.9.28：机构持仓+融资过热代理）
+# 步骤10G：拥挤度数据拉取（@since v6.9.28：机构持仓+融资过热代理）
 # ============================================================
 def _fetch_single_crowding(code):
-    """v6.16.28: 单只股票机构持仓数据拉取（供并发调用）"""
+    """@since v6.16.28: 单只股票机构持仓数据拉取（供并发调用）"""
     headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://emweb.securities.eastmoney.com/'}
     prefix = 'SH' if code.startswith('6') else 'SZ'
     secode = f'{prefix}{code}'
@@ -2881,7 +2881,7 @@ def _fetch_single_crowding(code):
 
 
 def step10G_fetch_crowding_data(candidates):
-    """v6.16.28: 并发拉取机构持仓数据（ThreadPoolExecutor max_workers=20）
+    """@since v6.16.28: 并发拉取机构持仓数据（ThreadPoolExecutor max_workers=20）
     返回: {inst_holding: {code: {total_fund_ratio, reduce_count}}, margin_overheat: {code: bool}}"""
     inst_holding = {}
     margin_overheat = {}
@@ -2925,10 +2925,10 @@ def step10G_fetch_crowding_data(candidates):
     return inst_holding, margin_overheat
 
 # ============================================================
-# 步骤10H：二级行业赋值（v6.9.35：从CompanySurvey缓存读取sshy，替代CoreConception主营业务）
+# 步骤10H：二级行业赋值（@since v6.9.35：从CompanySurvey缓存读取sshy，替代CoreConception主营业务）
 # ============================================================
 def step10H_fetch_sub_industry(candidates):
-    """v6.9.35: 从二级行业缓存读取sshy，无需额外API调用。
+    """@since v6.9.35: 从二级行业缓存读取sshy，无需额外API调用。
     返回: {code: sub_industry}"""
     result = {}
     cached = 0; missing = 0
@@ -2946,13 +2946,13 @@ def step10H_fetch_sub_industry(candidates):
 # ============================================================
 # 步骤11：硬排除
 # ============================================================
-def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, fundamental_data=None):  # v6.16.34: 移除废弃的pledge/goodwill/unlock参数
-    """v6.9.43: 13项硬排除（创业板/PE<0/质押/商誉已迁移至信号过滤，解禁API已废弃）"""
+def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, fundamental_data=None):  # @since v6.16.34: 移除废弃的pledge/goodwill/unlock参数
+    """@since v6.9.43: 13项硬排除（创业板/PE<0/质押/商誉已迁移至信号过滤，解禁API已废弃）"""
     if kline_data is None: kline_data = {}
     if fundamental_data is None: fundamental_data = {}
     er = Counter()
-    recent_7d_dates = {}  # v6.6.37: 按日期去重，统计7日内推荐天数
-    recent_7d_strategies = {}  # v6.6.44: 记录7日内每日的策略 {code: {date: strategy, ...}}
+    recent_7d_dates = {}  # @since v6.6.37: 按日期去重，统计7日内推荐天数
+    recent_7d_strategies = {}  # @since v6.6.44: 记录7日内每日的策略 {code: {date: strategy, ...}}
     c7 = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=7)).strftime('%Y-%m-%d')
     for f in sorted(os.listdir('/workspace')):
         if f.startswith('推荐历史_') and f.endswith('.json'):
@@ -2970,7 +2970,7 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, fundame
     for c in candidates:
         code = c.get('code', ''); close = c.get('close', 0); chg = c.get('change_pct', 0)
         reason = None
-        # v6.6.37: 7日内推荐天数（按日期去重），不排除，仅标注
+        # @since v6.6.37: 7日内推荐天数（按日期去重），不排除，仅标注
         if code not in all_holdings_codes:
             # 先复制历史数据（计数在步骤13策略匹配成功后+1）
             c['_recent_7d'] = recent_7d_count.get(code, 0)
@@ -2983,13 +2983,13 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, fundame
         elif close < 5: reason = f"股价<5元"
         elif close > 100: reason = f"股价>100元"
         elif (c.get('name') or '').startswith('ST') or (c.get('name') or '').startswith('*ST'): reason = "ST/*ST"
-        # v6.16.22: 改用_is_limit_up精确涨停判定替代裸chg>7%，为策略U涨停追击保留7-9.5%区间
+        # @since v6.16.22: 改用_is_limit_up精确涨停判定替代裸chg>7%，为策略U涨停追击保留7-9.5%区间
         elif _is_limit_up(code, chg): reason = f"涨停({chg:.1f}%)"
         elif close <= 0: reason = "停牌"
-        # v6.9.22: PE<0已迁移至信号过滤，与F10净利润亏损合并判断
+        # @since v6.9.22: PE<0已迁移至信号过滤，与F10净利润亏损合并判断
         elif c.get('total_cap') and c.get('total_cap') > 0 and c.get('total_cap') < 1_000_000_000: reason = "市值<10亿"
         elif c.get('amount') is not None and c.get('amount', 0) < 10_000_000: reason = "成交额<1000万"
-        # v6.9.0: 上市天数
+        # @since v6.9.0: 上市天数
         kd = kline_data.get(code, {})
         if not reason and kd.get('days_listed') is not None and kd['days_listed'] < 60:
             reason = "上市不足60天"
@@ -3004,7 +3004,7 @@ def step11_hard_exclude(candidates, all_holdings_codes, kline_data=None, fundame
 # 步骤12：信号过滤
 # ============================================================
 def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, risk_data=None, crowding_data=None, pledge_data=None, goodwill_data=None):
-    """v6.16.35: 29项信号过滤（新增#28质押过高/#29商誉占比，整合step10D新API数据）"""
+    """@since v6.16.35: 29项信号过滤（新增#28质押过高/#29商誉占比，整合step10D新API数据）"""
     if kline_data is None: kline_data = {}
     if fundamental_data is None: fundamental_data = {}
     if risk_data is None: risk_data = ({}, {}, False)
@@ -3018,8 +3018,8 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         code = c.get('code', '')
         chg = c.get('change_pct', 0); close = c.get('close', 0); op = c.get('open', 0)
         high = c.get('high', 0); low = c.get('low', 0); amp = c.get('amplitude', 0)
-        vr = c.get('volume_ratio', 0)  # v6.13.20: 添加默认值防止NoneType比较
-        to = c.get('turnover', 0)  # v6.13.20: 修复to变量未定义
+        vr = c.get('volume_ratio', 0)  # @since v6.13.20: 添加默认值防止NoneType比较
+        to = c.get('turnover', 0)  # @since v6.13.20: 修复to变量未定义
         kd = kline_data.get(code, {})
         reasons = []
         # 1. 假动量：高开>3%后回落超2%
@@ -3040,7 +3040,7 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         if chg < -3 and vr is not None and vr < 0.15 and amp <= 3: reasons.append("缩量下跌")
         # 7. 高换手低涨幅：换手>20%+涨跌幅<2%
         if to > 20 and abs(chg) < 2: reasons.append("高换手低涨幅")
-        # 8. 首阴标记（不排除，仅加分）— v6.9.38: 拆分为独立检测，不受其他信号影响
+        # 8. 首阴标记（不排除，仅加分）— @since v6.9.38: 拆分为独立检测，不受其他信号影响
         if -3 < chg < 0 and to > 3: c['_first_yin'] = True
         # 9. 均线空头排列（MA5<MA10<MA20）
         ma5 = kd.get('ma5', 0); ma10 = kd.get('ma10', 0); ma20 = kd.get('ma20', 0)
@@ -3062,28 +3062,28 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         # 11. RSI超买（RSI(14)>80）
         rsi14 = kd.get('rsi14', 50)
         if rsi14 > 80: reasons.append(f"RSI超买({rsi14:.0f})")
-        # 12. 缩量反弹（v6.9.3: 连续3日量能递减+当日反弹>2%）
+        # 12. 缩量反弹（@since v6.9.3: 连续3日量能递减+当日反弹>2%）
         if chg > 2:
             vols = kd.get('volumes', [])
             if len(vols) >= 4 and vr is not None and vr < 0.6:
-                if vols[-4] > vols[-3] > vols[-2] and vols[-1] > 0 and vols[-1] < vols[-2]:  # v6.9.43: 当日量<前日量(真正缩量)
+                if vols[-4] > vols[-3] > vols[-2] and vols[-1] > 0 and vols[-1] < vols[-2]:  # @since v6.9.43: 当日量<前日量(真正缩量)
                     reasons.append("缩量反弹")
         # 13. KDJ高位死叉（J=3K-2D, J>100且J<K⇔K<D即死叉, v6.9.43注释修正）
         j_val = kd.get('j', 50); k_val = kd.get('k', 50)
         if j_val > 100 and j_val < k_val:
             reasons.append(f"KDJ死叉(J={j_val:.0f})")
-        # 14. 涨停次日高开低走（v6.9.3: 前日涨停+当日高开低走收阴）
+        # 14. 涨停次日高开低走（@since v6.9.3: 前日涨停+当日高开低走收阴）
         closes_h = kd.get('closes', []); highs_h = kd.get('highs', [])
         if len(closes_h) >= 3 and closes_h[-2] > 0 and highs_h[-2] > 0:
             yday_chg = (closes_h[-2] - closes_h[-3]) / closes_h[-3] if closes_h[-3] > 0 else 0
             yday_limit = yday_chg >= 0.095 and closes_h[-2] >= highs_h[-2] * 0.98
             if yday_limit and op > 0 and close < op and chg < 0:
                 reasons.append("涨停次日高开低走")
-        # 15. 布林带收窄突破失败（v6.9.3: 带宽<5%+当日放量但收阴）
+        # 15. 布林带收窄突破失败（@since v6.9.3: 带宽<5%+当日放量但收阴）
         boll_width = kd.get('boll_width', 999)
         if boll_width < 0.05 and vr is not None and vr >= 1.5 and close < op:
             reasons.append(f"布林突破失败(带宽{boll_width:.1%})")
-        # 16. 20日涨幅>45%风控（v6.9.5: 防止追高爆炒股）
+        # 16. 20日涨幅>45%风控（@since v6.9.5: 防止追高爆炒股）
         closes_h = kd.get('closes', [])
         if len(closes_h) >= 20 and closes_h[-20] > 0:
             rally_20d_v2 = (close - closes_h[-20]) / closes_h[-20]
@@ -3094,7 +3094,7 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         # 18. 放量滞跌（v6.9.22: 量比>1.5+微跌+收阴+振幅>2%→放量滞跌，下跌中继，振幅辅助减少误杀）
         if vr is not None and vr > 1.5 and -1 < chg < 0 and close < op and amp is not None and amp > 2: reasons.append("放量滞跌")
         # 19. 高位长上影线（v6.9.11: 涨>5%+上影线>实体2倍→高位抛压）
-        # v6.16.22: 策略U豁免——有涨停基因+5-9%涨幅的标的，上影线可能是冲板过程中的正常波动
+        # @since v6.16.22: 策略U豁免——有涨停基因+5-9%涨幅的标的，上影线可能是冲板过程中的正常波动
         lu_days_sig = (kd.get('limit_up_days', 0) or 0) if isinstance(kd, dict) else 0
         is_u_candidate = (5 < chg <= 9.0 and lu_days_sig >= 1)
         if not is_u_candidate and chg > 5 and high > max(close, op) and low > 0:
@@ -3103,7 +3103,7 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
                 reasons.append("长上影线")
         # 20. 连续缩量（v6.9.11: 量比<0.4+涨跌<1%→无人气横盘）
         if vr is not None and vr < 0.4 and abs(chg) < 1: reasons.append("连续缩量")
-        # 21. 净利润亏损（v6.9.22: F10数据优先，PE<0兜底；PE<0从硬排除迁移至此处）
+        # 21. 净利润亏损（@since v6.9.22: F10数据优先，PE<0兜底；PE<0从硬排除迁移至此处）
         fd = fundamental_data.get(code, {})
         roe = fd.get('roe')
         np_val = fd.get('net_profit')
@@ -3146,7 +3146,7 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         # 27. 融资买入过热代理（v6.9.28: 换手率>20%+量比>2.5→排除，代理融资买入占比>25%）
         if margin_overheat.get(code):
             reasons.append(f"融资过热(换手{to:.0f}% 量比{vr:.1f})")
-        # 28. 质押比例过高（v6.16.35: 优先使用step10D新API数据，F10兜底）
+        # 28. 质押比例过高（@since v6.16.35: 优先使用step10D新API数据，F10兜底）
         fd = fundamental_data.get(code, {})
         pledge_ratio = pledge_data.get(code)  # step10D批量API: 百分比值
         if pledge_ratio is None:
@@ -3157,7 +3157,7 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
                     reasons.append(f"质押过高({float(pledge_ratio):.0f}%)")
             except (ValueError, TypeError):
                 pass
-        # 29. 商誉/净资产>30%（v6.16.35: 优先使用step10D新API数据，F10兜底）
+        # 29. 商誉/净资产>30%（@since v6.16.35: 优先使用step10D新API数据，F10兜底）
         goodwill_ratio = goodwill_data.get(code)  # step10D批量API: 小数
         if goodwill_ratio is None:
             goodwill_ratio = fd.get('goodwill_ratio')  # F10兜底
@@ -3180,7 +3180,7 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
 # ============================================================
 def step13_strategy_match(candidates, kline_data=None):
     if kline_data is None: kline_data = {}
-    # v6.9.39: 预计算最近5日推荐次数，避免策略F循环内重复IO
+    # @since v6.9.39: 预计算最近5日推荐次数，避免策略F循环内重复IO
     recent_5d = {}
     c5 = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=5)).strftime('%Y-%m-%d')
     for fname in sorted(os.listdir('/workspace')):
@@ -3192,20 +3192,20 @@ def step13_strategy_match(candidates, kline_data=None):
     matched = []
     for c in candidates:
         chg = c.get('change_pct', 0); amp = c.get('amplitude', 0)
-        vr = c.get('volume_ratio', 0)  # v6.13.20: 添加默认值防止NoneType比较
-        to = c.get('turnover', 0)  # v6.13.20: 修复to变量未定义
+        vr = c.get('volume_ratio', 0)  # @since v6.13.20: 添加默认值防止NoneType比较
+        to = c.get('turnover', 0)  # @since v6.13.20: 修复to变量未定义
         close = c.get('close', 0); op = c.get('open', 0)
         high = c.get('high', 0); low = c.get('low', 0)
         s = None; reason = ""; score = 0
-        # ── A 动量延续 (v6.8.8: 极端上涨市关闭+读取strategy_a_weak_market参数) ──
+        # ── A 动量延续 (@since v6.8.8: 极端上涨市关闭+读取strategy_a_weak_market参数) ──
         a_weak_closed = params.get('strategy_a_weak_market', 'closed') == 'closed'
         a_extreme = market_condition == "强市(极端上涨/降仓防追高)"
-        # v6.16.24: 用"弱市" in market_condition替代精确比较，覆盖弱市子类型
-        # v6.16.24: A上限从7%降至5%，避免与U(涨停追击)在5-7%区间重叠——有涨停基因的标的应由U捕捉
+        # @since v6.16.24: 用"弱市" in market_condition替代精确比较，覆盖弱市子类型
+        # @since v6.16.24: A上限从7%降至5%，避免与U(涨停追击)在5-7%区间重叠——有涨停基因的标的应由U捕捉
         if (not a_weak_closed or "弱市" not in market_condition) and not a_extreme and 3 <= chg <= 5:
             if vr is not None and 1.5 <= vr <= 5.0:
                 s = "A"; reason = f"动量延续:涨{chg:.1f}%+量比{vr:.1f}"; score = 10
-                # v6.6.38: 假突破过滤 — 上影线:下影线>2:1 → 降置信减3分
+                # @since v6.6.38: 假突破过滤 — 上影线:下影线>2:1 → 降置信减3分
                 if high > 0 and low > 0 and high > low:
                     ent = max(close, op); body_low = min(close, op)
                     upper_shadow = high - ent if ent > 0 else 0
@@ -3214,14 +3214,14 @@ def step13_strategy_match(candidates, kline_data=None):
                         c['_fake_breakout'] = True
                         score -= 3
                         reason += f" ⚠假突破(上影{round(upper_shadow/lower_shadow,1)}x)"
-        # ── B 超跌反弹（v6.9.20: 放宽amp>3+close>low*1.01, chg上限-2.5%, low=0保护）──
+        # ── B 超跌反弹（@since v6.9.20: 放宽amp>3+close>low*1.01, chg上限-2.5%, low=0保护）──
         if not s and -9.5 <= chg <= -2.5:
             if amp > 3 and low > 0 and close > low * 1.01:
                 s = "B"; reason = f"超跌反弹:跌{chg:.1f}%+振幅{amp:.1f}%+反弹确认"; score = 7
-            # v6.16.24: 修复elif→if，宽幅反弹独立判断，不再被amp>3分支截断
+            # @since v6.16.24: 修复elif→if，宽幅反弹独立判断，不再被amp>3分支截断
             if amp > 8 and low > 0 and close > low * 1.02:
                 s = "B"; reason = f"超跌反弹(宽幅):跌{chg:.1f}%+振幅{amp:.1f}%"; score = 6
-        # ── C 事件驱动 (v6.9.17: 弱市关闭，追涨风险大) ──
+        # ── C 事件驱动 (@since v6.9.17: 弱市关闭，追涨风险大) ──
         if not s and 1 <= chg < 2 and "弱市" not in market_condition:
             is_earnings = beijing_now.month in (1, 3, 4, 8, 10)
             if is_earnings:
@@ -3230,14 +3230,14 @@ def step13_strategy_match(candidates, kline_data=None):
                 s = "C"; reason = f"事件驱动:涨{chg:.1f}%+量比{vr:.1f}"; score = 7
             elif vr is None and to is not None and to >= 2 and close > op:
                 s = "C"; reason = f"事件驱动(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 6
-        # ── D 回调企稳 (v6.9.21: 放宽amp≥1.5%+弱市不折扣，低吸策略) ──
+        # ── D 回调企稳 (@since v6.9.21: 放宽amp≥1.5%+弱市不折扣，低吸策略) ──
         if not s and 3 <= chg <= (7 if "弱市" in market_condition else 6):
             if 1.5 <= amp <= 10 and close > op:
                 s = "D"; reason = f"回调企稳:涨{chg:.1f}%+阳线+振幅{amp:.1f}%"; score = 8
-        # ── E 资金埋伏 (v6.9.25: 弱市不折扣，代理base=6与H看齐) ──
+        # ── E 资金埋伏 (@since v6.9.25: 弱市不折扣，代理base=6与H看齐) ──
         if not s and 0 <= chg <= 1:
             mi = c.get('main_inflow')
-            if mi is not None and mi > params.get("strategy_e_expand_threshold", 1500) * 10000:  # v6.16.34: 使用可配置阈值(默认1500万)，扩大资金埋伏策略候选池
+            if mi is not None and mi > params.get("strategy_e_expand_threshold", 1500) * 10000:  # @since v6.16.34: 使用可配置阈值(默认1500万)，扩大资金埋伏策略候选池
                 s = "E"; reason = f"资金埋伏:涨{chg:.1f}%+主力流入{mi/1e4:.0f}万"; score = 6
             elif mi is None and close > op:
                 # 代理兜底：阳线+放量或高换手
@@ -3245,10 +3245,10 @@ def step13_strategy_match(candidates, kline_data=None):
                     s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%"; score = 6
                 elif vr is None and to is not None and to >= 1.0:
                     s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 6
-        # ── F 北向资金（v6.9.39: 预计算recent_5d字典，避免循环内重复IO）──
+        # ── F 北向资金（@since v6.9.39: 预计算recent_5d字典，避免循环内重复IO）──
         if s == "E":
             mi = c.get('main_inflow')
-            if mi is not None and mi > 50_000_000:  # v6.16.24: 修正阈值从5000→5000万，与R/S/T一致
+            if mi is not None and mi > 50_000_000:  # @since v6.16.24: 修正阈值从5000→5000万，与R/S/T一致
                 nb_days = recent_5d.get(c.get('code', ''), 0)
                 if nb_days >= 3:
                     s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi/1e4:.0f}万+持续{nb_days}日"; score = 7
@@ -3256,28 +3256,28 @@ def step13_strategy_match(candidates, kline_data=None):
                 nb_days = recent_5d.get(c.get('code', ''), 0)
                 if nb_days >= 2:
                     s = "F"; reason = f"北向资金(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%+持续{nb_days}日"; score = 6
-        # ── G 横盘突破 (v6.9.22: vr≥1.0,弱市不折扣,chg<3.0%避免与D重叠) ──
+        # ── G 横盘突破 (@since v6.9.22: vr≥1.0,弱市不折扣,chg<3.0%避免与D重叠) ──
         if not s and 1.0 <= chg < 3.0 and close > op:
             if amp is not None and 1.5 <= amp <= 6:
                 if vr is not None and vr >= 1.0:
                     s = "G"; reason = f"横盘突破:涨{chg:.1f}%+振幅{amp:.1f}%+量比{vr:.1f}"; score = 8
                 elif vr is None and to is not None and to >= 3:
                     s = "G"; reason = f"横盘突破(代理):涨{chg:.1f}%+振幅{amp:.1f}%+换手{to:.1f}%"; score = 7
-        # ── H 地量见底 (v6.9.21: chg<1.0%, vr<1.0, base=6) ──
+        # ── H 地量见底 (@since v6.9.21: chg<1.0%, vr<1.0, base=6) ──
         if not s and -3 <= chg < 1.0 and close >= op:
             is_hammer = False
             if high > low and low > 0:
                 body = abs(close - op)
                 lower_shadow = min(close, op) - low
-                min_shadow = max(body * 1.5, 0.025 * close)  # v6.16.24: 十字星时下影线≥2.5%收盘价，收紧过于宽松的1%
+                min_shadow = max(body * 1.5, 0.025 * close)  # @since v6.16.24: 十字星时下影线≥2.5%收盘价，收紧过于宽松的1%
                 if lower_shadow >= min_shadow:
                     is_hammer = True
             vr_ok = (vr is not None and vr < 1.0) or (vr is None and to is not None and to < 1.0)
             if vr_ok and (is_hammer or (close > 0 and body / close < 0.008)):
                 s = "H"; reason = f"地量见底:{chg:+.1f}%+量比{vr or 0:.1f}+锤子线"; score = 6
-        # ── I-Q 形态策略（v6.9.22: 弱市跳过，仅强/震荡市匹配）──
-        # v6.16.23: chg>7%未封板标的仅策略U可匹配，I-Q形态策略在7%以上高位风险过高，跳过
-        # v6.16.24: 用"弱市" in market_condition替代精确比较
+        # ── I-Q 形态策略（@since v6.9.22: 弱市跳过，仅强/震荡市匹配）──
+        # @since v6.16.23: chg>7%未封板标的仅策略U可匹配，I-Q形态策略在7%以上高位风险过高，跳过
+        # @since v6.16.24: 用"弱市" in market_condition替代精确比较
         if "弱市" not in market_condition and not s and chg <= 7.0:
             # I 均线粘合突破
             kd = kline_data.get(c.get('code', ''), {})
@@ -3380,24 +3380,24 @@ def step13_strategy_match(candidates, kline_data=None):
                         if neck > 0 and close > neck * 1.005 and close > op:
                             if vr is not None and vr >= 1.2:
                                 s = "Q"; reason = f"W底突破:两底{l1:.2f}/{l2:.2f}+突破颈线{neck:.2f}+放量"; score = 9
-        # ── U 涨停追击（v6.16.5: 独立涨停策略，从信号过滤池直接筛选，不依赖其他策略）──
+        # ── U 涨停追击（@since v6.16.5: 独立涨停策略，从信号过滤池直接筛选，不依赖其他策略）──
         # 核心逻辑：寻找强动量+涨停基因+放量+小盘的特征股，独立于其他策略
         if not s:
             tc = c.get('total_cap', 0) or 0
             kd_u = kline_data.get(c.get('code', ''), {})
             lu_days = kd_u.get('limit_up_days', 0) if isinstance(kd_u, dict) else 0
             # 涨停追击条件：涨幅3-9.5%(未封板)+量比≥1.5+换手≥3%+小盘<100亿+涨停基因+振幅>3%+收阳
-            # v6.16.24: 上限从9%→9.5%，覆盖未封板但接近涨停的标的
+            # @since v6.16.24: 上限从9%→9.5%，覆盖未封板但接近涨停的标的
             if 3.0 <= chg < 9.5 and vr is not None and vr >= 1.5 and to is not None and to >= 3.0:
                 if 0 < tc < 100 and lu_days >= 1 and amp is not None and amp > 3.0 and close > op:
                     s = "U"; reason = f"涨停追击:涨{chg:.1f}%+{lu_days}板基因+量比{vr:.1f}+换手{to:.1f}%+小盘{tc:.0f}亿"; score = 9
                     c['_lu_gene'] = lu_days  # 涨停基因标记
                 # 宽松条件：接近涨停(7-9.5%)+有涨停基因+放量+换手+收阳
-                # v6.16.24: 新增换手≥2%+振幅>2%要求，收紧宽松条件门槛
+                # @since v6.16.24: 新增换手≥2%+振幅>2%要求，收紧宽松条件门槛
                 elif 7.0 <= chg < 9.5 and lu_days >= 1 and vr is not None and vr >= 1.2 and to is not None and to >= 2.0 and amp is not None and amp > 2.0 and close > op:
                     s = "U"; reason = f"涨停追击(宽松):涨{chg:.1f}%+{lu_days}板基因+量比{vr:.1f}+换手{to:.1f}%"; score = 7
                     c['_lu_gene'] = lu_days
-        # ── R/S/T 主力共振（v6.10.0: 多因子共振模型，底仓+起爆双重确认）──
+        # ── R/S/T 主力共振（@since v6.10.0: 多因子共振模型，底仓+起爆双重确认）──
         if not s:
             pos_score = compute_main_force_position(kline_data, c)
             break_score = compute_short_term_breakout(kline_data, c)
@@ -3409,7 +3409,7 @@ def step13_strategy_match(candidates, kline_data=None):
             elif res_strategy == 'T':
                 s = "T"; reason = f"主力观察:底仓{pos_score}分+起爆{break_score}分"; score = 5
         if s: c['strategy'] = s; c['score'] = score; matched.append(c)
-    # v6.16.34: 震荡市策略A数量上限 — 策略A在震荡市回测胜率仅20%，限制最多N只
+    # @since v6.16.34: 震荡市策略A数量上限 — 策略A在震荡市回测胜率仅20%，限制最多N只
     sa_limit = params.get("strategy_a_shock_market_limit", 5)
     if "震荡" in market_condition and sa_limit > 0:
         a_matched = [c for c in matched if c.get("strategy") == "A"]
@@ -3433,8 +3433,8 @@ def step13_strategy_match(candidates, kline_data=None):
 # 步骤14-17：评分+行业限制
 # ============================================================
 def step14_scoring(candidates, kline_data=None):
-    # v6.9.10: 先计算_tie_score（原在step16），再融入最终score
-    # v6.9.60: 新增MACD+K线技术指标评分（DIF/DEA/MACD柱/均线/KDJ）
+    # @since v6.9.10: 先计算_tie_score（原在step16），再融入最终score
+    # @since v6.9.60: 新增MACD+K线技术指标评分（DIF/DEA/MACD柱/均线/KDJ）
     so = _STRATEGY_ORDER
     sector_ad = defaultdict(list)
     for c in candidates:
@@ -3446,7 +3446,7 @@ def step14_scoring(candidates, kline_data=None):
             for c in clist:
                 sector_bonus[c.get('code', '')] = 0.10
     for c in candidates:
-        vr = c.get('volume_ratio', 0)  # v6.13.20: 添加默认值防止NoneType比较; vr = vr if vr is not None else 0
+        vr = c.get('volume_ratio', 0)  # @since v6.13.20: 添加默认值防止NoneType比较; vr = vr if vr is not None else 0
         to = c.get('turnover'); to = to if to is not None else 0
         chg = c.get('change_pct') or 0
         vs = min(vr / 3.0, 1.0)
@@ -3473,7 +3473,7 @@ def step14_scoring(candidates, kline_data=None):
         elif s == 'O': cs = max(0, 1.0 - abs(chg) / 1.5)
         elif s == 'P': cs = max(0, 1.0 - abs(chg - 3) / 4.0)
         elif s == 'Q': cs = max(0, 1.0 - abs(chg - 3) / 3.0)
-        elif s == 'U': cs = max(0, 1.0 - abs(chg - 5) / 5.0)  # v6.16.5: 涨停追击，最优涨幅5%
+        elif s == 'U': cs = max(0, 1.0 - abs(chg - 5) / 5.0)  # @since v6.16.5: 涨停追击，最优涨幅5%
         else: cs = 0.5
         amp = c.get('amplitude', 0) or 0
         ma_bonus = 0.05 if amp < 3 and vr > 1.2 else 0
@@ -3481,18 +3481,18 @@ def step14_scoring(candidates, kline_data=None):
         c['_tie_score'] = max(0, vs * (0.25 if s == 'D' else 0.30) + ts * (0.35 if s == 'D' else 0.30) + cs * 0.30 + (1.0 - so.get(s, 99) / 20.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
         # 融入最终score
         sc = c.get('score', 0) * 2
-        sc += round(c['_tie_score'] * 8)  # v6.9.18: _tie_score 0~1 → 0~8分浮动，扩大区分度
-        # v6.9.23: D策略振幅四档区分度，扩大16只标的间区分
+        sc += round(c['_tie_score'] * 8)  # @since v6.9.18: _tie_score 0~1 → 0~8分浮动，扩大区分度
+        # @since v6.9.23: D策略振幅四档区分度，扩大16只标的间区分
         if s == 'D' and amp is not None:
             if 3 <= amp <= 6: sc += 1       # 理想振幅
             elif 1.5 <= amp < 3: sc -= 1     # 振幅偏小，动力不足
             elif amp > 8: sc -= 1            # 振幅偏大，波动风险
-        # v6.9.21: B策略深度跌幅加分，跌幅越深反弹潜力越大
+        # @since v6.9.21: B策略深度跌幅加分，跌幅越深反弹潜力越大
         if s == 'B':
             if chg < -7: sc += 2
             elif chg < -5: sc += 1
-        if c.get('_first_yin') and s not in ('A', 'B'): sc += 2  # v6.9.39: 首阴加分仅适用于回调/低涨幅策略
-        # v6.9.60: MACD+K线技术指标评分（最多+8分）
+        if c.get('_first_yin') and s not in ('A', 'B'): sc += 2  # @since v6.9.39: 首阴加分仅适用于回调/低涨幅策略
+        # @since v6.9.60: MACD+K线技术指标评分（最多+8分）
         macd_kline_bonus = 0
         kd = (kline_data or {}).get(code, {})
         if kd:
@@ -3518,18 +3518,18 @@ def step14_scoring(candidates, kline_data=None):
     return candidates
 
 def step17_industry_limit(candidates):
-    # v6.6.46: 保留 step16 综合评分排序(_tie_score)，五级二次评估打破平局
+    # @since v6.6.46: 保留 step16 综合评分排序(_tie_score)，五级二次评估打破平局
     ig = defaultdict(list)
     for c in candidates: ig[_industry_str(c)].append(c)
     limited = []
     elastic_added = 0
-    # v6.9.22: 弱市行业上限3→4，增加标的多样性
-    # v6.16.24: 用"弱市" in覆盖子类型
+    # @since v6.9.22: 弱市行业上限3→4，增加标的多样性
+    # @since v6.16.24: 用"弱市" in覆盖子类型
     industry_limit = 4 if "弱市" in market_condition else 3
     for g in ig.values():
         g.sort(key=_tie_key)
         limited.extend(g[:industry_limit])
-        # v6.9.22: 弹性规则 — 第N+1只_tie_score≥第N只90%则保留（弱市放宽至≥90%）
+        # @since v6.9.22: 弹性规则 — 第N+1只_tie_score≥第N只90%则保留（弱市放宽至≥90%）
         if len(g) >= industry_limit + 1:
             tn = g[industry_limit - 1].get('_tie_score', 0)
             tn1 = g[industry_limit].get('_tie_score', 0)
@@ -3549,7 +3549,7 @@ def step17_industry_limit(candidates):
     return final
 
 def step18_news_screening(candidates):
-    """步骤18：新闻筛查 — 四源并行（东方财富+Bing+巨潮资讯网+财联社）+ 逐源状态追踪，v6.13.11"""
+    """步骤18：新闻筛查 — 四源并行（东方财富+Bing+巨潮资讯网+财联社）+ 逐源状态追踪，@since v6.13.11"""
     if not candidates:
         return candidates, 0
     
@@ -3571,8 +3571,8 @@ def step18_news_screening(candidates):
         '减持完毕', '解除异常', '无违规'
     ]
     
-    # v6.13.11: 源级别状态追踪
-    # v6.16.3: 精简源状态，移除废弃的eastmoney和xueqiu
+    # @since v6.13.11: 源级别状态追踪
+    # @since v6.16.3: 精简源状态，移除废弃的eastmoney和xueqiu
     _src_status = {'bing': {'ok': 0, 'fail': 0},
                    'baidu': {'ok': 0, 'fail': 0}, 'cninfo': {'ok': 0, 'fail': 0, 'hit': 0},
                    'cls': {'ok': 0, 'fail': 0},
@@ -3588,7 +3588,7 @@ def step18_news_screening(candidates):
             })
             with _http_retry(req, timeout=4) as resp:
                 html_text = resp.read().decode('utf-8', errors='ignore')
-                _src_status['bing']['ok'] += 1  # v6.16.24: 安全阀修复，更新ok计数
+                _src_status['bing']['ok'] += 1  # @since v6.16.24: 安全阀修复，更新ok计数
                 for kw in NEGATIVE_KW:
                     if kw not in html_text: continue
                     kw_pos = html_text.find(kw)
@@ -3601,7 +3601,7 @@ def step18_news_screening(candidates):
         return None
     
     def _check_baidu(code, name):
-        """v6.13.11: 百度搜索备选（Bing不可达时降级）"""
+        """@since v6.13.11: 百度搜索备选（Bing不可达时降级）"""
         try:
             query = f'{name} {code} 利空 公告'
             url = f'https://www.baidu.com/s?wd={urllib.parse.quote(query)}'
@@ -3611,7 +3611,7 @@ def step18_news_screening(candidates):
             })
             with _http_retry(req, timeout=4) as resp:
                 html_text = resp.read().decode('utf-8', errors='ignore')
-                _src_status['baidu']['ok'] += 1  # v6.16.24: 安全阀修复，更新ok计数
+                _src_status['baidu']['ok'] += 1  # @since v6.16.24: 安全阀修复，更新ok计数
                 for kw in NEGATIVE_KW:
                     if kw not in html_text: continue
                     kw_pos = html_text.find(kw)
@@ -3679,21 +3679,21 @@ def step18_news_screening(candidates):
             log_alert("DEBUG", "cninfo", f"{code} {name} 异常: {type(e).__name__}")
         else:
             if _got_response:
-                _src_status['cninfo']['ok'] += 1  # v6.16.25: 仅在有实际响应数据时标记ok
+                _src_status['cninfo']['ok'] += 1  # @since v6.16.25: 仅在有实际响应数据时标记ok
         return None
     
     def _check_cls(code, name):
-        """v6.16.0: CLS电报v2 — 批量拉取深度列表后本地搜索匹配"""
+        """@since v6.16.0: CLS电报v2 — 批量拉取深度列表后本地搜索匹配"""
         return _check_cls_v2(code, name)
     
     def _check_cls_v2(code, name):
-        """v6.16.0: CLS电报搜索 — 在90条电报中搜索个股名称+利空关键词"""
+        """@since v6.16.0: CLS电报搜索 — 在90条电报中搜索个股名称+利空关键词"""
         try:
             telegraphs = _fetch_cls_telegraphs(pages=3)
             if not telegraphs:
-                _src_status['cls']['fail'] += 1  # v6.16.25: 空列表=源不可用
+                _src_status['cls']['fail'] += 1  # @since v6.16.25: 空列表=源不可用
                 return None
-            _src_status['cls']['ok'] += 1  # v6.16.24: 安全阀修复，批量拉取成功即标记ok
+            _src_status['cls']['ok'] += 1  # @since v6.16.24: 安全阀修复，批量拉取成功即标记ok
             for item in telegraphs:
                 title = (item.get('title', '') or '') + ' ' + (item.get('brief', '') or '')
                 if name not in title and code not in title: continue
@@ -3707,8 +3707,8 @@ def step18_news_screening(candidates):
             return None
     
     def _check_mairui_dt(code, name):
-        """v6.16.1: 麦蕊跌停股池检测。v6.16.20: 麦蕊API残缺时改用自算跌停池兜底"""
-        # v6.16.20: 优先使用自算跌停池（从all_stocks构建，准确率更高）
+        """@since v6.16.1: 麦蕊跌停股池检测。@since v6.16.20: 麦蕊API残缺时改用自算跌停池兜底"""
+        # @since v6.16.20: 优先使用自算跌停池（从all_stocks构建，准确率更高）
         if _self_dt_cache and code in _self_dt_cache:
             return ('self_dt', '跌停(自算)')
         # 麦蕊API作为辅助源（仅当自算跌停池为空时使用）
@@ -3730,7 +3730,7 @@ def step18_news_screening(candidates):
         return None
     
     def _check_mairui_ann(code, name):
-        """v6.16.0: 麦蕊公告利空检测 — v6.16.15: 仅检查近30日公告，防止历史公告误触发"""
+        """@since v6.16.0: 麦蕊公告利空检测 — @since v6.16.15: 仅检查近30日公告，防止历史公告误触发"""
         if not MAIRUI_LICENCE: return None
         try:
             anns = _mairui_announcements(code)
@@ -3739,7 +3739,7 @@ def step18_news_screening(candidates):
             for ann in anns:
                 title = str(ann.get('zt', '') or ann.get('title', '') or '')
                 ann_date = str(ann.get('date', '') or ann.get('rq', '') or ann.get('ggrq', '') or '')
-                # v6.16.15: 日期过滤，仅检查近30日公告
+                # @since v6.16.15: 日期过滤，仅检查近30日公告
                 if ann_date and ann_date < cutoff_date:
                     continue
                 for kw in NEGATIVE_KW:
@@ -3763,16 +3763,16 @@ def step18_news_screening(candidates):
         c['_news_skip_reason'] = '评分不足前30'
     passed.extend(skip)
     
-    # v6.16.3: 精简为5稳定源——移除东方财富(403/404)和雪球(缓存全失败)
+    # @since v6.16.3: 精简为5稳定源——移除东方财富(403/404)和雪球(缓存全失败)
     _checkers = [
         _check_cninfo,      # 主: 巨潮资讯（法定信披，最稳定）
         _check_cls_v2,      # 主: CLS电报v2（批量拉取90条本地搜索）
         _check_bing,        # 备: Bing搜索
         _check_baidu,       # 备: 百度搜索
     ]
-    # v6.16.0: 麦蕊智数源（需licence，无licence时自动跳过）
+    # @since v6.16.0: 麦蕊智数源（需licence，无licence时自动跳过）
     if MAIRUI_LICENCE:
-        _checkers.append(_check_mairui_dt)   # v6.16.1: 跌停股池利空
+        _checkers.append(_check_mairui_dt)   # @since v6.16.1: 跌停股池利空
         _checkers.append(_check_mairui_ann)  # 公告利空
     
     for c in to_check:
@@ -3802,7 +3802,7 @@ def step18_news_screening(candidates):
         else:
             passed.append(c)
     
-    # v6.13.11: 源状态汇总报告
+    # @since v6.13.11: 源状态汇总报告
     src_report = []
     for src, status in _src_status.items():
         if status['fail'] > 0:
@@ -3810,14 +3810,14 @@ def step18_news_screening(candidates):
     if src_report:
         log_alert("WARNING", "新闻筛查", f"源异常: {'; '.join(src_report)}")
     
-    # v6.13.11: 统计未检查标的
+    # @since v6.13.11: 统计未检查标的
     unchecked = [c for c in passed if c.get('code', '') in top_codes and not c.get('_news_checked', True)]
     if unchecked:
         unchecked_names = ', '.join(f"{c.get('name','?')}({c.get('code','?')})" for c in unchecked[:5])
         if len(unchecked) > 5: unchecked_names += f" 等{len(unchecked)}只"
         log_alert("WARNING", "新闻筛查", f"⚠️ {len(unchecked)}只标的未通过任何新闻源检查: {unchecked_names}")
     
-    # v6.16.15: 安全阀——mairui_ann为唯一可用源且排除超过80%标的时，回退排除
+    # @since v6.16.15: 安全阀——mairui_ann为唯一可用源且排除超过80%标的时，回退排除
     mairui_excluded = [c for c in excluded if c.get('_news_reason', '').startswith('mairui_ann')]
     if len(mairui_excluded) > 0 and len(mairui_excluded) >= len(to_check) * 0.8:
         other_sources_ok = any(
@@ -3840,7 +3840,7 @@ def step18_news_screening(candidates):
     else:
         log_alert("INFO", "新闻筛查", "全部通过，未发现利空")
     
-    # v6.13.11: 添加步骤执行摘要
+    # @since v6.13.11: 添加步骤执行摘要
     checked_count = sum(1 for c in passed if c.get('_news_checked', False))
     skipped_count = len(skip)
     print(f"  新闻筛查: 检查{len(to_check)}只 → 排除{nex}只, 评分不足跳过{skipped_count}只, 源可用{checked_count}只")
@@ -3884,13 +3884,13 @@ def step18B_top10_enrichment(candidates):
         c['_news_positive'] = ''
         c['_announcement'] = ''
         
-        # ── 涨停/龙虎榜 (v6.16.21: 同花顺HTML解析, 原datacenter-web已鉴权) ──
+        # ── 涨停/龙虎榜 (@since v6.16.21: 同花顺HTML解析, 原datacenter-web已鉴权) ──
         try:
             lh_result = ''
-            # v6.16.1: 优先使用麦蕊智数涨停股池API
+            # @since v6.16.1: 优先使用麦蕊智数涨停股池API
             if MAIRUI_LICENCE:
                 lh_result = _mairui_longhubang_for_top10(code)
-            # v6.16.21: 备选改为同花顺龙虎榜页面(零鉴权, 东财datacenter已加鉴权9501)
+            # @since v6.16.21: 备选改为同花顺龙虎榜页面(零鉴权, 东财datacenter已加鉴权9501)
             if not lh_result:
                 lh_url = f'https://data.10jqka.com.cn/market/lhbgg/code/{code}/'
                 req = urllib.request.Request(lh_url, headers={
@@ -3921,7 +3921,7 @@ def step18B_top10_enrichment(candidates):
         except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError, IndexError):
             _news_fail_count += 1
         
-        # ── 正面新闻（v6.16.3: push2已废弃，改用Bing搜索）──
+        # ── 正面新闻（@since v6.16.3: push2已废弃，改用Bing搜索）──
         try:
             query = f'{name} {code} 利好 业绩'
             news_url = f'https://www.bing.com/search?q={urllib.parse.quote(query)}'
@@ -3946,7 +3946,7 @@ def step18B_top10_enrichment(candidates):
         except (urllib.error.URLError, json.JSONDecodeError, OSError):
             _news_fail_count += 1
         
-        # ── 公司公告（v6.9.52）──
+        # ── 公司公告（@since v6.9.52）──
         try:
             ann_url = f'https://np-anotice-stock.eastmoney.com/api/security/ann?page_size=5&page_index=1&stock_list={code}&ann_type=A'
             req = urllib.request.Request(ann_url, headers={
@@ -3985,7 +3985,7 @@ def step18B_top10_enrichment(candidates):
 
 def step15_microstructure_filter(candidates, kline_data):
     """
-    步骤15: 市场微观结构过滤 v6.11.0
+    步骤15: 市场微观结构过滤 @since v6.11.0
     在最终候选池输出前，基于流动性与冲击成本、消息敏感度进行过滤。
     硬过滤: 换手率<2% / Amihud>2.0 / 20日均振幅<2%
     评分加分: 流动性评分(0-4) + 消息敏感度(0-3)，折算到score
@@ -3995,7 +3995,7 @@ def step15_microstructure_filter(candidates, kline_data):
 def step15B_ai_analysis(candidates, kline_data, index_data, market_condition,
                          sector_limit_up, total_raw, ae, asig, astr, amicro, aind, fc):
     """
-    步骤15B: AI 智能分析 v6.12.4
+    步骤15B: AI 智能分析 @since v6.12.4
     将单纯的数据筛选升级为 AI 智能分析，生成多维深度研判报告。
     返回: ai_report dict
     """
@@ -4003,12 +4003,12 @@ def step15B_ai_analysis(candidates, kline_data, index_data, market_condition,
                               sector_limit_up, total_raw, ae, asig, astr, amicro, aind, fc)
 
 def step16_comprehensive_score(candidates):
-    # v6.9.38: 步骤15(冲突检测)已合并入步骤14评分，步骤16仅负责排序
+    # @since v6.9.38: 步骤15(冲突检测)已合并入步骤14评分，步骤16仅负责排序
     candidates.sort(key=_tie_key)
     return candidates
 
 def step19_shortfall_handling(candidates):
-    """v6.8.7: 数值比较，丢弃时记录日志"""
+    """@since v6.8.7: 数值比较，丢弃时记录日志"""
     total = len(candidates)
     if total >= 3: return candidates
     elif total == 2:
@@ -4023,7 +4023,7 @@ def step19_shortfall_handling(candidates):
 
 # ============================================================
 # ============================================================
-# v6.6.31 策略进场价（基于历史数据推算）
+# @since v6.6.31 策略进场价（基于历史数据推算）
 # ============================================================
 def calc_entry_price(c):
     """基于历史数据推算次日合理进场价，综合考虑ATR/振幅位置/缺口/量比"""
@@ -4055,7 +4055,7 @@ def calc_entry_price(c):
     
     # 根据量比调整预期（量比越高，次日惯性越强）
     vol_adj = min(vol_ratio / 1.5, 1.5) if vol_ratio > 0 else 1.0
-    atr_pct = min(atr_pct, 0.08)  # v6.8.3: 上限8%，避免极端值导致进场价虚高
+    atr_pct = min(atr_pct, 0.08)  # @since v6.8.3: 上限8%，避免极端值导致进场价虚高
     
     if strategy == 'A':
         # 动量延续：强势股次日大概率高开
@@ -4082,7 +4082,7 @@ def calc_entry_price(c):
                 # 深度超跌，次日可能惯性低开，在收盘价-1%挂单
                 entry = close * (1 - atr_pct * 0.3)
             elif chg >= -3.5:
-                # v6.9.20: 轻度跌幅(-2.5%~-3.5%)，更激进低吸
+                # @since v6.9.20: 轻度跌幅(-2.5%~-3.5%)，更激进低吸
                 entry = low + (close - low) * 0.25
             else:
                 entry = close * 0.995
@@ -4118,7 +4118,7 @@ def calc_entry_price(c):
         return round(entry, 2)
     
     elif strategy == 'F':
-        # 北向资金埋伏(v6.6.38): 涨幅有限+持续资金流入，次日平开或小幅低开
+        # 北向资金埋伏(@since v6.6.38): 涨幅有限+持续资金流入，次日平开或小幅低开
         # 在收盘价下方0.5%挂单，低吸为主
         if low > 0 and close > low:
             entry = low + (close - low) * 0.3
@@ -4127,8 +4127,8 @@ def calc_entry_price(c):
         return round(entry, 2)
     
     elif strategy == 'G':
-        # 横盘突破(v6.9.18): 弱市不追涨，在收盘价下方进场；强/震荡市追涨
-        # v6.16.24: 用"弱市" in覆盖子类型
+        # 横盘突破(@since v6.9.18): 弱市不追涨，在收盘价下方进场；强/震荡市追涨
+        # @since v6.16.24: 用"弱市" in覆盖子类型
         if "弱市" in market_condition:
             if low > 0 and close > low:
                 entry = low + (close - low) * 0.4  # 弱市低吸
@@ -4141,7 +4141,7 @@ def calc_entry_price(c):
         return round(entry, 2)
     
     elif strategy == 'H':
-        # 地量见底(v6.7.0): 卖压衰竭，次日平开或微幅高开
+        # 地量见底(@since v6.7.0): 卖压衰竭，次日平开或微幅高开
         # 在收盘价附近挂单，不追高
         if high > low and low > 0:
             entry = low + (close - low) * 0.4
@@ -4150,7 +4150,7 @@ def calc_entry_price(c):
         return round(entry, 2)
     
     elif strategy == 'I':
-        # 均线粘合突破(v6.9.0): 放量突破均线，次日大概率高开惯性
+        # 均线粘合突破(@since v6.9.0): 放量突破均线，次日大概率高开惯性
         if high > close and close > 0:
             entry = close + (high - close) * 0.3
         else:
@@ -4158,7 +4158,7 @@ def calc_entry_price(c):
         return round(entry, 2)
     
     elif strategy == 'J':
-        # 龙回头(v6.9.0): 强势股回调企稳，次日大概率平开或小幅高开
+        # 龙回头(@since v6.9.0): 强势股回调企稳，次日大概率平开或小幅高开
         if low > 0 and close > low:
             entry = low + (close - low) * 0.35
         else:
@@ -4166,12 +4166,12 @@ def calc_entry_price(c):
         return round(entry, 2)
     
     elif strategy == 'K':
-        # 缺口回补(v6.9.1): 回踩确认，次日大概率平开或微涨
+        # 缺口回补(@since v6.9.1): 回踩确认，次日大概率平开或微涨
         entry = close * 1.003
         return round(entry, 2)
     
     elif strategy == 'L':
-        # 黄金坑(v6.9.1): V型反弹，次日惯性延续，保守挂在前日收盘价
+        # 黄金坑(@since v6.9.1): V型反弹，次日惯性延续，保守挂在前日收盘价
         if high > close and close > 0:
             entry = close + (high - close) * 0.25
         else:
@@ -4179,7 +4179,7 @@ def calc_entry_price(c):
         return round(entry, 2)
     
     elif strategy == 'M':
-        # 涨停回调(v6.9.3): 缩量回调企稳，次日平开
+        # 涨停回调(@since v6.9.3): 缩量回调企稳，次日平开
         if low > 0 and close > low:
             entry = low + (close - low) * 0.3
         else:
@@ -4187,7 +4187,7 @@ def calc_entry_price(c):
         return round(entry, 2)
     
     elif strategy == 'N':
-        # 新高突破(v6.9.3): 强势突破，次日惯性高开
+        # 新高突破(@since v6.9.3): 强势突破，次日惯性高开
         if high > close and close > 0:
             entry = close + (high - close) * 0.35
         else:
@@ -4195,7 +4195,7 @@ def calc_entry_price(c):
         return round(entry, 2)
     
     elif strategy == 'O':
-        # 回踩均线(v6.9.3): 均线支撑确认，次日平开
+        # 回踩均线(@since v6.9.3): 均线支撑确认，次日平开
         entry = close * 1.002
         return round(entry, 2)
     
@@ -4223,7 +4223,7 @@ def _calc_tier_label(c):
 
 def _compute_pl_ratios(candidates, sector_limit_up=None):
     """预计算资金去向，标注c['_entry']/c['_stop']/c['_target']/c['_pl_ratio']，返回_top10_codes集合
-    v6.12.10: 板块热度排序——第一优先级板块涨停家数，第二优先级盈亏比"""
+    @since v6.12.10: 板块热度排序——第一优先级板块涨停家数，第二优先级盈亏比"""
     global _pl_sorted
     sector_heat = sector_limit_up or {}
     _pl_data = []
@@ -4240,7 +4240,7 @@ def _compute_pl_ratios(candidates, sector_limit_up=None):
         _pl_data.append((c.get('code', ''), pl_ratio, heat, industry))
         c['_entry'] = entry; c['_stop'] = sl; c['_target'] = tp; c['_pl_ratio'] = pl_ratio
         c['_sector_heat'] = heat
-    # v6.12.10: 先按板块热度降序，再按盈亏比降序
+    # @since v6.12.10: 先按板块热度降序，再按盈亏比降序
     _pl_sorted = sorted(_pl_data, key=lambda x: (-x[2], -x[1]))
     return set(c for c, _, _, _ in _pl_sorted[:10])
 
@@ -4248,7 +4248,7 @@ def _compute_pl_ratios(candidates, sector_limit_up=None):
 # 步骤19B：同策略PK
 # ============================================================
 def _init_pk_details(c, kline_data, bt_lookup, sentiment_base, sector_heat, max_heat):
-    """v6.14.0: 基本面+技术面融合7维度PK
+    """@since v6.14.0: 基本面+技术面融合7维度PK
     维度体系: 成长性+盈利能力+估值水位+资产质量+现金流+筹码+板块热度
     同行业优先比较，跨行业使用记分卡加权"""
     code = c.get('code', '')
@@ -4323,21 +4323,21 @@ def _safe_float(val):
     except (ValueError, TypeError): return None
 
 def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None, market_condition=None, index_data=None):
-    """v6.13.33: 同策略PK + 跨策略冠军PK
+    """@since v6.13.33: 同策略PK + 跨策略冠军PK
     第一阶段: 同策略标的7维度对决，标记组内获胜者
     第二阶段: 所有获胜者(含独苗)跨策略对决，标记最强👑冠军"""
     strategy_groups = defaultdict(list)
     for c in candidates:
         strategy_groups[c.get('strategy', '?')].append(c)
     
-    # v6.13.32: 市场情绪得分（基于指数涨跌，弱市0分、震荡1分、强市2分）
+    # @since v6.13.32: 市场情绪得分（基于指数涨跌，弱市0分、震荡1分、强市2分）
     sh_info = index_data.get('sh', {}) if index_data else {}
     sh_chg = sh_info.get('change_pct', 0) if isinstance(sh_info, dict) else 0
     if sh_chg > 0.5: sentiment_base = 2
     elif sh_chg < -0.5: sentiment_base = 0
     else: sentiment_base = 1
     
-    # v6.13.32: 板块热度归一化基准
+    # @since v6.13.32: 板块热度归一化基准
     sector_heat = sector_limit_up or {}
     max_heat = max(sector_heat.values()) if sector_heat else 1
     
@@ -4357,7 +4357,7 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
             c['_pk_score'] = 0
             c['_pk_champion'] = False
         
-        # v6.14.0: 逐维度PK — 基本面+技术面融合7维度
+        # @since v6.14.0: 逐维度PK — 基本面+技术面融合7维度
         # growth/profit/value/quality/cashflow/flow/heat
         dims = ['growth', 'profit', 'value', 'quality', 'cashflow', 'flow', 'heat']
         for dim_idx, dim_name in enumerate(dims):
@@ -4372,7 +4372,7 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
                 for w in winners:
                     w['_pk_score'] += 0.5
         
-        # v6.16.26: 降级PK — 当7维度全0时，切换为技术面3维度PK（涨跌幅+量比+换手率）
+        # @since v6.16.26: 降级PK — 当7维度全0时，切换为技术面3维度PK（涨跌幅+量比+换手率）
         max_pk = max(c['_pk_score'] for c in group)
         if max_pk == 0:
             # 技术面3维度：涨跌幅(动量) / 量比(放量意愿) / 换手率(活跃度)
@@ -4404,7 +4404,7 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
         
         for c in group:
             c['_pk_winner'] = (c is winner)
-            c['_pk_champion'] = False  # v6.13.33: 初始化，后续冠军PK覆盖
+            c['_pk_champion'] = False  # @since v6.13.33: 初始化，后续冠军PK覆盖
             c['_pk_note'] = f"PK:{c['_pk_score']}/{pk_dim_label}"
         
         pk_results[strat] = {
@@ -4412,11 +4412,11 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
             'winner_code': winner.get('code'),
             'winner_name': winner.get('name'),
             'winner_score': winner['_pk_score'],
-            'dim_label': pk_dim_label,  # v6.16.26: 7=基本面PK, 3=技术面降级PK
+            'dim_label': pk_dim_label,  # @since v6.16.26: 7=基本面PK, 3=技术面降级PK
             'losers': [(c.get('code'), c.get('name'), c['_pk_score']) for c in group if c is not winner]
         }
     
-    # v6.13.33: 跨策略冠军PK — 所有获胜者(含独苗)进行7维度对决，找出最强标的
+    # @since v6.13.33: 跨策略冠军PK — 所有获胜者(含独苗)进行7维度对决，找出最强标的
     all_winners = []
     for strat, group in strategy_groups.items():
         if len(group) >= 2:
@@ -4479,7 +4479,7 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
     return pk_results
 
 # ============================================================
-# v6.14.0: 市场全景图表生成
+# @since v6.14.0: 市场全景图表生成
 # ============================================================
 def _generate_market_overview(all_stocks, index_data, output_dir):
     """生成市场全景图表PNG（涨跌统计+资金流向），返回文件路径"""
@@ -4510,7 +4510,7 @@ def _generate_market_overview(all_stocks, index_data, output_dir):
     up_count = sum(1 for s in all_stocks if (s.get('change_pct') or 0) > 0)
     down_count = sum(1 for s in all_stocks if (s.get('change_pct') or 0) < 0)
     flat_count = sum(1 for s in all_stocks if (s.get('change_pct') or 0) == 0)
-    # v6.16.20: 使用_is_limit_up/_is_limit_down精确判定，排除伪涨停/跌停
+    # @since v6.16.20: 使用_is_limit_up/_is_limit_down精确判定，排除伪涨停/跌停
     limit_up = sum(1 for s in all_stocks if _is_limit_up(s.get('code', ''), s.get('change_pct')))
     limit_down = sum(1 for s in all_stocks if _is_limit_down(s.get('code', ''), s.get('change_pct')))
     total = len(all_stocks)
@@ -4625,13 +4625,13 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
             entry = c.get('_entry', 0); sl = c.get('_stop', 0); tp = c.get('_target', 0)
             pl_ratio = c.get('_pl_ratio', 0)
             top10_mark = "⭐" if code in _top10_codes else ""
-            # v6.13.33: 同策略PK标记 — 👑=跨策略冠军 🏆=同策略获胜者
+            # @since v6.13.33: 同策略PK标记 — 👑=跨策略冠军 🏆=同策略获胜者
             if c.get('_pk_champion'): pk_mark = "👑"
             elif c.get('_pk_winner'): pk_mark = "🏆"
             else: pk_mark = "-" if c.get('_pk_note') == '' else " "
             r7d = c.get('_recent_7d')
             r7d_str = str(r7d) if r7d is not None else ""
-            # v6.6.44: 7日列附带历史策略标注
+            # @since v6.6.44: 7日列附带历史策略标注
             r7s = c.get('_recent_7d_strategies', {})
             if r7d_str and r7s:
                 sorted_dates = sorted(r7s.keys())
@@ -4641,7 +4641,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                     if s_ not in seen: seen.add(s_); uniq_s.append(s_)
                 r7d_str = f"{r7d} ({','.join(uniq_s)})"
             url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
-            # v6.13.34: 回测标记列 — no_entry独立标记，不计入胜负
+            # @since v6.13.34: 回测标记列 — no_entry独立标记，不计入胜负
             bt_mark = ''
             if bt_lookup and code in bt_lookup:
                 bt = bt_lookup[code]
@@ -4654,7 +4654,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                 suffix = '⚠️' if bt.get('no_entry', 0) > 0 else ''
                 bt_mark = f'{emoji}{bt["wins"]}/{bt["total"]}{suffix}'
             lines.append(f"| {idx} | {top10_mark} | {pk_mark} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {h60_str} | {l60_str} | {tier_label} | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} | {pl_ratio} | {bt_mark} |\n")
-        # v6.13.31: 同策略PK + 冠军PK总结
+        # @since v6.13.31: 同策略PK + 冠军PK总结
         if pk_results:
             pk_strats = [(s, info) for s, info in pk_results.items() if s != '__champion__' and info['count'] >= 2]
             champion_info = pk_results.get('__champion__')
@@ -4682,7 +4682,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         lines.append("- **模拟口径**：使用最近90天推荐历史，按推荐表的进场、止损、止盈进行模拟，单笔最大持仓10个交易日。")
         lines.append("- **交易规则**：遵循A股T+1，买入当日不检查止盈止损出场，从下一交易日起判断是否触及止损/止盈。")
         lines.append("- **使用限制**：未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素；样本少时仅作参考，不能代表未来表现。\n")
-        # v6.13.43: 资金去向——按行业汇总主力净流入，无数据时优雅降级
+        # @since v6.13.43: 资金去向——按行业汇总主力净流入，无数据时优雅降级
         lines.append("\n## 资金去向（按行业主力净流入排序）\n")
         ind_flow = {}
         has_flow_data = False
@@ -4716,7 +4716,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
     for r, cnt in er.most_common(5): lines.append(f"- {r}: {cnt}只")
     lines.append(f"\n\n> ⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。\n> 版本: {file_version} | 生成: {beijing_date}")
     
-    # ── v6.12.4: AI 策略分析 ──
+    # ── @since v6.12.4: AI 策略分析 ──
     if ai_report:
         lines.append("\n---\n")
         lines.append(ai_report.get('market_overview', ''))
@@ -4725,9 +4725,9 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         lines.append("\n---\n")
         lines.append("## 三、个股深度分析")
         lines.append("")
-        # v6.13.53: 跨策略冠军获取，用于个股深度研判标注👑
+        # @since v6.13.53: 跨策略冠军获取，用于个股深度研判标注👑
         champion_code = pk_results.get('__champion__', {}).get('winner_code', '') if pk_results else ''
-        # v6.14.0: 冠军始终进入深度分析（即使不在TOP10内）
+        # @since v6.14.0: 冠军始终进入深度分析（即使不在TOP10内）
         analyses = list(ai_report.get('candidate_analyses', []))
         champion_in_analyses = any(ca.get('code') == champion_code for ca in analyses)
         if champion_code and not champion_in_analyses:
@@ -4759,7 +4759,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
             lines.append("")
             lines.append(ca.get('suggestion', ''))
             lines.append("")
-            # v6.20.7: 冠军标的额外三板块
+            # @since v6.20.7: 冠军标的额外三板块
             if ca.get('is_champion'):
                 for extra_key in ('company_profile', 'market_finance', 'news_research'):
                     extra_val = ca.get(extra_key, '')
@@ -4774,10 +4774,10 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
     return mp
 
 # ============================================================
-# 步骤20B：HTML报告（v6.6.27 含指数行情）
+# 步骤20B：HTML报告（@since v6.6.27 含指数行情）
 # ============================================================
 def _build_pk_html(pk_results):
-    """v6.13.33: 构建同策略PK + 跨策略冠军PK HTML片段"""
+    """@since v6.13.33: 构建同策略PK + 跨策略冠军PK HTML片段"""
     if not pk_results:
         return ''
     champion_info = pk_results.get('__champion__')
@@ -4819,7 +4819,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
     sc = _STRATEGY_COLORS
     fc = len(candidates)
     
-    # 指数卡片HTML（v6.12.5: 键名从sh000001/sz399001/sz399006改为sh/sz/cy，与step8 index_data一致）
+    # 指数卡片HTML（@since v6.12.5: 键名从sh000001/sz399001/sz399006改为sh/sz/cy，与step8 index_data一致）
     idx_names = [("sh", "上证指数"), ("sz", "深证成指"), ("cy", "创业板指")]
     index_cards = ""
     for code, name in idx_names:
@@ -4836,7 +4836,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             index_cards += f'<div class="index-card"><div class="idx-name">{name}</div><div class="idx-price">-</div><div class="idx-chg">数据不可得</div></div>'
     
     rows_html = ""
-    # v6.13.17: 基于已计算的_pl_ratio排序TOP10，移除重复调用
+    # @since v6.13.17: 基于已计算的_pl_ratio排序TOP10，移除重复调用
     _top10_codes = _compute_pl_ratios(candidates)
     for idx, c in enumerate(candidates, 1):
         code = c.get('code', ''); name = c.get('name', ''); s = c.get('strategy', '?')
@@ -4856,12 +4856,12 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         else: l60_str = "-"
         tier_label = c.get('_tier_label', '-'); tier_cls = c.get('_tier_cls', 'tier_na')
         top10_mark = "⭐" if code in _top10_codes else ""
-        # v6.13.33: 同策略PK标记 — 👑跨策略冠军 🏆同策略获胜者
+        # @since v6.13.33: 同策略PK标记 — 👑跨策略冠军 🏆同策略获胜者
         if c.get('_pk_champion'): pk_mark = "👑"
         elif c.get('_pk_winner'): pk_mark = "🏆"
         else: pk_mark = "-" if c.get('_pk_note') == '' else " "
         r7d_html = str(c.get('_recent_7d')) if c.get('_recent_7d') is not None else ""
-        # v6.6.44: 7日列附带历史策略标注
+        # @since v6.6.44: 7日列附带历史策略标注
         r7s = c.get('_recent_7d_strategies', {})
         if r7d_html and r7s:
             sorted_dates = sorted(r7s.keys())
@@ -4869,12 +4869,12 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             seen = set(); uniq_s = []
             for s_ in strats:
                 if s_ not in seen: seen.add(s_); uniq_s.append(s_)
-            r7d_html = f"{r7d_html} ({','.join(uniq_s)})"  # v6.8.8: 与MD格式统一
+            r7d_html = f"{r7d_html} ({','.join(uniq_s)})"  # @since v6.8.8: 与MD格式统一
         chg_cls = "up" if chg >= 0 else "down"
         conf_cls = "high" if "★★★" in conf else ("mid" if "★★" in conf else "low")
         scl = f"strat_{s.lower()}"
         url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
-        # v6.13.34: 回测标记列 — no_entry独立标记，不计入胜负
+        # @since v6.13.34: 回测标记列 — no_entry独立标记，不计入胜负
         bt_mark = ''
         if bt_lookup and code in bt_lookup:
             bt = bt_lookup[code]
@@ -4932,7 +4932,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
     else:
         alerts_html = '<div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">今日无异常告警</span></div>'
     
-    # v6.13.43: 资金去向——按行业汇总主力净流入，无数据时优雅降级
+    # @since v6.13.43: 资金去向——按行业汇总主力净流入，无数据时优雅降级
     capital_flow_html = ""
     ind_flow = {}
     has_flow_data = False
@@ -4965,12 +4965,12 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
     else:
         capital_flow_html = '<div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">主力资金数据不可得（API通道受限），无法展示行业资金流向。建议参考盘口/L2数据或龙虎榜。</span></div>'
     
-    # ── v6.13.1: AI 策略分析 HTML（美化版）──
+    # ── @since v6.13.1: AI 策略分析 HTML（美化版）──
     ai_html = ""
     if ai_report:
         # 将Markdown转换为结构化HTML
         def _md_to_html(md_text, section_class=''):
-            """将AI分析Markdown转为结构化HTML; v6.13.20: 添加HTML转义防护"""
+            """将AI分析Markdown转为结构化HTML; @since v6.13.20: 添加HTML转义防护"""
             import html
             if not md_text: return ''
             lines = md_text.split('\n')
@@ -5007,7 +5007,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
                                 result.append('<tr>' + ''.join(f'<{tag}>{html.escape(c)}</{tag}>' for c in row) + '</tr>')
                             result.append('</table>')
                     continue
-                # v6.13.25: 修复双重转义 — 先escape再替换**，避免<strong>被二次转义
+                # @since v6.13.25: 修复双重转义 — 先escape再替换**，避免<strong>被二次转义
                 if line.startswith('- '):
                     item = line[2:].strip()
                     item_e = html.escape(item)
@@ -5052,15 +5052,15 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             ('fundamental', '基本面分析', 'fundamental'),
             ('risk', '风险提示', 'risk'),
             ('suggestion', '操作建议', 'suggestion'),
-            # v6.20.7: 冠军标的专属三板块（is_champion=True时有值，否则为空字符串自动跳过）
+            # @since v6.20.7: 冠军标的专属三板块（is_champion=True时有值，否则为空字符串自动跳过）
             ('company_profile', '公司概况', 'fundamental'),
             ('market_finance', '行情及财务', 'technical'),
             ('news_research', '机构观点', 'capital'),
         ]
         
-        # v6.13.53: 跨策略冠军获取，用于HTML个股深度研判卡片标注👑
+        # @since v6.13.53: 跨策略冠军获取，用于HTML个股深度研判卡片标注👑
         champion_code_html = pk_results.get('__champion__', {}).get('winner_code', '') if pk_results else ''
-        # v6.14.0: 冠军始终进入深度分析（即使不在TOP10内）
+        # @since v6.14.0: 冠军始终进入深度分析（即使不在TOP10内）
         html_analyses = list(ai_report.get('candidate_analyses', []))
         champion_in_html = any(ca.get('code') == champion_code_html for ca in html_analyses)
         if champion_code_html and not champion_in_html:
@@ -5091,7 +5091,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         
         ai_html += '</div></div>'
     
-    # v6.13.21: 修复HTML回测数据读取 — 指标从bt['metrics']获取，策略从bt['strategy_metrics'](dict)迭代
+    # @since v6.13.21: 修复HTML回测数据读取 — 指标从bt['metrics']获取，策略从bt['strategy_metrics'](dict)迭代
     backtest_html = ''
     if bt_result and bt_result.get('all_trades'):
         bt = bt_result
@@ -5135,7 +5135,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
     else:
         backtest_html = '<div style="color:#94a3b8;padding:1rem;text-align:center">暂无回测数据</div>'
     
-    # v6.14.0: 市场全景图表
+    # @since v6.14.0: 市场全景图表
     market_overview_html = ''
     if all_stocks:
         try:
@@ -5225,7 +5225,7 @@ tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72
 .footer .disclaimer{{color:#ef4444;font-weight:700;margin-top:.6rem;font-size:.82rem}}
 /* links */
 a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decoration:underline;color:#7dd3fc}}
-/* responsive v6.13.42: 全面移动端适配 */
+/* responsive @since v6.13.42: 全面移动端适配 */
 @media(max-width:768px){{
   .container{{padding:.5rem}}
   .header{{padding:1.2rem .8rem}}
@@ -5347,7 +5347,7 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
   .ai-markdown{{font-size:.68rem}}
   .ai-stock-card-body .ai-dim{{font-size:.65rem}}
 }}
-/* v6.13.42: 资金去向卡片 */
+/* @since v6.13.42: 资金去向卡片 */
 .capital-flow{{display:grid;grid-template-columns:1fr;gap:10px;margin-top:1rem}}
 .flow-card{{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:14px 18px;transition:border-color .2s,box-shadow .2s,transform .15s;box-shadow:0 2px 8px rgba(0,0,0,.2)}}
 .flow-card:hover{{border-color:#38bdf8;box-shadow:0 4px 16px rgba(56,189,248,.12);transform:translateY(-1px)}}
@@ -5362,7 +5362,7 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 .flow-summary{{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:18px 22px;margin-top:20px;box-shadow:0 2px 8px rgba(0,0,0,.2)}}
 .top10-conclusion h3{{font-size:1rem;color:#38bdf8;margin-bottom:10px;font-weight:700}}
 .top10-conclusion p{{font-size:.82rem;color:#94a3b8;line-height:1.7;margin-top:8px}}
-/* v6.13.42: AI分析模块美化 */
+/* @since v6.13.42: AI分析模块美化 */
 .ai-section-wrap{{background:linear-gradient(135deg, #1a2332 0%, #1e293b 50%, #172033 100%);border:1px solid #2d3a4f;border-radius:16px;padding:1.8rem;margin:1.5rem 0;box-shadow:0 4px 20px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.03);position:relative;overflow:hidden}}
 .ai-section-wrap::before{{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg, #38bdf8, #8b5cf6, #ec4899);opacity:.8}}
 .ai-section-wrap h2{{font-size:1.2rem;color:#f0f9ff;margin:0 0 1.2rem;padding:0 0 .8rem;border-bottom:1px solid #2d3a4f;font-weight:700;letter-spacing:.04em;display:flex;align-items:center;gap:10px}}
@@ -5403,7 +5403,7 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 .flow-card{{border-left:3px solid transparent;transition:border-left-color .3s,box-shadow .3s,transform .2s}}
 .flow-card:hover{{border-left-color:#38bdf8}}
 .flow-card-header .flow-amount{{margin-left:auto}}
-/* v6.13.42: 回测指标卡片CSS — 从footer移至head */
+/* @since v6.13.42: 回测指标卡片CSS — 从footer移至head */
 .metric-card-bt{{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:13px 10px;text-align:center;transition:border-color .2s,transform .15s}}
 .metric-card-bt:hover{{border-color:#475569;transform:translateY(-1px)}}
 .metric-label-bt{{color:#94a3b8;font-size:.68rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}}
@@ -5488,8 +5488,8 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 def step21_final_verify(mp, fc):
     try:
         with open(mp, 'r', encoding='utf-8') as f: content = f.read()
-        # v6.13.48: 在推荐标的表之后第一个##章节处截断，排除AI分析/策略分布等后续表格干扰
-        # v6.13.42已将TOP10重命名为资金去向，旧分割标记失效
+        # @since v6.13.48: 在推荐标的表之后第一个##章节处截断，排除AI分析/策略分布等后续表格干扰
+        # @since v6.13.42已将TOP10重命名为资金去向，旧分割标记失效
         cutoff_markers = ['## 跨策略冠军PK', '## 回测说明', '## 资金去向', '## 策略分布', '## TOP10']
         main_section = content
         for marker in cutoff_markers:
@@ -5503,8 +5503,8 @@ def step21_final_verify(mp, fc):
         log_alert("ERROR", "数量校验", "MD文件不存在")
 
 def step22_write_history(candidates, champion_code=None):
-    """v6.13.11: 去重写入——按(code,strategy,entry)去重，避免多次运行重复追加
-    v6.16.12: 新增champion_code参数，标记当日👑冠军标的"""
+    """@since v6.13.11: 去重写入——按(code,strategy,entry)去重，避免多次运行重复追加
+    @since v6.16.12: 新增champion_code参数，标记当日👑冠军标的"""
     hf = f"/workspace/推荐历史_{data_date.replace('-', '')}.json"
     existing = safe_read_json(hf)
     existing_keys = set()
@@ -5523,12 +5523,12 @@ def step22_write_history(candidates, champion_code=None):
             "score": c.get('score'), "confidence": c.get('confidence'),
             "entry": entry, "change_pct": c.get('change_pct'),
             "date": data_date, "prediction_date": prediction_date}
-        # v6.16.12: 标记当日跨策略冠军
+        # @since v6.16.12: 标记当日跨策略冠军
         if champion_code and c.get('code') == champion_code:
             rec["is_champion"] = True
         safe_append_json(hf, rec)
         written += 1
-    # v6.20.4 修正：新增/去重后统一归一化 is_champion
+    # @since v6.20.4 修正：新增/去重后统一归一化 is_champion
     # 旧逻辑仅在"新写入"记录上标记 is_champion；若冠军标的此前已写入(去重跳过)则无法补标，
     # 导致 is_champion 停留在最早写入时的冠军，与主报告最新冠军不一致(如000603错标、002015漏标)。
     # 此处对文件全部记录重算：清旧标记，仅本次 champion_code 标 True。
@@ -5564,7 +5564,7 @@ def step26_github_sync(mp, hd, candidates):
                     if len(d) == 8 and d < c15:
                         pf = os.path.join(rd, f)
                         if os.path.exists(pf): os.remove(pf)
-            # v6.8.8: 清理超过15天的HTML报告目录
+            # @since v6.8.8: 清理超过15天的HTML报告目录
             if f.startswith('ashare-screening-'):
                 d = f.replace('ashare-screening-', '')
                 if len(d) == 8 and d < c15:
@@ -5580,7 +5580,7 @@ def step26_github_sync(mp, hd, candidates):
         for f in os.listdir('/workspace'):
             if f.startswith('推荐历史_') and f.endswith('.json'):
                 shutil.copy(os.path.join('/workspace', f), os.path.join(rd, f))
-        # v6.13.18: 同步回测报告到backtest/子目录(GitHub Pages不支持中文文件名)
+        # @since v6.13.18: 同步回测报告到backtest/子目录(GitHub Pages不支持中文文件名)
         bt_html = os.path.join('/workspace', '回测报告.html')
         if os.path.exists(bt_html):
             # 1) GitHub Pages: backtest/ (repo root)
@@ -5602,7 +5602,7 @@ def step26_github_sync(mp, hd, candidates):
         subprocess.run(["git", "-C", rd, "config", "user.name", BOT_AUTHOR_NAME], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", rd, "add", "."], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", rd, "commit", "-m", f"data: 筛选结果 {prediction_date} ({file_version})", "--allow-empty"], capture_output=True, timeout=15)
-        result = _git_with_token(["git", "-C", rd, "push", "origin", "main"], timeout=30, check=False)  # v6.16.30: 60→30s
+        result = _git_with_token(["git", "-C", rd, "push", "origin", "main"], timeout=30, check=False)  # @since v6.16.30: 60→30s
         if result.returncode == 0: log_alert("INFO", "GitHub同步", f"✅ {prediction_date} 已推送")
         else: log_alert("WARNING", "GitHub同步", f"推送失败: {result.stderr[:100]}")
     except Exception as e: log_alert("WARNING", "GitHub同步", f"失败: {str(e)[:100]}")
@@ -5613,7 +5613,7 @@ def step26_github_sync(mp, hd, candidates):
 # 步骤27：飞书推送
 # ============================================================
 def step27_feishu_push(candidates, total_raw, ae, asig, astr, amicro, aind, anew, sd):
-    """v6.20.9: 恢复为8月5日前单卡片样式（撤销 v6.20.8 双卡片改动），回测恢复独立推送。"""
+    """@since v6.20.9: 恢复为8月5日前单卡片样式（撤销 @since v6.20.8 双卡片改动），回测恢复独立推送。"""
     if not FEISHU_WEBHOOK: log_alert("WARNING", "飞书推送", "无Webhook"); return
     try:
         fc = len(candidates)
@@ -5667,7 +5667,7 @@ def update_data_source_monitor(ds):
 # 主流程
 # ============================================================
 def _step_timer(label, func, *args, **kwargs):
-    """v6.16.30: 步骤级耗时监控 — 自动打印每个步骤的执行时间"""
+    """@since v6.16.30: 步骤级耗时监控 — 自动打印每个步骤的执行时间"""
     t0 = time.time()
     try:
         result = func(*args, **kwargs)
@@ -5684,15 +5684,15 @@ def _step_timer(label, func, *args, **kwargs):
 
 def main():
     global market_condition, position_pct, _step_status
-    # v6.13.48: 重试时清除旧步骤状态，防止累积
+    # @since v6.13.48: 重试时清除旧步骤状态，防止累积
     _step_status.clear()
-    # v6.13.26: 初始化会话记忆 — 新日期自动清除旧会话
+    # @since v6.13.26: 初始化会话记忆 — 新日期自动清除旧会话
     init_session(BUILTIN_VERSION, datetime.now().strftime('%Y-%m-%d'))
     print("=" * 60)
     print(f"A股每日盘前短线标的筛选 {BUILTIN_VERSION}")
     print("=" * 60)
 
-    # v6.16.30: 整体超时熔断 — 平台沙箱对全局执行时间有限制(4051错误)
+    # @since v6.16.30: 整体超时熔断 — 平台沙箱对全局执行时间有限制(4051错误)
     # 使用 watchdog 线程，600s 后自动触发 KeyboardInterrupt，避免平台超时杀进程
     _MAIN_TIMEOUT = int(os.environ.get("LV_MAIN_TIMEOUT", "600"))
     _main_start = time.time()
@@ -5713,7 +5713,7 @@ def main():
     _wd = threading.Thread(target=_watchdog, daemon=True)
     _wd.start()
     
-    # v6.13.47: 环境自检 — 凭证缺失时提前告警
+    # @since v6.13.47: 环境自检 — 凭证缺失时提前告警
     env_issues = []
     if not GITHUB_TOKEN: env_issues.append("GitHub Token未配置(GitHub推送/持仓拉取将跳过)")
     if not FEISHU_WEBHOOK: env_issues.append("飞书Webhook未配置(飞书推送将跳过)")
@@ -5763,7 +5763,7 @@ def main():
     print(f"  环境: {market_condition} | 仓位: {position_pct}%")
     record_step_status("步骤8: 大盘环境", "OK", f"{market_condition} {position_pct}%")
     
-    # v6.16.24: 新增回撤断路器和兑现率闭环（从pipeline.py集成）
+    # @since v6.16.24: 新增回撤断路器和兑现率闭环（从pipeline.py集成）
     print("\n[步骤9B] 回撤断路器..."); step9B_circuit_breaker()
     print(f"  仓位: {position_pct}%")
     print("\n[步骤9C] 兑现率闭环..."); step9C_conversion_rate()
@@ -5773,35 +5773,35 @@ def main():
     update_data_source_monitor(ds)
     
     print("\n[步骤10B] 行业补全...")
-    _preload_industry_from_eastmoney(all_stocks)  # v6.9.34: 东方财富HTTP API获取行业分类
+    _preload_industry_from_eastmoney(all_stocks)  # @since v6.9.34: 东方财富HTTP API获取行业分类
     for s in all_stocks: s['industry'] = lookup_industry(s.get('code', ''))
     
     print("\n[步骤10D] 财务数据..."); pledge_data, goodwill_data = step10D_fetch_financials()
     
     raw_pool = [s for s in all_stocks if s.get('change_pct') is not None and s.get('change_pct') >= -9.5
                 and s.get('close') is not None and s.get('close') > 0]
-    # v6.9.42: 预过滤明显不合格标的（ST/科创/北交/创业板/低价/高价），避免占用500名额
+    # @since v6.9.42: 预过滤明显不合格标的（ST/科创/北交/创业板/低价/高价），避免占用500名额
     raw_pool = [s for s in raw_pool
                 if not (s.get('name', '').startswith('ST') or s.get('name', '').startswith('*ST'))
                 and not s.get('code', '').startswith(('688', '8', '300', '301'))
                 and 5 <= s.get('close', 0) <= 100]
-    # v6.9.42: 排序键切换为成交额优先（原换手率优先导致小盘股挤占蓝筹名额）
+    # @since v6.9.42: 排序键切换为成交额优先（原换手率优先导致小盘股挤占蓝筹名额）
     raw_pool.sort(key=lambda x: ((x.get('amount', 0) or 0), (x.get('turnover', 0) or 0)), reverse=True)
     raw_pool = raw_pool[:500]
     total_raw = len(raw_pool)
     print(f"  原始池: {total_raw}只")
     record_step_status("步骤10A: 全市场拉取", "OK", f"{total_raw}只")
 
-    # v6.13.11: 跳过pytdx(沙箱内始终不可达)，腾讯HTTP一级 → iTick二级
-    # v6.13.42: 新增东方财富单股K线降级，腾讯HTTP失败时自动补救
+    # @since v6.13.11: 跳过pytdx(沙箱内始终不可达)，腾讯HTTP一级 → iTick二级
+    # @since v6.13.42: 新增东方财富单股K线降级，腾讯HTTP失败时自动补救
     print("\n[步骤10C] 历史K线..."); kline_data = step10C_fetch_klines_http(raw_pool)
     valid_kline = sum(1 for v in kline_data.values() if v and v.get('closes'))
     if valid_kline < len(raw_pool) * 0.3:
         kline_data = step10C_fetch_klines_itick(raw_pool)
         valid_kline = sum(1 for v in kline_data.values() if v and v.get('closes'))
         log_alert("WARNING", "K线降级", f"腾讯HTTP仅{valid_kline}只有效，已切换iTick")
-    # v6.13.42: 单股K线降级——腾讯HTTP失败时，东方财富HTTP补救
-    # v6.16.29: 串行→ThreadPoolExecutor并发(max_workers=10)
+    # @since v6.13.42: 单股K线降级——腾讯HTTP失败时，东方财富HTTP补救
+    # @since v6.16.29: 串行→ThreadPoolExecutor并发(max_workers=10)
     failed_kline = [c.get('code') for c in raw_pool
                     if not kline_data.get(c.get('code', ''), {}).get('closes')]
     if failed_kline:
@@ -5864,7 +5864,7 @@ def main():
     print("\n[步骤10H] 二级行业..."); sub_industry_data = step10H_fetch_sub_industry(ael)
     print("\n[步骤12] 信号过滤..."); asl, _ = step12_signal_filter(ael, kline_data, fundamental_data, (unlock_events, cb_events, earnings_window), (inst_holding, margin_overheat), pledge_data, goodwill_data); asig = len(asl)
     print("\n[步骤13] 策略匹配..."); sm = step13_strategy_match(asl, kline_data); astr = len(sm)
-    # v6.9.53: 策略匹配成功后统一+1计数+回填当日策略（修复步骤11预加导致计数不准）
+    # @since v6.9.53: 策略匹配成功后统一+1计数+回填当日策略（修复步骤11预加导致计数不准）
     for c in sm:
         c['_recent_7d'] = c.get('_recent_7d', 0) + 1
         c['_recent_7d_strategies'][data_date] = c.get('strategy', '?')
@@ -5880,24 +5880,24 @@ def main():
     
     # 注入二级行业到候选
     for c in final: c['business'] = sub_industry_data.get(c.get('code', ''), '')
-    # v6.9.52: 注入F10基本面到候选（供TOP10卡片使用）
+    # @since v6.9.52: 注入F10基本面到候选（供TOP10卡片使用）
     for c in final:
         fd = fundamental_data.get(c.get('code', ''), {})
         for k, v in fd.items():
             if v is not None: c[f'_fd_{k}'] = v
-    # v6.12.19: 注入60日最高/最低价到候选
+    # @since v6.12.19: 注入60日最高/最低价到候选
     for c in final:
         kd = kline_data.get(c.get('code', ''), {})
         c['_high60'] = kd.get('high60', 0) or 0
         c['_low60'] = kd.get('low60', 0) or 0
-    # v6.12.21: 基于60日区间计算入场档位
+    # @since v6.12.21: 基于60日区间计算入场档位
     for c in final:
         tier_label, tier_cls = _calc_tier_label(c)
         c['_tier_label'] = tier_label
         c['_tier_cls'] = tier_cls
     
-    # v6.12.4: 构建涨停板块分布（供AI板块深度研判使用）
-    # v6.16.20: 使用_is_limit_up精确判定，排除北交所(30%)/创业板科创(20%)/ST伪涨停
+    # @since v6.12.4: 构建涨停板块分布（供AI板块深度研判使用）
+    # @since v6.16.20: 使用_is_limit_up精确判定，排除北交所(30%)/创业板科创(20%)/ST伪涨停
     # 同时构建自算跌停池供新闻筛查兜底
     global _self_dt_cache
     sector_limit_up = {}
@@ -5911,9 +5911,9 @@ def main():
                 sector_limit_up[ind] = sector_limit_up.get(ind, 0) + 1
             if _is_limit_down(code, chg):
                 _self_dt_cache.add(code)
-    # v6.12.10: 预计算盈亏比（板块热度→盈亏比排序，供AI和TOP10使用）
+    # @since v6.12.10: 预计算盈亏比（板块热度→盈亏比排序，供AI和TOP10使用）
     _compute_pl_ratios(final, sector_limit_up)
-    # v6.12.5: 主力资金流向批量获取（东方财富API，仅对最终股票池）
+    # @since v6.12.5: 主力资金流向批量获取（东方财富API，仅对最终股票池）
     print("\n[步骤15A] 主力资金流向..."); flow_data = step10C_flow_fetch_main_inflow(final)
     for s in final:
         code = s.get('code', '')
@@ -5925,18 +5925,18 @@ def main():
     print("\n[步骤15B] AI智能分析(TOP10)..."); ai_report = step15B_ai_analysis(final, kline_data, index_data, market_condition, sector_limit_up, total_raw, ae, asig, astr, amicro, aind, fc)
     
 
-# v6.12.15: 历史回测（读取推荐历史，模拟止盈止损，生成HTML/MD报告+飞书推送+筛选标记）
+# @since v6.12.15: 历史回测（读取推荐历史，模拟止盈止损，生成HTML/MD报告+飞书推送+筛选标记）
     bt_result = None; bt_lookup = {}
     if any(f.startswith("推荐历史_") and f.endswith(".json") for f in os.listdir(DATA_DIR)):
         bt_result = run_backtest(hold_days=10, max_days_lookback=90)
         if bt_result.get('all_trades'):
             generate_backtest_report(bt_result, "/workspace/回测报告.md")
             generate_backtest_html(bt_result, "/workspace/回测报告.html")
-            # v6.16.6: 同步到 backtest/index.html 使 GitHub Pages 链接生效
+            # @since v6.16.6: 同步到 backtest/index.html 使 GitHub Pages 链接生效
             os.makedirs("/workspace/backtest", exist_ok=True)
             import shutil
             shutil.copy("/workspace/回测报告.html", "/workspace/backtest/index.html")
-            # v6.20.9: 恢复独立回测卡推送（撤销 v6.20.8 整合到 step27 的做法，回到8月5日前行为）
+            # @since v6.20.9: 恢复独立回测卡推送（撤销 @since v6.20.8 整合到 step27 的做法，回到8月5日前行为）
             push_backtest_to_feishu(bt_result)
             bt_lookup = _build_backtest_lookup(bt_result)
         record_step_status("步骤25: 历史回测", "OK", f"{len(bt_result.get('all_trades',[]))}笔交易")
@@ -5977,14 +5977,14 @@ def main():
     print("\n[步骤27] 飞书推送..."); step27_feishu_push(final, total_raw, ae, asig, astr, amicro, aind, anew, sd)
     record_step_status("步骤27: 飞书推送", "OK")
     
-    # v6.13.11: 步骤执行状态报告
+    # @since v6.13.11: 步骤执行状态报告
     print_step_status_summary()
     
-    # v6.13.26: 完成会话记忆
+    # @since v6.13.26: 完成会话记忆
     summary = finish_session()
     print(f"\n📝 {summary}")
     
-    # v6.16.30: 输出总耗时
+    # @since v6.16.30: 输出总耗时
     _total_elapsed = time.time() - _main_start
     print(f"\n⏱ 总耗时: {_total_elapsed:.0f}s ({_total_elapsed/60:.1f}分钟)")
     
@@ -5992,30 +5992,30 @@ def main():
     return final, mp
 
 # ============================================================
-# v6.13.46: 筛选任务超时自动重试 — 指数退避，最多3次
+# @since v6.13.46: 筛选任务超时自动重试 — 指数退避，最多3次
 # ============================================================
 _SCREENING_RETRY = 3
-_SCREENING_BACKOFF = [5, 10, 20]  # v6.16.29: [10,20,40]→[5,10,20] 退避等待秒数
+_SCREENING_BACKOFF = [5, 10, 20]  # @since v6.16.29: [10,20,40]→[5,10,20] 退避等待秒数
 
 def _run_screening_with_retry():
     """带重试的筛选主入口。抓取网络/超时/JSON解析等瞬时错误自动重试
-    v6.16.30: 新增KeyboardInterrupt捕获(超时熔断不重试) + 累计耗时检查"""
+    @since v6.16.30: 新增KeyboardInterrupt捕获(超时熔断不重试) + 累计耗时检查"""
     last_error = None
     _retry_total_start = time.time()
-    _RETRY_MAX_TOTAL = 900  # v6.16.30: 累计总耗时上限900s(15分钟)，含重试
+    _RETRY_MAX_TOTAL = 900  # @since v6.16.30: 累计总耗时上限900s(15分钟)，含重试
     for attempt in range(_SCREENING_RETRY):
         try:
             main()
             return  # 成功则退出
         except KeyboardInterrupt:
-            # v6.16.30: 超时熔断发出的SIGINT，不重试
+            # @since v6.16.30: 超时熔断发出的SIGINT，不重试
             print(f"\n⏰ 超时熔断中断，不重试")
             raise
         except (socket.timeout, urllib.error.URLError, ConnectionResetError,
                 TimeoutError, json.JSONDecodeError) as e:
             last_error = e
             if attempt < _SCREENING_RETRY - 1:
-                # v6.16.30: 累计耗时检查 — 重试前先判断总耗时是否已超限
+                # @since v6.16.30: 累计耗时检查 — 重试前先判断总耗时是否已超限
                 total_elapsed = time.time() - _retry_total_start
                 if total_elapsed > _RETRY_MAX_TOTAL:
                     print(f"\n⏰ 累计耗时{total_elapsed:.0f}s超{_RETRY_MAX_TOTAL}s,放弃重试")
@@ -6030,7 +6030,7 @@ def _run_screening_with_retry():
             if 'RemoteDisconnected' in type(e).__name__ or 'BrokenPipe' in type(e).__name__:
                 last_error = e
                 if attempt < _SCREENING_RETRY - 1:
-                    # v6.16.30: 累计耗时检查
+                    # @since v6.16.30: 累计耗时检查
                     total_elapsed = time.time() - _retry_total_start
                     if total_elapsed > _RETRY_MAX_TOTAL:
                         print(f"\n⏰ 累计耗时{total_elapsed:.0f}s超{_RETRY_MAX_TOTAL}s,放弃重试")
@@ -6051,7 +6051,7 @@ def _run_screening_with_retry():
     print(f"❌ 筛选任务失败：已重试{_SCREENING_RETRY}次，全部失败")
     print(f"   最后错误: {type(last_error).__name__}: {str(last_error)[:120]}")
     print(f"{'='*60}")
-    # v6.13.46: 重试耗尽后尝试发送飞书告警
+    # @since v6.13.46: 重试耗尽后尝试发送飞书告警
     try:
         _send_failure_alert(last_error)
     except Exception:
@@ -6059,7 +6059,7 @@ def _run_screening_with_retry():
     raise last_error
 
 def _send_failure_alert(error):
-    """重试耗尽后发送飞书失败告警。v6.13.47: 使用 _http_retry 替代原始 urlopen"""
+    """重试耗尽后发送飞书失败告警。@since v6.13.47: 使用 _http_retry 替代原始 urlopen"""
     if not FEISHU_WEBHOOK: return
     card = {
         "msg_type": "interactive",
