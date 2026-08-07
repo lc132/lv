@@ -2,11 +2,11 @@
 # A股短线筛选 — 历史回测模块 v6.20.12
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
-# v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
-# v6.13.38: no_entry改为独立结果类型——限价单未成交不计入loss，独立标记⚪，显示理论收益但不计入胜率统计
-# v6.13.30: no_entry直接标记失败——限价单未成交视为策略失效，计入loss不再排除
-# v6.13.24: _try_tencent增加Referer头(修复无数据) + 解析过滤非列表元素 + 超时10s + max_drawdown改用复合收益率
-# v6.13.23: _fetch_kline_range 增加重试(2次)、三级兜底(宽泛日期)、run_backtest 增加跨日期K线复用
+# @since v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
+# @since v6.13.38: no_entry改为独立结果类型——限价单未成交不计入loss，独立标记⚪，显示理论收益但不计入胜率统计
+# @since v6.13.30: no_entry直接标记失败——限价单未成交视为策略失效，计入loss不再排除
+# @since v6.13.24: _try_tencent增加Referer头(修复无数据) + 解析过滤非列表元素 + 超时10s + max_drawdown改用复合收益率
+# @since v6.13.23: _fetch_kline_range 增加重试(2次)、三级兜底(宽泛日期)、run_backtest 增加跨日期K线复用
 # ============================================================
 
 import urllib.request
@@ -41,10 +41,10 @@ def _load_version():
 
 BUILTIN_VERSION = _load_version()
 
-# v6.12.24: 独立SSL上下文，解除对主脚本全局opener的依赖
+# @since v6.12.24: 独立SSL上下文，解除对主脚本全局opener的依赖
 _BT_SSL_CTX = ssl._create_unverified_context()
 
-# 策略止损/止盈比例（与主脚本 _STRATEGY_STOP_LOSS / _STRATEGY_TAKE_PROFIT 一致）v6.13.10: 同步主脚本
+# 策略止损/止盈比例（与主脚本 _STRATEGY_STOP_LOSS / _STRATEGY_TAKE_PROFIT 一致）@since v6.13.10: 同步主脚本
 _STRATEGY_STOP_LOSS = {
     'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965,
     'F': 0.965, 'G': 0.95, 'H': 0.94, 'I': 0.95, 'J': 0.94,
@@ -103,7 +103,7 @@ def _fetch_kline_range(code, start_date, lmt=15):
         mc = 'sh' if code.startswith('6') else 'sz'
         url = (f'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?'
                f'param={mc}{code},day,,,{req_lmt},qfq')
-        # v6.13.24: 增加Referer头，修复无数据问题（腾讯API检查Referer）
+        # @since v6.13.24: 增加Referer头，修复无数据问题（腾讯API检查Referer）
         req = urllib.request.Request(url, headers={
             'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://gu.qq.com/'})
@@ -111,7 +111,7 @@ def _fetch_kline_range(code, start_date, lmt=15):
             data = json.loads(resp.read().decode())
         return _parse_tencent_days(data, mc, code)
 
-    # v6.13.23: 一级数据源 — 腾讯HTTP，最多2次重试
+    # @since v6.13.23: 一级数据源 — 腾讯HTTP，最多2次重试
     for attempt in range(2):
         try:
             raw = _try_tencent(lmt + 15)
@@ -153,14 +153,14 @@ def _fetch_kline_range(code, start_date, lmt=15):
                 result = [r for r in bars_all if r['date'] >= start_date]
                 if result:
                     return result
-                # v6.13.23: iTick有数据但全在start_date之前，取最新一根
+                # @since v6.13.23: iTick有数据但全在start_date之前，取最新一根
                 if bars_all:
                     return bars_all[-1:]
         except Exception as e:
             if os.environ.get('LV_DEBUG'):
                 print(f"  [回测K线] iTick失败 {code}: {str(e)[:60]}")
 
-    # v6.13.23: 三级兜底 — 更宽日期范围请求腾讯HTTP（lmt=30），不限制start_date
+    # @since v6.13.23: 三级兜底 — 更宽日期范围请求腾讯HTTP（lmt=30），不限制start_date
     try:
         raw = _try_tencent(30)
         if raw:
@@ -175,18 +175,18 @@ def _fetch_kline_range(code, start_date, lmt=15):
 
 def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
     """模拟单笔交易：盘中触及止损/止盈则出场，否则持有到期
-    v6.13.14: 新增移动止损(盈利达TP50%时保本) + 时间止损(持仓3天仍亏损则离场)
-    v6.13.30: no_entry直接标记为失败——限价单未成交视为策略失效，计入loss"""
+    @since v6.13.14: 新增移动止损(盈利达TP50%时保本) + 时间止损(持仓3天仍亏损则离场)
+    @since v6.13.30: no_entry直接标记为失败——限价单未成交视为策略失效，计入loss"""
     if not klines:
         return {'result': 'no_data', 'exit_price': entry, 'exit_date': '',
                 'exit_reason': 'no_data', 'return_pct': 0, 'hold_days': 0,
                 'max_drawdown_pct': 0, 'max_profit_pct': 0}
 
-    max_floating_loss = 0.0  # v6.16.27: 重命名，更准确反映单笔最大浮亏
+    max_floating_loss = 0.0  # @since v6.16.27: 重命名，更准确反映单笔最大浮亏
     max_profit = 0.0
     kl = klines[:hold_days]
 
-    # v6.16.34: 限价单未成交 → 以次日开盘价追入，按比例调整止损止盈
+    # @since v6.16.34: 限价单未成交 → 以次日开盘价追入，按比例调整止损止盈
     # 次日最低价>进场价说明限价挂单无法成交，改用开盘价追入确保模拟真实
     if kl[0]['low'] > entry:
         chase_entry = kl[0]['open']
@@ -206,7 +206,7 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
 
 def _simulate_single(entry, stop_loss, take_profit, kl, hold_days=10, max_floating_loss=0.0, max_profit=0.0):
     """核心模拟循环：不含追入逻辑，供_simulate_trade追入后调用"""
-    # v6.13.14: 移动止损 — 盈利达止盈目标50%时，将止损上移至保本价
+    # @since v6.13.14: 移动止损 — 盈利达止盈目标50%时，将止损上移至保本价
     trailing_active = False
     trailing_stop = entry  # 保本价
 
@@ -216,17 +216,17 @@ def _simulate_single(entry, stop_loss, take_profit, kl, hold_days=10, max_floati
         max_profit = max(max_profit, high_pct)
         max_floating_loss = min(max_floating_loss, low_pct)
 
-        # v6.12.12: A股T+1规则 — 当日买入不可卖出，i=0跳过止盈止损检查
+        # @since v6.12.12: A股T+1规则 — 当日买入不可卖出，i=0跳过止盈止损检查
         if i == 0:
             continue
 
-        # v6.13.14: 移动止损激活 — 当日最高价达到止盈目标的50%
+        # @since v6.13.14: 移动止损激活 — 当日最高价达到止盈目标的50%
         if not trailing_active:
             tp_mid = (entry + take_profit) / 2
             if k['high'] >= tp_mid:
                 trailing_active = True
 
-        # v6.13.14: 时间止损 — 持仓第3天收盘仍亏损则离场
+        # @since v6.13.14: 时间止损 — 持仓第3天收盘仍亏损则离场
         if i >= 3:
             if k['close'] < entry:
                 return {
@@ -285,7 +285,7 @@ def _simulate_single(entry, stop_loss, take_profit, kl, hold_days=10, max_floati
 
 def _compute_metrics(trades):
     """计算回测指标
-    v6.16.34: 限价单未成交已改为开盘价追入（见_simulate_single），no_entry仅保留向后兼容；chased标记的追入交易计入有效样本"""
+    @since v6.16.34: 限价单未成交已改为开盘价追入（见_simulate_single），no_entry仅保留向后兼容；chased标记的追入交易计入有效样本"""
     if not trades:
         return {'total': 0, 'win_rate': 0, 'avg_return': 0,
                 'max_drawdown': 0, 'profit_factor': 0, 'sharpe': 0}
@@ -294,33 +294,33 @@ def _compute_metrics(trades):
     wins = [t for t in trades if t['result'] == 'win']
     losses = [t for t in trades if t['result'] == 'loss']
     no_data = [t for t in trades if t['result'] == 'no_data']
-    # v6.13.38: no_entry独立统计，不计入有效样本（未实际成交）
-    no_entry = [t for t in trades if t['result'] == 'no_entry']  # v6.16.34: 向后兼容，新回测中no_entry已极少出现
+    # @since v6.13.38: no_entry独立统计，不计入有效样本（未实际成交）
+    no_entry = [t for t in trades if t['result'] == 'no_entry']  # @since v6.16.34: 向后兼容，新回测中no_entry已极少出现
     no_entry_count = len(no_entry)
-    valid_count = total - len(no_data)  # v6.16.34: no_entry追入后计入有效样本
+    valid_count = total - len(no_data)  # @since v6.16.34: no_entry追入后计入有效样本
 
     win_rate = len(wins) / max(valid_count, 1) * 100 if valid_count > 0 else 0
-    avg_return = sum(t['return_pct'] for t in trades if t['result'] not in ('no_data',)) / max(valid_count, 1) if valid_count > 0 else 0  # v6.16.34: no_entry追入后计入有效样本
+    avg_return = sum(t['return_pct'] for t in trades if t['result'] not in ('no_data',)) / max(valid_count, 1) if valid_count > 0 else 0  # @since v6.16.34: no_entry追入后计入有效样本
     avg_win = sum(t['return_pct'] for t in wins) / len(wins) if wins else 0
     avg_loss = sum(t['return_pct'] for t in losses) / len(losses) if losses else 0
-    avg_hold = sum(t['hold_days'] for t in trades if t['hold_days'] > 0) / max(valid_count, 1)  # v6.16.34: 追入后hold_days正常计算
+    avg_hold = sum(t['hold_days'] for t in trades if t['hold_days'] > 0) / max(valid_count, 1)  # @since v6.16.34: 追入后hold_days正常计算
 
-    # v6.16.34: 盈亏比改为总额比（总盈利/总亏损绝对值），排除no_data
+    # @since v6.16.34: 盈亏比改为总额比（总盈利/总亏损绝对值），排除no_data
     total_win_amt = sum(t['return_pct'] for t in wins) if wins else 0
     total_loss_amt = abs(sum(t['return_pct'] for t in losses)) if losses else 0
     profit_factor = round(total_win_amt / total_loss_amt, 2) if total_loss_amt > 0 else 0
 
-    # v6.16.34: 最大回撤改用复合收益率计算，排除no_data
+    # @since v6.16.34: 最大回撤改用复合收益率计算，排除no_data
     max_dd = 0.0; cum_val = 1.0; peak_val = 1.0
     for t in trades:
-        if t['result'] in ('no_data',):  # v6.16.34: no_entry追入后计入
+        if t['result'] in ('no_data',):  # @since v6.16.34: no_entry追入后计入
             continue
         cum_val *= (1 + t['return_pct'] / 100.0)
         peak_val = max(peak_val, cum_val)
         dd = (peak_val - cum_val) / peak_val * 100.0
         max_dd = max(max_dd, dd)
 
-    returns = [t['return_pct'] for t in trades if t['result'] not in ('no_data',)]  # v6.16.34: no_entry追入后计入
+    returns = [t['return_pct'] for t in trades if t['result'] not in ('no_data',)]  # @since v6.16.34: no_entry追入后计入
     if len(returns) > 1:
         avg_r = sum(returns) / len(returns)
         variance = sum((r - avg_r) ** 2 for r in returns) / (len(returns) - 1)
@@ -356,9 +356,9 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         print("  无推荐历史记录，跳过回测")
         return {'all_trades': [], 'metrics': {}, 'strategy_metrics': {}, 'industry_metrics': {}}
 
-    today = datetime.now() + timedelta(hours=8)  # v6.13.10: 北京时间（与主脚本一致）
+    today = datetime.now() + timedelta(hours=8)  # @since v6.13.10: 北京时间（与主脚本一致）
     today_str = today.strftime('%Y-%m-%d')
-    # v6.20.12 修复：回测"缺失昨日数据"
+    # @since v6.20.12 修复：回测"缺失昨日数据"
     # 根因：旧逻辑完全以 prediction_date(买入日) 做包含过滤与分组。盘后运行的推荐会被打上
     #   prediction_date=下一交易日(如 08-06 盘后→08-07)，当回测在买入日(08-07)当天运行时，
     #   prediction_date<today 不成立 → 整批被排除，08-06 的推荐从报告中消失。
@@ -373,21 +373,21 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     current_champion_code = None
     latest_champion_date = None
     for h in history:  # 注意：此循环在 date 过滤之前，history 为完整推荐历史
-        # v6.20.5: 仅纳入 prediction_date<=today 的冠军(已发生、可回测)，排除未来买入日冠军
+        # @since v6.20.5: 仅纳入 prediction_date<=today 的冠军(已发生、可回测)，排除未来买入日冠军
         if h.get('is_champion') and h.get('prediction_date') <= today_str:
             pd = h.get('prediction_date')
             if pd and (latest_champion_date is None or pd > latest_champion_date):
                 latest_champion_date = pd
                 current_champion_code = h.get('code')
     cutoff = today - timedelta(days=max_days_lookback)
-    # v6.20.12: 包含过滤改用运行日 date(而非买入日 prediction_date)，修复盘后推荐被整体排除；
+    # @since v6.20.12: 包含过滤改用运行日 date(而非买入日 prediction_date)，修复盘后推荐被整体排除；
     #   同日新生成的推荐(date==today)仍排除——尚无完整运行日数据；冠军记录豁免该排除。
     history = [h for h in history
                if h.get('date') and h['date'] >= cutoff.strftime('%Y-%m-%d')
                and (h['date'] < today.strftime('%Y-%m-%d') or h.get('is_champion'))]
 
-    # v6.13.10: 去重key改为(code,date,strategy,entry)，保留同股票不同策略的推荐
-    # v6.20.12: 去重key改用运行日 date(与包含过滤一致)，避免盘后推荐(prediction_date=次日)被误并
+    # @since v6.13.10: 去重key改为(code,date,strategy,entry)，保留同股票不同策略的推荐
+    # @since v6.20.12: 去重key改用运行日 date(与包含过滤一致)，避免盘后推荐(prediction_date=次日)被误并
     seen = set()
     unique_history = []
     for h in history:
@@ -400,11 +400,11 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     print(f"  推荐历史: {len(history)} 条")
 
     code_kline_cache = {}
-    # v6.13.23: 按code聚合所有pred_date，先尝试精确获取，失败后启用跨日期复用
+    # @since v6.13.23: 按code聚合所有pred_date，先尝试精确获取，失败后启用跨日期复用
     codes_to_fetch = set((h.get('code', ''), h.get('prediction_date', '')) for h in history)
     print(f"  获取后续K线: {len(codes_to_fetch)} 个(代码,日期)组合...")
 
-    # v6.13.23: 同code的K线缓存（按日期），用于跨日期复用兜底
+    # @since v6.13.23: 同code的K线缓存（按日期），用于跨日期复用兜底
     code_all_klines = {}
 
     for code, pred_date in codes_to_fetch:
@@ -416,13 +416,13 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         klines = _fetch_kline_range(code, pred_date, lmt=hold_days + 5)
         if klines:
             code_kline_cache[cache_key] = {k['date']: k for k in klines}
-            # v6.13.23: 聚合到code_all_klines用于跨日期复用
+            # @since v6.13.23: 聚合到code_all_klines用于跨日期复用
             if code not in code_all_klines:
                 code_all_klines[code] = {}
             code_all_klines[code].update({k['date']: k for k in klines})
         time.sleep(0.02)
 
-    # v6.13.23: 对于获取失败的(code, pred_date)，尝试从同code其他日期缓存中复用
+    # @since v6.13.23: 对于获取失败的(code, pred_date)，尝试从同code其他日期缓存中复用
     missing_count = 0
     reused_count = 0
     for code, pred_date in codes_to_fetch:
@@ -449,10 +449,10 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         code = h.get('code', '')
         strategy = h.get('strategy', '?')
         entry = h.get('entry') or 0
-        # v6.20.12: 运行日 date 优先(=data_date)；无 date 的旧格式回退到 prediction_date(兼容历史)
+        # @since v6.20.12: 运行日 date 优先(=data_date)；无 date 的旧格式回退到 prediction_date(兼容历史)
         date = h.get('date') or h.get('prediction_date', '')
         pred_date = h.get('prediction_date', '')
-        # v6.20.12: 包含已按 date 过滤，故以 date 判空(缺运行日则跳过)，pred_date 缺失时仅标记无数据
+        # @since v6.20.12: 包含已按 date 过滤，故以 date 判空(缺运行日则跳过)，pred_date 缺失时仅标记无数据
         if not code or not entry or not date:
             continue
 
@@ -469,11 +469,11 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         trade['entry'] = entry
         trade['stop_loss'] = sl
         trade['take_profit'] = tp
-        trade['date'] = date                  # v6.20.12: 运行日(=data_date)，报表分组/日期列改用
+        trade['date'] = date                  # @since v6.20.12: 运行日(=data_date)，报表分组/日期列改用
         trade['prediction_date'] = pred_date  # 买入日，仅供K线起点与参考
         trade['score'] = h.get('score', 0)
-        trade['is_champion'] = (code == current_champion_code)  # v6.20.3: 标记最新一期冠军
-        # v6.20.12: 买入日尚未收盘(prediction_date>=today) → 仅展示、不计入胜负(避免盘中噪声污染胜率)
+        trade['is_champion'] = (code == current_champion_code)  # @since v6.20.3: 标记最新一期冠军
+        # @since v6.20.12: 买入日尚未收盘(prediction_date>=today) → 仅展示、不计入胜负(避免盘中噪声污染胜率)
         if pred_date and pred_date >= today_str:
             trade['result'] = 'no_data'
             trade['exit_reason'] = 'holding'
@@ -495,7 +495,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         industry_trades[t['industry']].append(t)
     industry_metrics = {i: _compute_metrics(ts) for i, ts in industry_trades.items()}
 
-    # v6.16.12: 皇冠回测——仅统计跨策略冠军标的
+    # @since v6.16.12: 皇冠回测——仅统计跨策略冠军标的
     champion_trades = [t for t in trades if current_champion_code and t['code'] == current_champion_code]
     champion_metrics = _compute_metrics(champion_trades) if champion_trades else None
     if champion_trades:
@@ -509,7 +509,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     return {
         'all_trades': trades, 'metrics': metrics,
         'strategy_metrics': strategy_metrics, 'industry_metrics': industry_metrics,
-        'champion_trades': champion_trades, 'champion_metrics': champion_metrics,  # v6.16.12
+        'champion_trades': champion_trades, 'champion_metrics': champion_metrics,  # @since v6.16.12
     }
 
 
@@ -528,9 +528,9 @@ def generate_backtest_report(bt_result, output_path=None):
             f.write('# 历史回测报告\n\n暂无回测数据。\n\n## 回测说明\n\n- 回测使用最近90天推荐历史。\n- 单笔最大持仓10个交易日。\n- 按推荐时的进场、止损、止盈价格进行模拟。\n- 遵循A股T+1规则，买入当日不检查止盈止损出场。\n- 出场优先级：止盈 > 移动止损(保本) > 固定止损。移动止损盈利达TP50%激活。\n- 持仓3天收盘仍亏损按时间止损离场。\n- 回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。\n')
         return output_path
 
-    today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.10: 北京时间
-    # v6.16.14: 计算样本日期范围
-    sample_dates = sorted(set(t.get('date', '') for t in trades if t.get('date')))  # v6.20.12: 按运行日分组
+    today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # @since v6.13.10: 北京时间
+    # @since v6.16.14: 计算样本日期范围
+    sample_dates = sorted(set(t.get('date', '') for t in trades if t.get('date')))  # @since v6.20.12: 按运行日分组
     date_range = f"{sample_dates[0]} ~ {sample_dates[-1]}" if len(sample_dates) >= 2 else (sample_dates[0] if sample_dates else 'N/A')
     lines = [
         f"# A股短线筛选 — 历史回测报告",
@@ -589,7 +589,7 @@ def generate_backtest_report(bt_result, output_path=None):
         "| 日期 | 标的 | 代码 | 策略 | 行业 | 进场 | 结果 | 出场 | 收益 | 持仓 |",
         "|------|------|------|------|------|------|------|------|------|------|"
     ])
-    # v6.16.14: 按日期均匀采样，每日期最多10条，确保多日数据均可见
+    # @since v6.16.14: 按日期均匀采样，每日期最多10条，确保多日数据均可见
     recent = []
     for date_key in sorted(set(t.get('date', '') for t in trades), reverse=True):
         day_trades = [t for t in trades if t.get('date') == date_key]
@@ -625,12 +625,12 @@ def generate_backtest_report(bt_result, output_path=None):
 
 
 # ============================================================
-# v6.12.13: 回测标记查找、HTML报告、飞书推送
+# @since v6.12.13: 回测标记查找、HTML报告、飞书推送
 # ============================================================
 
 def _build_backtest_lookup(bt_result):
     """构建 代码→历史回测汇总 的查找字典，供筛选结果表格标记回测结果
-    v6.13.38: no_entry独立统计，不计入win/loss"""
+    @since v6.13.38: no_entry独立统计，不计入win/loss"""
     trades = bt_result.get('all_trades', [])
     if not trades:
         return {}
@@ -646,7 +646,7 @@ def _build_backtest_lookup(bt_result):
         no_entry_count = sum(1 for t in ts if t['result'] == 'no_entry')
         valid = [t for t in ts if t['result'] not in ('no_data', 'no_entry')]
         avg_ret = sum(t['return_pct'] for t in valid) / len(valid) if valid else 0
-        # v6.16.27: 从后往前找最后一个有效交易，避免fallback到no_data/no_entry失真
+        # @since v6.16.27: 从后往前找最后一个有效交易，避免fallback到no_data/no_entry失真
         last_valid = None
         for t in reversed(ts):
             if t['result'] not in ('no_data', 'no_entry'):
@@ -658,13 +658,13 @@ def _build_backtest_lookup(bt_result):
             'no_entry': no_entry_count,
             'avg_return': round(avg_ret, 2),
             'last_result': last['result'], 'last_return': last['return_pct'],
-            'last_date': last.get('date', ''),  # v6.20.12: 运行日
+            'last_date': last.get('date', ''),  # @since v6.20.12: 运行日
         }
     return lookup
 
 
 def _champion_html(champion_trades, champion_metrics):
-    """v6.16.12: 生成皇冠回测HTML板块"""
+    """@since v6.16.12: 生成皇冠回测HTML板块"""
     if not champion_trades or not champion_metrics:
         return '<div style="color:#94a3b8;padding:1rem;text-align:center">暂无皇冠回测数据（历史推荐中尚未标记冠军标的）</div>'
 
@@ -684,7 +684,7 @@ def _champion_html(champion_trades, champion_metrics):
 
     # 冠军交易明细表
     rows = ''
-    for t in reversed(sorted(champion_trades, key=lambda x: str(x.get('date', '')))):  # v6.20.12: 按运行日排序
+    for t in reversed(sorted(champion_trades, key=lambda x: str(x.get('date', '')))):  # @since v6.20.12: 按运行日排序
         name = t.get('name', '')
         code = t.get('code', '')
         strategy = t.get('strategy', '')
@@ -694,7 +694,7 @@ def _champion_html(champion_trades, champion_metrics):
         exit_price = t.get('exit_price', 0)
         ret = t.get('return_pct', 0)
         hold = t.get('hold_days', 0)
-        pred_date = t.get('date', '')  # v6.20.12: 运行日
+        pred_date = t.get('date', '')  # @since v6.20.12: 运行日
         # 结果标签和样式：与主交易明细表一致（中文+no_entry/no_data处理）
         if result == 'win':
             result_cls = 'win'
@@ -722,7 +722,7 @@ def _champion_html(champion_trades, champion_metrics):
 
 def generate_backtest_html(bt_result, output_path=None):
     """生成自包含HTML回测报告（含图表可视化）
-    v6.16.12: 新增👑皇冠回测板块"""
+    @since v6.16.12: 新增👑皇冠回测板块"""
     if output_path is None:
         output_path = os.path.join(DATA_DIR, '回测报告.html')
 
@@ -730,9 +730,9 @@ def generate_backtest_html(bt_result, output_path=None):
     strategy_metrics = bt_result.get('strategy_metrics', {})
     industry_metrics = bt_result.get('industry_metrics', {})
     trades = bt_result.get('all_trades', [])
-    champion_trades = bt_result.get('champion_trades', [])  # v6.16.12
-    champion_metrics = bt_result.get('champion_metrics')     # v6.16.12
-    today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.10: 北京时间
+    champion_trades = bt_result.get('champion_trades', [])  # @since v6.16.12
+    champion_metrics = bt_result.get('champion_metrics')     # @since v6.16.12
+    today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # @since v6.13.10: 北京时间
 
     if not trades:
         html = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>历史回测报告</title>
@@ -780,7 +780,7 @@ def generate_backtest_html(bt_result, output_path=None):
 
     # 交易明细表
     trade_rows = ''
-    # v6.16.14: 按日期均匀采样，每日期最多15条，确保多日数据均可见
+    # @since v6.16.14: 按日期均匀采样，每日期最多15条，确保多日数据均可见
     recent = []
     for date_key in sorted(set(t.get('date', '') for t in trades), reverse=True):
         day_trades = [t for t in trades if t.get('date') == date_key]
@@ -834,7 +834,7 @@ tr:hover td{{background:rgba(56,189,248,0.05)}}
 .badge{{display:inline-block;background:#334155;color:#38bdf8;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600}}
 .win{{color:#22c55e}}
 .loss{{color:#ef4444}}
-/* v6.16.12: 皇冠回测 */
+/* @since v6.16.12: 皇冠回测 */
 .champion-row{{background:rgba(234,179,8,0.06);border-left:3px solid #eab308}}
 .champion-row:hover{{background:rgba(234,179,8,0.12)}}
 .champion-trades th{{background:linear-gradient(135deg,#5c3d0e,#4c2e0e);color:#eab308}}
@@ -921,11 +921,11 @@ def push_backtest_to_feishu(bt_result):
         if not metrics or metrics.get('total', 0) == 0:
             print("  无回测数据，跳过飞书推送")
             return False
-        # v6.13.13: 全部no_data时也推送概要（修复回测0笔时飞书无推送问题）
+        # @since v6.13.13: 全部no_data时也推送概要（修复回测0笔时飞书无推送问题）
 
-        today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # v6.13.10: 北京时间
+        today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # @since v6.13.10: 北京时间
         pb = "https://lc132.github.io/lv"
-        bt_url = f"{pb}/backtest/"  # v6.13.18: GitHub Pages不支持中文文件名，统一使用backtest/目录
+        bt_url = f"{pb}/backtest/"  # @since v6.13.18: GitHub Pages不支持中文文件名，统一使用backtest/目录
 
         # 策略TOP3（按胜率）
         strategy_metrics = bt_result.get('strategy_metrics', {})
