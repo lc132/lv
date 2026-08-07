@@ -10,6 +10,11 @@ description: A股每日盘前短线标的智能筛选(v6.20.12)。基于前一�
 >
 > **版本重编号说明（2026-08-05）**：原 `v6.16.38 / v6.16.39 / v6.16.40` 三个补丁实际发生在基线 `v6.20.2` **之后**，编号低于基线属版本回落，现依时间顺序重编号为 `v6.20.3 / v6.20.4 / v6.20.5`。代码注释与本文件已同步。历史 commit message 中的旧编号不再改写，以此说明为准。
 
+> **代码注释版本号约定（P2-1，@since 语义标记）**：为从根源消除"内联版本注释未随发版同步"的遗漏，**所有代码注释/docstring 中的版本号一律使用 `@since vX.Y.Z` 形式**，表示"引入版本"，**不随发版变动**、不参与同步。
+> - 仅 `scripts/sync_version.py` 的 **8 个锚点**（ashare_screener.py 模块 docstring 首行 + 兜底常量；pre-check-version.py 兜底常量；SKILL.md frontmatter + H1；lib/backtest.py 模块头 + 兜底常量；sunday_industry_pull.py docstring 首行）为"**当前版本**"声明点，发版时由 `sync_version.py` 同步。
+> - 其余内联版本标记（含本次 v6.20.12 的回测日期口径修复、行业白名单治理等）均为 `@since v6.20.12`，即使发版到 v6.20.13 也**保持不动**——它们记录"该特性引入于何版本"，而非"当前版本"。
+> - `策略调整记录.json` 的 `"version"` 字段是数据记录（每条记录描述"该版本引入了哪些变更"），同理不随发版改写，不采用 `@since` 前缀。
+
 - **v6.20.6**: 版本治理 P0 整改——(1)scripts/sync_version.py 改锚定正则多点同步，`--check` 真校验真退出 (2)scripts/pre_push_check.py 增加 VERSION 单调性校验、lib 全量编译、提交信息低版本检测 (3)新增 .github/workflows/quality-gate.yml 接入 CI (4)修复自动提交双 v 前缀 (5)策略调整记录.json 追加方向修正为 insert(0) 与 ashare_screener.py 对齐
 - **v6.20.5**: 皇冠冠军锁定prediction_date<=today约束——排除未来买入日冠军被误选为最新一期（原记为 v6.16.40，因低于当时基线 v6.20.2 已重编号）
 - **v6.20.4**: step22推荐历史is_champion归一化——(1)写推荐历史后对文件全部记录重算is_champion，清旧标记仅本次champion_code标True (2)修复去重跳过导致冠军标的已存在时无法补标、is_champion停留在最早写入冠军(000603错标、002015漏标)的Bug，使推荐历史冠军与主报告冠军一致（原记为 v6.16.39，因低于当时基线 v6.20.2 已重编号）
