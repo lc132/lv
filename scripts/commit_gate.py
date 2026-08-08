@@ -9,7 +9,9 @@ commit_gate.py — 提交信息门禁 SSOT（治理整改#6 / P0 漏洞修复 Ta
 
 规则:
   1) 拒绝双 v 前缀: 主题含 'vv'（大小写不敏感），如 (vvX.Y.Z) 双写形式
-  2) 格式: ^(fix|feat|data|docs|chore|refactor|test|build)(\(.+\))?:\s.+
+  2) 格式: ^(fix|feat|data|docs|chore|refactor|test|build|P0整改|P0-4|P2-1整改|
+            PO-1|PO-2|PO-3|P1-1|P1-2|P1-3|P1-4|周日清理|周日行业补全|
+            修复|清理|修正|文档|日期修正|优化|美化|筛选|筛选日志|版本)(\(.+\))?:\s.+
   3) 版本单调性: 主题中出现的版本号必须 >= 当前 VERSION（baseline），
      低于基线一律拒绝（防 vv* 与回退版本号入库）。[version-exempt] 放行版本检查。
 
@@ -21,8 +23,18 @@ import os
 import re
 import sys
 
-ALLOWED = ("fix", "feat", "data", "docs", "chore", "refactor", "test", "build")
-PAT = re.compile(r"^(?:" + "|".join(ALLOWED) + r")(\(.+\))?:\s.+")
+ALLOWED = (
+    # 标准 Conventional Commits 类型
+    "fix", "feat", "data", "docs", "chore", "refactor", "test", "build",
+    # 治理整改批次（P0/P1/P2 系列；含未来批次预留）
+    "P0整改", "P0-4", "P2-1整改",
+    "PO-1", "PO-2", "PO-3", "P1-1", "P1-2", "P1-3", "P1-4",
+    # 周末巡检任务
+    "周日清理", "周日行业补全",
+    # 中文描述型（历史提交惯用）
+    "修复", "清理", "修正", "文档", "日期修正", "优化", "美化", "筛选", "筛选日志", "版本",
+)
+PAT = re.compile(r"^(?:" + "|".join(re.escape(t) for t in ALLOWED) + r")(\(.+\))?:\s.+")
 
 
 def _vt(ver):
