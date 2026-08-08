@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# ============================================================================
+# push_p0.sh — 将 P0 整改原子推送到 lc132/lv (main)
+#
+# PO-2 整改：终结逐文件提交（曾一次变更拆 6-8 条同 message 提交，累计 37 条重复，
+#   污染历史/revert 失效/放大 CI 失败观感/触发 65 次 Pages cancelled）。
+# 改为 Git Database API 原子提交：一次逻辑变更 = 一条提交
+#   blobs -> tree(base_tree+变更项) -> commit(统一身份) -> 更新 ref
+# 所有变更文件合并为单条提交，幂等跳过未变更文件。
+#
+# 用法:  GITHUB_TOKEN=xxx bash push_p0.sh ["自定义提交信息"]
+#        （或已授权环境直接 bash push_p0.sh）
+# ============================================================================
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 1) token
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  echo "ℹ️ 使用环境中已有的 GITHUB_TOKEN（长度 ${#GITHUB_TOKEN}）"
+else
+  TOKEN_SH=/root/.codebuddy/skills/github-connector/scripts/get_token.sh
+  # shellcheck disable=SC1090
+  source "$TOKEN_SH" github
+  if [ -z "${GITHUB_TOKEN:-}" ]; then
+    echo "❌ 未获取到 GITHUB_TOKEN" >&2; exit 1
+  fi
+fi
+
+OWNER=lc132; REPO=lv; BRANCH=main
+API="https://api.kkgithub.com/repos/$OWNER/$REPO"
+
+# 2) 提交信息（必须过 commit_gate：type: 前缀 / 无双 v / 版本单调）
+MSG="${1:-chore: P0整改 原子提交(SSOT锚定同步/质量门禁/原子push)}"
+
+echo "=== 预检: 运行质量门禁 ==="
+python3 "$SCRIPT_DIR/scripts/pre_push_check.py" >/dev/null 2>&1 || { echo "❌ 门禁未通过"; exit 1; }
+echo "✅ 门禁通过"
+
+echo "=== 提交信息门禁(commit_gate) ==="
+python3 "$SCRIPT_DIR/scripts/commit_gate.py" "$MSG" || { echo "❌ 提交信息门禁未过，中止"; exit 1; }
+echo "✅ 提交信息通过门禁"
+
+# 3) 原子提交主体：blobs -> tree -> commit -> 更新 ref
+python3 - "$SCRIPT_DIR" "$MSG" "$BRANCH" <<'PY'
+import sys, os, json, base64, hashlib, requests
+from datetime import datetime, timezone
+
+SCRIPT_DIR, MSG, BRANCH = sys.argv[1], sys.argv[2], sys.argv[3]
+TOK = os.environ["GITHUB_TOKEN"]
+API = "https://api.kkgithub.com/repos/lc132/lv"
+H = {"Authorization": f"Bearer {TOK}", "Content-Type": "application/json"}
+
+# 纳入原子提交的文件（含本次 P0-1 的 _meta.json 与 PO-2 的 push_p0.sh 自身）
+FILES = [
+    "scripts/commit_gate.py", "scripts/lint_commit_msg.py", "scripts/sync_version.py",
+    "scripts/pre_push_check.py", "pre-check-version.py", "lib/backtest.py",
+    "ashare_screener.py", "sunday_industry_pull.py", "SKILL.md", "VERSION",
+    "策略调整记录.json", "_meta.json", "push_p0.sh",
+]
+
+# base commit / tree
+ref = requests.get(f"{API}/git/ref/heads/{BRANCH}", headers=H, timeout=30).json()
+base_commit = ref["object"]["sha"]
+base_tree = requests.get(f"{API}/git/commits/{base_commit}", headers=H, timeout=30).json()["tree"]["sha"]
+
+# 远端当前树 path->sha（幂等跳过未变更文件）
+rt = requests.get(f"{API}/git/trees/{base_tree}?recursive=1", headers=H, timeout=30).json()
+remote_sha = {t["path"]: t["sha"] for t in rt.get("tree", []) if t["type"] == "blob"}
+
+def local_blob_sha(data):
+    return hashlib.sha1(("blob %d\0" % len(data)).encode() + data).hexdigest()
+
+entries, changed = [], []
+for f in FILES:
+    p = os.path.join(SCRIPT_DIR, f)
+    if not os.path.exists(p):
+        print(f"  ⏭️ 本地缺失，跳过: {f}")
+        continue
+    data = open(p, "rb").read()
+    if remote_sha.get(f) == local_blob_sha(data):
+        continue  # 与远端一致 -> 不计入本次原子提交
+    r = requests.post(f"{API}/git/blobs", headers=H,
+                      data=json.dumps({"content": base64.b64encode(data).decode(), "encoding": "base64"}),
+                      timeout=60)
+    if r.status_code != 201:
+        print(f"  ❌ blob 失败 {f}: {r.status_code} {r.text[:120]}"); sys.exit(1)
+    mode = "100755" if f.endswith(".sh") else "100644"
+    entries.append({"path": f, "mode": mode, "type": "blob", "sha": r.json()["sha"]})
+    changed.append(f)
+
+if not entries:
+    print("⏭️ 无变更文件，跳过提交")
+    sys.exit(0)
+
+# tree（以 base_tree 为基底，仅叠加变更项）
+t = requests.post(f"{API}/git/trees", headers=H,
+                  data=json.dumps({"base_tree": base_tree, "tree": entries}), timeout=60)
+if t.status_code != 201:
+    print(f"  ❌ tree 失败: {t.status_code} {t.text[:200]}"); sys.exit(1)
+tree_sha = t.json()["sha"]
+
+# commit（统一机器人身份，巩固 P0-4）
+now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+author = {"name": "ashare-screener", "email": "ashare-bot@github.com", "date": now}
+c = requests.post(f"{API}/git/commits", headers=H,
+                  data=json.dumps({"message": MSG, "tree": tree_sha,
+                                   "parents": [base_commit], "author": author, "committer": author}),
+                  timeout=60)
+if c.status_code != 201:
+    print(f"  ❌ commit 失败: {c.status_code} {c.text[:200]}"); sys.exit(1)
+commit_sha = c.json()["sha"]
+
+# 更新 ref（原子落库）
+u = requests.patch(f"{API}/git/refs/heads/{BRANCH}", headers=H,
+                   data=json.dumps({"sha": commit_sha, "force": False}), timeout=60)
+if u.status_code not in (200, 201):
+    print(f"  ❌ ref 更新失败: {u.status_code} {u.text[:200]}"); sys.exit(1)
+
+print(f"✅ 原子提交 {commit_sha[:10]} 已推送，包含 {len(changed)} 个文件:")
+for f in changed:
+    print(f"   - {f}")
+PY
+
+echo "查看: https://github.com/$OWNER/$REPO/commits/$BRANCH"

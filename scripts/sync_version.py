@@ -9,6 +9,7 @@ VERSION 文件是唯一版本来源。本脚本在每次发版时运行，将 VE
   - pre-check-version.py 兜底常量
   - SKILL.md              frontmatter description / H1 标题
   - lib/backtest.py       模块头注释 / 兜底常量
+  - _meta.json            version 字段（对外发布展示版本，曾长期失同步）
   - 策略调整记录.json     在头部插入一条新版本记录（version/date/params/changes）
 
 用法:
@@ -53,6 +54,9 @@ ANCHORS = [
     ("sunday_industry_pull.py",
      r"(?m)^(周日行业补全拉取 )v\d+\.\d+\.\d+",
      "docstring 首行"),
+    ("_meta.json",
+     r'(?m)("version":\s*")v\d+\.\d+\.\d+(")',
+     "version 字段（对外发布展示版本）"),
 ]
 
 
