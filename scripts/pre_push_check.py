@@ -45,12 +45,13 @@ def _current_version():
 
 
 # 统一提交者身份白名单（P0-4）
-# 仅允许以下两个「可关联 GitHub」的真实身份（P0-4 审计结论：历史上 4 种非统一身份共 6 次提交，
-# 其中 bot@trae.ai / Trae Bot、A-Share Screener、A股筛选机器人 等含无法关联 GitHub 的虚构域名，
-# 已收敛）。下一轮巡检提交者身份数须 ≤ 2。
+# 仅允许以下「可关联 GitHub」的真实身份。下一轮巡检提交者身份数须 ≤ 2。
+# 机器人已统一为 GitHub noreply 格式（P0-1），旧 ashare-bot@github.com 无法关联账户→author=null，
+# 仅保留用于兼容历史提交（不阻断门禁）；新提交一律使用 noreply 格式。
 ALLOWED_AUTHOR_EMAILS = {
-    "ashare-bot@github.com",                 # 机器人 ashare-screener
-    "72593777+lc132@users.noreply.github.com",  # 人类维护者 lc132
+    "72593777+ashare-screener@users.noreply.github.com",  # 机器人 ashare-screener（P0-1 现行）
+    "72593777+lc132@users.noreply.github.com",            # 人类维护者 lc132
+    "ashare-bot@github.com",                             # 历史兼容（P0-1 前机器人邮箱，不关联账户）
 }
 
 

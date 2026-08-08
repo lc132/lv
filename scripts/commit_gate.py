@@ -27,7 +27,7 @@ ALLOWED = (
     # 标准 Conventional Commits 类型
     "fix", "feat", "data", "docs", "chore", "refactor", "test", "build",
     # 治理整改批次（P0/P1/P2 系列；含未来批次预留）
-    "P0整改", "P0-4", "P2-1整改",
+    "P0整改", "P0-1", "P0-4", "P2-1整改",
     "PO-1", "PO-2", "PO-3", "P1-1", "P1-2", "P1-3", "P1-4",
     # 周末巡检任务
     "周日清理", "周日行业补全",

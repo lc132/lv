@@ -243,7 +243,7 @@ def step26_github_sync(ctx):
                 log_alert("INFO", "GitHub同步", f"版本变更，同步策略调整记录")
         
         # Git操作
-        subprocess.run(["git", "-C", repo_dir, "config", "user.email", "ashare-bot@github.com"], check=True, timeout=10)
+        subprocess.run(["git", "-C", repo_dir, "config", "user.email", "72593777+ashare-screener@users.noreply.github.com"], check=True, timeout=10)  # @since P0-1: GitHub 可识别 noreply 格式
         subprocess.run(["git", "-C", repo_dir, "config", "user.name", "ashare-screener"], check=True, timeout=10)
         # @since v6.20.12 治理(P1-1): 仅暂存本函数实际写入的文件(SKILL.md / 策略调整记录.json)，
         # 杜绝 git add -A 把 main 已删除的制品(被 .gitignore 忽略)误重新入库

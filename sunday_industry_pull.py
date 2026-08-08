@@ -41,7 +41,7 @@ WORK_DIR = "/tmp/sunday_industry_pull"
 # 此处镜像同一对常量值；pre_push_check.py 静态校验确保 ashare_screener.py 中的定义存在。
 # 历史出现的 bot@trae.ai / "Trae Bot" 为无法关联 GitHub 的虚构域名，已在此收敛（P0-4）。
 BOT_AUTHOR_NAME = "ashare-screener"
-BOT_AUTHOR_EMAIL = "ashare-bot@github.com"
+BOT_AUTHOR_EMAIL = "72593777+ashare-screener@users.noreply.github.com"  # @since P0-1: GitHub 可识别 noreply 格式, 消除 author=null
 
 def _git_with_token(cmd_args, timeout=60, check=True):
     """使用 GIT_ASKPASS 安全传递 Token，避免 Token 出现在进程列表中"""

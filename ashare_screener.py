@@ -121,7 +121,7 @@ def _load_builtin_version():
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"
 BOT_AUTHOR_NAME = "ashare-screener"  # @since v6.20.2: 统一机器人提交身份(治理整改#4)
-BOT_AUTHOR_EMAIL = "ashare-bot@github.com"
+BOT_AUTHOR_EMAIL = "72593777+ashare-screener@users.noreply.github.com"  # @since P0-1: GitHub 可识别 noreply 格式, 消除 author=null
 beijing_now = None; beijing_date = None; beijing_weekday = None
 _beijing_api_ok = False  # @since v6.13.11: 北京时间API是否正常
 data_date = None; prediction_date = None; pred_yyyymmdd = None
