@@ -4,9 +4,11 @@
 #
 # PO-2 整改：终结逐文件提交（曾一次变更拆 6-8 条同 message 提交，累计 37 条重复，
 #   污染历史/revert 失效/放大 CI 失败观感/触发 65 次 Pages cancelled）。
-# 改为 Git Database API 原子提交：一次逻辑变更 = 一条提交
-#   blobs -> tree(base_tree+变更项) -> commit(统一身份) -> 更新 ref
+# P2-4: 主仓 main 已加「Require PR」保护，代码禁止直推
+#   → 原子提交落到 feature 分支并开 PR（带变更动机 body），由维护者自评审后合并。
+#   blobs -> tree(base_tree+变更项) -> commit(统一身份) -> 建 feature 分支 -> 开 PR
 # 所有变更文件合并为单条提交，幂等跳过未变更文件。
+# 数据类（行业缓存/推荐历史→lv-data、制品→gh-pages）由 sunday_industry_pull.py / step26 直推，不经本脚本。
 #
 # 用法:  GITHUB_TOKEN=xxx bash push_p0.sh ["自定义提交信息"]
 #        （或已授权环境直接 bash push_p0.sh）
@@ -44,6 +46,8 @@ API="https://api.kkgithub.com/repos/$OWNER/$REPO"
 
 # 2) 提交信息（必须过 commit_gate：type: 前缀 / 无双 v / 版本单调）
 MSG="${1:-chore: P0整改 原子提交(SSOT锚定同步/质量门禁/原子push)}"
+# P2-4: 第2参数作为 PR body（变更动机）；缺省时脚本基于 MSG+变更文件自动生成
+BODY="${2:-}"
 
 echo "=== 预检: 运行质量门禁 ==="
 python3 "$SCRIPT_DIR/scripts/pre_push_check.py" >/dev/null 2>&1 || { echo "❌ 门禁未通过"; exit 1; }
@@ -53,12 +57,12 @@ echo "=== 提交信息门禁(commit_gate) ==="
 python3 "$SCRIPT_DIR/scripts/commit_gate.py" "$MSG" || { echo "❌ 提交信息门禁未过，中止"; exit 1; }
 echo "✅ 提交信息通过门禁"
 
-# 3) 原子提交主体：blobs -> tree -> commit -> 更新 ref
-python3 - "$SCRIPT_DIR" "$MSG" "$BRANCH" <<'PY'
+# 3) 原子提交主体：blobs -> tree -> commit -> 建 feature 分支 -> 开 PR（P2-4）
+python3 - "$SCRIPT_DIR" "$MSG" "$BRANCH" "$BODY" <<'PY'
 import sys, os, json, base64, hashlib, requests
 from datetime import datetime, timezone
 
-SCRIPT_DIR, MSG, BRANCH = sys.argv[1], sys.argv[2], sys.argv[3]
+SCRIPT_DIR, MSG, BRANCH, BODY = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 TOK = os.environ["GITHUB_TOKEN"]
 API = "https://api.kkgithub.com/repos/lc132/lv"
 H = {"Authorization": f"Bearer {TOK}", "Content-Type": "application/json"}
@@ -67,7 +71,7 @@ H = {"Authorization": f"Bearer {TOK}", "Content-Type": "application/json"}
 FILES = [
     "scripts/commit_gate.py", "scripts/lint_commit_msg.py", "scripts/sync_version.py",
     "scripts/pre_push_check.py", "pre-check-version.py", "lib/backtest.py", "lib/sync.py",
-    "lib/runtime.py", "lib/__init__.py",
+    "lib/runtime.py", "lib/__init__.py", ".github/workflows/quality-gate.yml",
     "ashare_screener.py", "sunday_industry_pull.py", "SKILL.md", "VERSION",
     "策略调整记录.json", "_meta.json", "push_p0.sh", ".gitignore",
     "hooks/commit-msg", "hooks/pre-commit",
@@ -125,15 +129,29 @@ if c.status_code != 201:
     print(f"  ❌ commit 失败: {c.status_code} {c.text[:200]}"); sys.exit(1)
 commit_sha = c.json()["sha"]
 
-# 更新 ref（原子落库）
-u = requests.patch(f"{API}/git/refs/heads/{BRANCH}", headers=H,
-                   data=json.dumps({"sha": commit_sha, "force": False}), timeout=60)
-if u.status_code not in (200, 201):
-    print(f"  ❌ ref 更新失败: {u.status_code} {u.text[:200]}"); sys.exit(1)
+# P2-4: 主仓 main 已加「Require PR」保护，代码禁止直推。
+# 改为：提交落到 feature 分支 + 开 PR（带变更动机 body），由维护者自评审后合并。
+ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+branch = f"bot/auto-{ts}"
+r = requests.post(f"{API}/git/refs", headers=H,
+                  data=json.dumps({"ref": f"refs/heads/{branch}", "sha": commit_sha}), timeout=60)
+if r.status_code not in (200, 201):
+    print(f"  ❌ 分支创建失败 {branch}: {r.status_code} {r.text[:200]}"); sys.exit(1)
+print(f"✅ 分支 {branch} 已创建（提交 {commit_sha[:10]}，{len(changed)} 文件）")
 
-print(f"✅ 原子提交 {commit_sha[:10]} 已推送，包含 {len(changed)} 个文件:")
-for f in changed:
-    print(f"   - {f}")
+body = BODY or (MSG + "\n\n## 变更文件\n" + "\n".join(f"- {f}" for f in changed))
+pr = requests.post(f"{API}/pulls", headers=H,
+                   data=json.dumps({"title": MSG, "head": branch, "base": "main", "body": body}), timeout=60)
+if pr.status_code in (200, 201):
+    pr_url = pr.json().get("html_url", "")
+    print(f"✅ 已开 PR（待自评审合并）: {pr_url}")
+    print(f"   变更文件: {len(changed)} 个")
+    for f in changed:
+        print(f"   - {f}")
+else:
+    print(f"  ⚠️ PR 创建失败 {pr.status_code} {r.text[:200]}")
+    print(f"  分支已就绪，请手动开 PR: https://github.com/lc132/lv/pull/new/{branch}")
+    sys.exit(1)
 PY
 
-echo "查看: https://github.com/$OWNER/$REPO/commits/$BRANCH"
+echo "查看: https://github.com/lc132/lv/pulls"
