@@ -121,8 +121,30 @@ def check_version_monotonic(baseline_ref, require_bump):
     return True
 
 
+def _load_commit_gate():
+    """加载 commit_gate 模块（SSOT）。优先 scripts 包导入，失败按路径加载。"""
+    try:
+        import scripts.commit_gate as cg
+        return cg
+    except ImportError:
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location(
+            "commit_gate", os.path.join(REPO, "scripts", "commit_gate.py"))
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        return _mod
+
+
+def check_single_commit_message(msg, current_version=None):
+    """校验单条提交信息（复用 commit_gate SSOT）。返回 (ok, reason)。
+    供 CI 自动 commit、push_p0.sh 等单条场景调用。"""
+    cg = _load_commit_gate()
+    return cg.validate_commit_message(msg, current_version=current_version)
+
+
 def check_commit_messages(baseline_ref):
-    """检查 baseline..HEAD 的提交主题：拒绝双 v、拒绝主题版本 < 当前 VERSION。"""
+    """检查 baseline..HEAD 的提交主题：拒绝双 v、拒绝格式不符、拒绝版本回退。
+    P0 Task 1: 统一委托 commit_gate.validate_commit_message（与 commit-msg 钩子同源）。"""
     if not baseline_ref:
         print("⚠ 未指定 --baseline-ref，跳过提交信息检查")
         return True
@@ -134,23 +156,13 @@ def check_commit_messages(baseline_ref):
     if not subjects:
         print("⚠ baseline..HEAD 无新提交，跳过提交信息检查")
         return True
-    cur = _vt(_current_version())
+    cur = _current_version()
     ok = True
     for s in subjects:
-        if "[version-exempt]" in s:
-            continue
-        # 拒绝双 v（形如 (vv6.20.2)）
-        if "vv" in s.lower():
-            print(f"❌ 提交主题含双 v: {s}")
+        good, reason = check_single_commit_message(s, current_version=cur)
+        if not good:
+            print(f"❌ 提交信息门禁未过: {reason}  | 主题: {s}")
             ok = False
-            continue
-        # 拒绝主题中的版本号低于当前 VERSION
-        for m in re.finditer(r"v(\d+)\.(\d+)\.(\d+)", s):
-            vt = tuple(int(x) for x in m.groups())
-            if cur is not None and vt < cur:
-                print(f"❌ 提交主题版本 {m.group(0)} < 当前 VERSION {_current_version()}: {s}")
-                ok = False
-                break
     if ok:
         print(f"提交信息检查 OK ({len(subjects)} 个提交)")
     return ok
