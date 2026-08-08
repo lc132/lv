@@ -8,7 +8,7 @@ commit_gate.py — 提交信息门禁 SSOT（治理整改#6 / P0 漏洞修复 Ta
 杜绝自动提交 / kkgithub 推送绕过 quality-gate 门禁。
 
 规则:
-  1) 拒绝双 v 前缀: 主题含 'vv'（大小写不敏感），如 (vv6.20.2)
+  1) 拒绝双 v 前缀: 主题含 'vv'（大小写不敏感），如 (vvX.Y.Z) 双写形式
   2) 格式: ^(fix|feat|data|docs|chore|refactor|test|build)(\(.+\))?:\s.+
   3) 版本单调性: 主题中出现的版本号必须 >= 当前 VERSION（baseline），
      低于基线一律拒绝（防 vv* 与回退版本号入库）。[version-exempt] 放行版本检查。
