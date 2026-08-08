@@ -187,7 +187,7 @@ def check_file_version_rollback():
       （sync_version.py::ANCHORS 已强制与 VERSION 一致），故本函数复用 sync_version 锚点校验。
     - .py 文档串/注释中的历史版本号（如 v6.13.38）属「引入版本」记录，按 @since 约定应写为
       `@since v6.13.38`；将其整体判为「回落」会误杀全仓（lib/*.py 多数为历史注记），故不扫描。
-    - 提交信息级的版本回落（vv / 主题版本 < 基线）由 commit_gate 在 commit-msg 钩子、
+    - 提交信息级的版本回落（双 v / 主题版本 < 基线）由 commit_gate 在 commit-msg 钩子、
       CI commit-gate 步骤、以及脚本内自动提交（含 sunday_industry_pull.py）前置门禁中统一拦截。
     """
     # 复用 SSOT 幂等自校验（已覆盖全部锚点文件，含 sunday_industry_pull.py 的 L4/L481）
