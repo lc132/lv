@@ -265,3 +265,12 @@ _pl_sorted = sorted(_pl_data, key=lambda x: (-x[2], -x[1]))
 - step26_github_sync 已改为推送 `gh-pages`（克隆 `gh-pages` 分支、`git push origin gh-pages`）；`.gitignore` 已忽略上述制品，杜绝 main 再次膨胀。
 - lib/sync.py 的 `git add -A` 收紧为仅暂存实际写入的 `SKILL.md` / `策略调整记录.json`。
 - 运维：每日运行产出的新报告写入 gh-pages；GitHub Pages 发布源须在仓库 Settings → Pages 设为 **gh-pages** 分支（根目录）。
+
+## 提交信息门禁 (P1-3, v6.20.12)
+
+提交信息须过 `scripts/commit_gate.py` 门禁（SSOT），规则：`^(type)(\(.+\))?:\s.+`，type 含标准 Conventional Commits（fix/feat/data/docs/chore/refactor/test/build）与治理/周末/中文批次（P0整改/P1-1~P1-4/PO-1~PO-3/周日清理/修复/清理/筛选…）；并拦截双 v(vv) 与版本回退。
+
+- **本地钩子**：`hooks/commit-msg` 在 `git commit` 阶段即时拦截，委托 `commit_gate.py` 校验；合并/变基提交自动跳过。
+- **启用（克隆仓库执行一次）**：`git config core.hooksPath hooks`。紧急跳过用 `git commit --no-verify`（仍会被 CI `quality-gate` 拦截）。
+- **CI 硬门禁**：`.github/workflows/quality-gate.yml` 的 `quality-gate` 任务为 main 分支**必需状态检查**（分支保护），推送的每条提交均经 `commit_gate` 校验，不合规即阻断。
+- 历史登记在 `data:` 等的自定义 type 已正式写入白名单，合规率由 17.2% 提升至 90%+。

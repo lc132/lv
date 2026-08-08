@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# ============================================================================
+# hooks/commit-msg — 提交信息门禁 (P1-3, 本地钩子)
+#
+# 作用: 在 git commit 阶段即拦截不合规提交信息, 与 CI 的 quality-gate 互为双保险。
+#       门禁规则 SSOT 在 scripts/commit_gate.py (validate_commit_message),
+#       本钩子仅做"读取消息 -> 委托校验 -> 非 0 退出即中止提交"。
+#
+# 启用 (仓库克隆中执行一次):  git config core.hooksPath hooks
+# 跳过本次校验 (紧急):        git commit --no-verify
+# ============================================================================
+set -euo pipefail
+
+MSG_FILE="${1:-}"
+if [ -z "$MSG_FILE" ]; then
+  echo "❌ commit-msg 钩子未收到消息文件路径" >&2
+  exit 1
+fi
+
+# 读取提交信息
+MSG="$(cat "$MSG_FILE" 2>/dev/null || true)"
+
+# 合并/变基由 git 自动生成的提交不强制门禁 (仍由 CI quality-gate 兜底)
+if git rev-parse --verify MERGE_HEAD >/dev/null 2>&1; then
+  exit 0
+fi
+if printf '%s' "$MSG" | grep -q '^Merge '; then
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo ".")"
+GATE="$REPO_ROOT/scripts/commit_gate.py"
+
+if [ ! -f "$GATE" ]; then
+  # 钩子早于脚本存在时, 不阻断提交 (避免初始化期误伤)
+  exit 0
+fi
+
+if python3 "$GATE" "$MSG"; then
+  exit 0
+else
+  echo "" >&2
+  echo "❌ 提交信息未通过门禁, 提交已中止。" >&2
+  echo "   规范: <type>: <描述>, type ∈ {fix,feat,data,...,P1-3,周日清理,修复,...}" >&2
+  echo "   放行示例: P1-3: 接入 commit-msg 钩子" >&2
+  echo "   紧急跳过: git commit --no-verify (仍会被 CI quality-gate 拦截)" >&2
+  exit 1
+fi

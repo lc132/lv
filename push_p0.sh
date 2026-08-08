@@ -57,6 +57,7 @@ FILES = [
     "scripts/pre_push_check.py", "pre-check-version.py", "lib/backtest.py", "lib/sync.py",
     "ashare_screener.py", "sunday_industry_pull.py", "SKILL.md", "VERSION",
     "策略调整记录.json", "_meta.json", "push_p0.sh", ".gitignore",
+    "hooks/commit-msg",
 ]
 
 # base commit / tree
@@ -85,7 +86,7 @@ for f in FILES:
                       timeout=60)
     if r.status_code != 201:
         print(f"  ❌ blob 失败 {f}: {r.status_code} {r.text[:120]}"); sys.exit(1)
-    mode = "100755" if f.endswith(".sh") else "100644"
+    mode = "100755" if f.endswith(".sh") or f.startswith("hooks/") else "100644"
     entries.append({"path": f, "mode": mode, "type": "blob", "sha": r.json()["sha"]})
     changed.append(f)
 
