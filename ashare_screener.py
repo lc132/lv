@@ -5555,7 +5555,9 @@ def step26_github_sync(mp, hd, candidates):
         repo_url = f"https://github.com/{GITHUB_REPO}.git"
         rd = "/tmp/lv_sync"
         if os.path.exists(rd): shutil.rmtree(rd, ignore_errors=True)
-        _git_with_token(["git", "clone", "--depth", "1", "--branch", "main", repo_url, rd], timeout=30)
+        # @since v6.20.12 治理(P1-1): 生成物与源码物理分离——克隆 gh-pages 分支推送制品，
+        # 保证 main 仅含源码+配置；gh-pages 由 Pages 托管(报告 URL 不变)
+        _git_with_token(["git", "clone", "--depth", "1", "--branch", "gh-pages", repo_url, rd], timeout=30)
         c15 = (datetime.strptime(prediction_date, '%Y-%m-%d') - timedelta(days=15)).strftime('%Y-%m-%d').replace('-', '')
         for f in list(os.listdir(rd)):
             for prefix in ['短线标的_', '推荐历史_']:
@@ -5623,7 +5625,8 @@ def step26_github_sync(mp, hd, candidates):
         subprocess.run(["git", "-C", rd, "config", "user.name", BOT_AUTHOR_NAME], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", rd, "add", "."], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", rd, "commit", "-m", _commit_msg, "--allow-empty"], capture_output=True, timeout=15)
-        result = _git_with_token(["git", "-C", rd, "push", "origin", "main"], timeout=30, check=False)  # @since v6.16.30: 60→30s
+        # @since v6.20.12 治理(P1-1): 制品推送目标改为 gh-pages（main 不再承载制品）
+        result = _git_with_token(["git", "-C", rd, "push", "origin", "gh-pages"], timeout=30, check=False)  # @since v6.16.30: 60→30s
         if result.returncode == 0: log_alert("INFO", "GitHub同步", f"✅ {prediction_date} 已推送")
         else: log_alert("WARNING", "GitHub同步", f"推送失败: {result.stderr[:100]}")
     except Exception as e: log_alert("WARNING", "GitHub同步", f"失败: {str(e)[:100]}")

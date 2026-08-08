@@ -54,9 +54,9 @@ H = {"Authorization": f"Bearer {TOK}", "Content-Type": "application/json"}
 # 纳入原子提交的文件（含本次 P0-1 的 _meta.json 与 PO-2 的 push_p0.sh 自身）
 FILES = [
     "scripts/commit_gate.py", "scripts/lint_commit_msg.py", "scripts/sync_version.py",
-    "scripts/pre_push_check.py", "pre-check-version.py", "lib/backtest.py",
+    "scripts/pre_push_check.py", "pre-check-version.py", "lib/backtest.py", "lib/sync.py",
     "ashare_screener.py", "sunday_industry_pull.py", "SKILL.md", "VERSION",
-    "策略调整记录.json", "_meta.json", "push_p0.sh",
+    "策略调整记录.json", "_meta.json", "push_p0.sh", ".gitignore",
 ]
 
 # base commit / tree
