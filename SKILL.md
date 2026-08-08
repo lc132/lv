@@ -10,6 +10,8 @@ description: A股每日盘前短线标的智能筛选(v6.20.12)。基于前一�
 >
 > **版本重编号说明（2026-08-05）**：原 `v6.16.38 / v6.16.39 / v6.16.40` 三个补丁实际发生在基线 `v6.20.2` **之后**，编号低于基线属版本回落，现依时间顺序重编号为 `v6.20.3 / v6.20.4 / v6.20.5`。代码注释与本文件已同步。历史 commit message 中的旧编号不再改写，以此说明为准。
 
+> **版本回落修正说明（sunday_industry_pull.py，2026-08-08）**：commit `f399e69` / `fcec3aa` 在基线 `v6.20.6` 时将 `sunday_industry_pull.py` 的版本标记写为 `v6.13.38`，回落 7 个次版本且长期无留档。依 @since 约定（P2-1）该标记已改为引入版本语义 `@since v6.13.39`（记录该特性实际引入版本，非当前版本）；文件"当前版本"声明点（docstring 首行 L4 与 print 语句 L481）同步至 `v6.20.12`（SSOT 锚点，由 `sync_version.py` 保证与 `VERSION` 一致）。版本回落门禁现覆盖该文件：提交信息级 `commit_gate`（commit-msg 钩子 + CI commit-gate 步骤 + 脚本内自动提交前置校验）对**全部 .py 文件的提交**生效，含 sunday_industry_pull.py 的自动提交（P0 Task 1 已接入）；文件级「当前版本」声明点由 `sync_version.py` 锚点校验保证与 VERSION 一致（8 锚点含 sunday L4/L481）。历史 commit message 中的旧编号不再改写，以此说明为准。
+
 > **代码注释版本号约定（P2-1，@since 语义标记）**：为从根源消除"内联版本注释未随发版同步"的遗漏，**所有代码注释/docstring 中的版本号一律使用 `@since vX.Y.Z` 形式**，表示"引入版本"，**不随发版变动**、不参与同步。
 > - 仅 `scripts/sync_version.py` 的 **8 个锚点**（ashare_screener.py 模块 docstring 首行 + 兜底常量；pre-check-version.py 兜底常量；SKILL.md frontmatter + H1；lib/backtest.py 模块头 + 兜底常量；sunday_industry_pull.py docstring 首行）为"**当前版本**"声明点，发版时由 `sync_version.py` 同步。
 > - 其余内联版本标记（含本次 v6.20.12 的回测日期口径修复、行业白名单治理等）均为 `@since v6.20.12`，即使发版到 v6.20.13 也**保持不动**——它们记录"该特性引入于何版本"，而非"当前版本"。
