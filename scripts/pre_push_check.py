@@ -168,6 +168,21 @@ def check_commit_messages(baseline_ref):
     return ok
 
 
+def check_file_version_rollback():
+    """文件级版本回落检测（仅针对 SSOT「当前版本」声明点，不误杀历史 @since 注记）。
+
+    P0-2: 覆盖全部 .py 文件含 sunday_industry_pull.py。实现说明：
+    - 真正需要拦截的是「当前版本声明」回落到低于基线，该声明仅存在于 8 个 SSOT 锚点
+      （sync_version.py::ANCHORS 已强制与 VERSION 一致），故本函数复用 sync_version 锚点校验。
+    - .py 文档串/注释中的历史版本号（如 v6.13.38）属「引入版本」记录，按 @since 约定应写为
+      `@since v6.13.38`；将其整体判为「回落」会误杀全仓（lib/*.py 多数为历史注记），故不扫描。
+    - 提交信息级的版本回落（vv / 主题版本 < 基线）由 commit_gate 在 commit-msg 钩子、
+      CI commit-gate 步骤、以及脚本内自动提交（含 sunday_industry_pull.py）前置门禁中统一拦截。
+    """
+    # 复用 SSOT 幂等自校验（已覆盖全部锚点文件，含 sunday_industry_pull.py 的 L4/L481）
+    return _check_sync_version()
+
+
 def main():
     p = argparse.ArgumentParser(description="发版前质量门禁")
     p.add_argument("--baseline-ref", default=None,
@@ -182,6 +197,7 @@ def main():
         ("静态检查", _check_static()),
         ("版本单调性", check_version_monotonic(args.baseline_ref, args.require_bump)),
         ("提交信息", check_commit_messages(args.baseline_ref)),
+        (".py 版本回落", check_file_version_rollback()),
     ]
     ok = all(passed for _, passed in checks)
     print("--- 门禁汇总 ---")
