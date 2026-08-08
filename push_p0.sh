@@ -63,10 +63,13 @@ TOK = os.environ["GITHUB_TOKEN"]
 API = "https://api.kkgithub.com/repos/lc132/lv"
 H = {"Authorization": f"Bearer {TOK}", "Content-Type": "application/json"}
 
-# 纳入原子提交的文件（含本次 P0-1 的 _meta.json 与 PO-2 的 push_p0.sh 自身）
-# 提交3: PO-2 push_p0.sh 幂等锁（防并发重入重复提交）
+# 纳入原子提交的文件（治理整改批次统一原子推送清单）
 FILES = [
-    "push_p0.sh",
+    "scripts/commit_gate.py", "scripts/lint_commit_msg.py", "scripts/sync_version.py",
+    "scripts/pre_push_check.py", "pre-check-version.py", "lib/backtest.py", "lib/sync.py",
+    "ashare_screener.py", "sunday_industry_pull.py", "SKILL.md", "VERSION",
+    "策略调整记录.json", "_meta.json", "push_p0.sh", ".gitignore",
+    "hooks/commit-msg", "hooks/pre-commit",
 ]
 
 # base commit / tree
