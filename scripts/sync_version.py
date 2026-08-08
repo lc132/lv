@@ -21,6 +21,7 @@ import re
 import json
 import argparse
 import sys
+import subprocess
 from datetime import date
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -106,9 +107,37 @@ def sync_adjust_record(ver, changes, check_only):
     return None
 
 
+def create_release_tag(ver):
+    """发版锚点（P1-2）：在 REPO 仓库创建并推送 vX.Y.Z 标签，保证可回滚到确定版本。
+
+    幂等：标签已存在则跳过。打标签失败（如无推送权限/CI 环境）仅告警，不影响版本同步。
+    """
+    tag = ver if ver.startswith("v") else "v" + ver
+    try:
+        have = subprocess.run(["git", "-C", REPO, "tag", "-l", tag],
+                              capture_output=True, text=True, timeout=15).stdout.strip()
+    except Exception:
+        have = ""
+    if have == tag:
+        print(f"⏭️ 标签 {tag} 已存在，跳过")
+        return
+    try:
+        subprocess.run(["git", "-C", REPO, "tag", "-a", tag, "-m", f"Release {tag}"],
+                       check=True, capture_output=True, text=True, timeout=15)
+        subprocess.run(["git", "-C", REPO, "push", "origin", tag],
+                       check=True, capture_output=True, text=True, timeout=30)
+        print(f"✅ 已创建并推送发版标签 {tag}")
+    except Exception as e:
+        print(f"⚠️ 创建/推送标签 {tag} 失败（不影响版本同步，可稍后手动 git push origin {tag}）: {str(e)[:120]}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="仅校验一致性，不写文件")
+    ap.add_argument("--release", action="store_true",
+                    help="同步版本锚点后，创建并推送 vX.Y.Z 发版标签（P1-2 发版流程）")
+    ap.add_argument("--tag-only", action="store_true",
+                    help="仅创建并推送发版标签（不重新同步版本锚点）")
     ap.add_argument("--changes", nargs="*",
                     default=["版本同步：由 sync_version.py 从 VERSION 写入"],
                     help="追加到策略调整记录的变更说明")
@@ -119,6 +148,10 @@ def main():
         print(f"❌ VERSION 格式非法: {ver!r}")
         sys.exit(1)
     print("VERSION =", ver)
+
+    if args.tag_only:
+        create_release_tag(ver)
+        sys.exit(0)
 
     errors = []
     changed_files = []
@@ -153,6 +186,9 @@ def main():
         print("✅ 所有版本锚点与 VERSION 一致")
     else:
         print("✅ 已同步: " + (", ".join(changed_files) if changed_files else "无变更"))
+
+    if args.release:
+        create_release_tag(ver)
     sys.exit(0)
 
 
