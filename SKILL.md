@@ -288,3 +288,39 @@ _pl_sorted = sorted(_pl_data, key=lambda x: (-x[2], -x[1]))
 - **本地钩子 `hooks/pre-commit`**：硬校验 `git config user.name/user.email` 必须属于上表白名单，不匹配（含 `Trae Bot <bot@trae.ai>`、IDE 默认身份、旧 `ashare-bot@github.com`）**直接拒绝提交**。合并/变基提交（`MERGE_HEAD`/`REBASE_HEAD`）自动跳过。
 - **CI 兜底**：`scripts/pre_push_check.py::check_author_email_whitelist` 扫描 `baseline..HEAD` 作者邮箱，仅放行两个 noreply 邮箱 + 历史遗留 `ashare-bot@github.com`（兼容 v6.20.x tag 之前的 legacy 提交，不重写历史）。
 - **验收口径**：新提交 `author=null = 0`；提交者身份种类 ≤ 2（历史遗留 null 提交不重写，避免破坏 v6.20.x tag）。
+
+## 策略自动检查机制 (strategy_check, v6.20.12)
+
+`strategy_check` 是一套**以仓位（`position_pct`）为执行杠杆**的自动风控闭环：触发信号写入「推荐历史」（`推荐历史_YYYYMMDD.json`）的 `type=strategy_check` 记录，供次日 / T+1 判定。
+
+### 触发条件与判定周期
+
+| 机制 | 函数 | 触发条件 | 判定周期 | 调整动作 |
+|------|------|----------|----------|----------|
+| 回撤断路器 | `step9B_circuit_breaker` | 任一持仓当日亏损 > `circuit_breaker_threshold_pct`（默认 3.0%） | 当日触发 + 昨日（`data_date-1`）是否已触发 → **连续 2 日** | 连续 2 日 → `position_pct = 30`；首日 → `max(20, position_pct * 0.5)` |
+| T+1 兑现率闭环 | `step9C_conversion_rate` | 近 `conversion_rate_window_days`（默认 10）天兑现率 < `conversion_rate_threshold`（默认 0.3） | T+1（当日推荐 vs 次日收盘），窗口内样本 ≥ 5 才评估 | 低于阈值 → `position_pct = max(20, position_pct - 10)`；≥ `conversion_rate_restore`（默认 0.6）→ `position_pct = min(75, position_pct + 5)` |
+| 版本/参数快照 | `step6_file_init` | 每次运行首发版检查 | 运行日 | 向推荐历史追加 `strategy_check{version, params, date}`（当版本首次出现） |
+
+### 数据落点
+
+- 触发记录：`/workspace/推荐历史_*.json` 中 `{"type":"strategy_check","date":...,"checks":{"circuit_breaker_triggered":bool}}`（step9B）与 `{"type":"strategy_check","version":...,"params":...,"date":...}`（step6）。
+- step9B 读昨日 `strategy_check` 记录的 `checks.circuit_breaker_triggered` 判断是否「连续 2 日」。
+
+### ⚠️ 失效 / 死参数（待治理）
+
+以下参数仅存在于 `DEFAULT_PARAMS`（ashare_screener.py ~L407），**无任何活动代码分支引用**（定义即死，不会触发任何调整）：
+
+| 参数 | 默认值 | 现状 |
+|------|--------|------|
+| `win_rate_drop_threshold` | 10 | 死参数，零引用 |
+| `consecutive_weeks` | 2 | 死参数，零引用 |
+| `max_adjust_params` | 3 | 死参数，零引用 |
+| `conversion_rate_consecutive_days` | 3 | `step9C` 读取（~L1086）但从未使用——读而未用 |
+
+> 注：`search_budget`（默认 25）是**活参数**（step2 区域 ~L763 动态调整 `+5`），**不属于**死参数。
+> TODO（P2-3 遗留）：上述死参数要么接到对应判定分支（如 `consecutive_weeks` 接 step9C 连续周数、`win_rate_drop_threshold` 接回测胜率回落），要么从 `DEFAULT_PARAMS` 删除，避免误导维护者。
+
+### 验收口径
+
+- 连续 2 日回撤触发 → 次日 `position_pct = 30`（可在推荐历史 `strategy_check` 记录追溯）。
+- T+1 兑现率闭环按窗口动态调整仓位，日志含「兑现率 X/Y = Z%」与仓位变动。
