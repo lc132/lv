@@ -119,7 +119,8 @@ def _load_builtin_version():
     return "v6.20.12"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
-GITHUB_REPO = "lc132/lv"
+GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
+INDUSTRY_CACHE_REPO = "lc132/lv-data"  # @since P2-2: 行业缓存等数据迁独立仓，step0B 恢复源
 BOT_AUTHOR_NAME = "ashare-screener"  # @since v6.20.2: 统一机器人提交身份(治理整改#4)
 BOT_AUTHOR_EMAIL = "72593777+ashare-screener@users.noreply.github.com"  # @since P0-1: GitHub 可识别 noreply 格式, 消除 author=null
 beijing_now = None; beijing_date = None; beijing_weekday = None
@@ -718,7 +719,7 @@ def _industry_sync_failed(msg):
 
 def step0B_sync_industry_cache():
     """@since v6.16.37: 筛选前确保 /workspace 行业缓存文件存在且有效。
-    缺失/损坏时从 GitHub 仓库(lc132/lv)自动同步；同步失败则硬性告警并中止筛选，
+    @since P2-2: 缺失/损坏时从数据仓(lc132/lv-data)自动同步；同步失败则硬性告警并中止筛选，
     防止行业分类错误(回退到L2代码段映射)污染筛选结果。"""
     cache_files = [INDUSTRY_CACHE_FILE, SUB_INDUSTRY_CACHE_FILE]
     need_sync = False
@@ -733,7 +734,7 @@ def step0B_sync_industry_cache():
     repo_dir = "/tmp/lv_industry_pull"
     if os.path.exists(repo_dir):
         shutil.rmtree(repo_dir, ignore_errors=True)
-    repo_url = f"https://github.com/{GITHUB_REPO}.git"
+    repo_url = f"https://github.com/{INDUSTRY_CACHE_REPO}.git"
     try:
         _git_with_token(["git", "clone", "--depth", "1", "--branch", "main", repo_url, repo_dir], timeout=60)
     except Exception as e:

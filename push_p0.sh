@@ -67,6 +67,7 @@ H = {"Authorization": f"Bearer {TOK}", "Content-Type": "application/json"}
 FILES = [
     "scripts/commit_gate.py", "scripts/lint_commit_msg.py", "scripts/sync_version.py",
     "scripts/pre_push_check.py", "pre-check-version.py", "lib/backtest.py", "lib/sync.py",
+    "lib/runtime.py", "lib/__init__.py",
     "ashare_screener.py", "sunday_industry_pull.py", "SKILL.md", "VERSION",
     "策略调整记录.json", "_meta.json", "push_p0.sh", ".gitignore",
     "hooks/commit-msg", "hooks/pre-commit",

@@ -33,7 +33,8 @@ if not GITHUB_TOKEN:
 if not GITHUB_TOKEN:
     print("ERROR: 未找到GitHub Token，请设置GITHUB_TOKEN环境变量或创建/workspace/.github_token文件")
     sys.exit(1)
-GITHUB_REPO = "lc132/lv"
+GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
+DATA_REPO = "lc132/lv-data"        # @since P2-2: 行业缓存等数据迁独立仓，避免主仓膨胀
 WORK_DIR = "/tmp/sunday_industry_pull"
 
 # 统一提交身份常量（SSOT: ashare_screener.py v6.20.2 定义，治理整改#4 / P0-4）
@@ -494,7 +495,7 @@ def main():
     print("\n[1] 拉取仓库...")
     if os.path.exists(WORK_DIR):
         shutil.rmtree(WORK_DIR, ignore_errors=True)
-    repo_url = f"https://github.com/{GITHUB_REPO}.git"
+    repo_url = f"https://github.com/{DATA_REPO}.git"
     result = _git_with_token(
         ["git", "clone", "--depth", "1", "--branch", "main", repo_url, WORK_DIR],
         timeout=60
