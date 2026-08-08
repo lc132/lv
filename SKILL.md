@@ -274,3 +274,17 @@ _pl_sorted = sorted(_pl_data, key=lambda x: (-x[2], -x[1]))
 - **启用（克隆仓库执行一次）**：`git config core.hooksPath hooks`。紧急跳过用 `git commit --no-verify`（仍会被 CI `quality-gate` 拦截）。
 - **CI 硬门禁**：`.github/workflows/quality-gate.yml` 的 `quality-gate` 任务为 main 分支**必需状态检查**（分支保护），推送的每条提交均经 `commit_gate` 校验，不合规即阻断。
 - 历史登记在 `data:` 等的自定义 type 已正式写入白名单，合规率由 17.2% 提升至 90%+。
+
+## 提交者身份治理 (P0-1, v6.20.12)
+
+提交者身份严格收敛为**两个**、且均关联 GitHub 账户（杜绝 `author=null`）：
+
+| 身份 | name | email（GitHub noreply，关联 lc132 账户） |
+|------|------|------------------------------------------|
+| 人类维护者 | `lc132` | `72593777+lc132@users.noreply.github.com` |
+| 机器人 | `ashare-screener` | `72593777+ashare-screener@users.noreply.github.com` |
+
+- **机器人邮箱统一为 GitHub noreply 格式**：原 `ashare-bot@github.com` 无法关联账户（API 返回 `author=null`），v6.20.2 身份统一后仍产生 2 次 IDE（Trae Bot `<bot@trae.ai>`）泄漏提交、累计 28 条 `author=null`（21.5%），均已废弃。代码常量 `BOT_AUTHOR_EMAIL` / `user.email`（`ashare_screener.py` / `sunday_industry_pull.py` / `lib/sync.py`）统一改为 noreply 格式。
+- **本地钩子 `hooks/pre-commit`**：硬校验 `git config user.name/user.email` 必须属于上表白名单，不匹配（含 `Trae Bot <bot@trae.ai>`、IDE 默认身份、旧 `ashare-bot@github.com`）**直接拒绝提交**。合并/变基提交（`MERGE_HEAD`/`REBASE_HEAD`）自动跳过。
+- **CI 兜底**：`scripts/pre_push_check.py::check_author_email_whitelist` 扫描 `baseline..HEAD` 作者邮箱，仅放行两个 noreply 邮箱 + 历史遗留 `ashare-bot@github.com`（兼容 v6.20.x tag 之前的 legacy 提交，不重写历史）。
+- **验收口径**：新提交 `author=null = 0`；提交者身份种类 ≤ 2（历史遗留 null 提交不重写，避免破坏 v6.20.x tag）。
