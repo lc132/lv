@@ -36,6 +36,13 @@ if not GITHUB_TOKEN:
 GITHUB_REPO = "lc132/lv"
 WORK_DIR = "/tmp/sunday_industry_pull"
 
+# 统一提交身份常量（SSOT: ashare_screener.py v6.20.2 定义，治理整改#4 / P0-4）
+# sunday_industry_pull.py 为独立脚本，不直接 import ashare_screener（避免触发其重型副作用），
+# 此处镜像同一对常量值；pre_push_check.py 静态校验确保 ashare_screener.py 中的定义存在。
+# 历史出现的 bot@trae.ai / "Trae Bot" 为无法关联 GitHub 的虚构域名，已在此收敛（P0-4）。
+BOT_AUTHOR_NAME = "ashare-screener"
+BOT_AUTHOR_EMAIL = "ashare-bot@github.com"
+
 def _git_with_token(cmd_args, timeout=60, check=True):
     """使用 GIT_ASKPASS 安全传递 Token，避免 Token 出现在进程列表中"""
     askpass_script = None
@@ -663,8 +670,8 @@ def main():
     # 7. Push to GitHub
     print("\n[7] 推送到GitHub...")
     os.chdir(WORK_DIR)
-    subprocess.run(["git", "config", "user.email", "bot@trae.ai"], capture_output=True, timeout=10)
-    subprocess.run(["git", "config", "user.name", "Trae Bot"], capture_output=True, timeout=10)
+    subprocess.run(["git", "config", "user.email", BOT_AUTHOR_EMAIL], capture_output=True, timeout=10)
+    subprocess.run(["git", "config", "user.name", BOT_AUTHOR_NAME], capture_output=True, timeout=10)
     subprocess.run(["git", "add", "行业缓存.json", "二级行业缓存.json", _REVIEW_LOG_FILE],
                    capture_output=True, timeout=10)
 
@@ -684,9 +691,30 @@ def main():
         n_rm = len([a for a in review_actions if a['action'] == 'remove'])
         if n_rm:
             wl_note = f" | 白名单自动摘除{n_rm}"
-    subprocess.run(["git", "commit", "-m",
-                    f"周日行业补全 (一级{new_primary}+二级{new_secondary}){wl_note}"],
-                   capture_output=True, timeout=10)
+    # @since v6.20.12 治理(P0 Task 1): 自动提交信息前置门禁，并统一 type: 前缀格式
+    _commit_msg = f"data: 周日行业补全 (一级{new_primary}+二级{new_secondary}){wl_note}"
+    try:
+        import importlib.util as _ilu
+        _ver = ""
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION"),
+                      encoding="utf-8") as _vf:
+                _ver = _vf.read().strip()
+        except OSError:
+            _ver = ""
+        _spec = _ilu.spec_from_file_location(
+            "commit_gate",
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "commit_gate.py"))
+        _cg = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_cg)
+        _ok, _reason = _cg.validate_commit_message(_commit_msg, current_version=_ver or None)
+        if not _ok:
+            print(f"  ❌ 提交信息未过门禁，跳过推送: {_reason}")
+            return
+    except Exception as _e:
+        print(f"  ❌ 门禁校验异常，保守跳过推送: {str(_e)[:80]}")
+        return
+    subprocess.run(["git", "commit", "-m", _commit_msg], capture_output=True, timeout=10)
     push_result = _git_with_token(["git", "push", "origin", "main"], timeout=60, check=False)
     if push_result.returncode == 0:
         print("  ✅ 推送成功")
