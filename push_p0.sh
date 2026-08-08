@@ -15,6 +15,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# 0) 幂等锁 (PO-2): 防并发重入, 杜绝重复提交
+LOCK="/tmp/push_p0.lock"
+if [ -e "$LOCK" ]; then
+  OLD_PID="$(cat "$LOCK" 2>/dev/null || true)"
+  if [ -n "${OLD_PID:-}" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+    echo "ℹ️ 已有 push_p0.sh 运行中 (PID $OLD_PID)，本次退出以避免重复提交"; exit 0
+  fi
+  echo "⚠️ 发现过期锁 (PID ${OLD_PID:-?} 已不在)，清理后继续"; rm -f "$LOCK"
+fi
+echo "$$" > "$LOCK"
+trap 'rm -f "$LOCK"' EXIT
+
 # 1) token
 if [ -n "${GITHUB_TOKEN:-}" ]; then
   echo "ℹ️ 使用环境中已有的 GITHUB_TOKEN（长度 ${#GITHUB_TOKEN}）"
@@ -52,12 +64,9 @@ API = "https://api.kkgithub.com/repos/lc132/lv"
 H = {"Authorization": f"Bearer {TOK}", "Content-Type": "application/json"}
 
 # 纳入原子提交的文件（含本次 P0-1 的 _meta.json 与 PO-2 的 push_p0.sh 自身）
+# 提交3: PO-2 push_p0.sh 幂等锁（防并发重入重复提交）
 FILES = [
-    "scripts/commit_gate.py", "scripts/lint_commit_msg.py", "scripts/sync_version.py",
-    "scripts/pre_push_check.py", "pre-check-version.py", "lib/backtest.py", "lib/sync.py",
-    "ashare_screener.py", "sunday_industry_pull.py", "SKILL.md", "VERSION",
-    "策略调整记录.json", "_meta.json", "push_p0.sh", ".gitignore",
-    "hooks/commit-msg",
+    "push_p0.sh",
 ]
 
 # base commit / tree
@@ -103,7 +112,7 @@ tree_sha = t.json()["sha"]
 
 # commit（统一机器人身份，巩固 P0-4）
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-author = {"name": "ashare-screener", "email": "ashare-bot@github.com", "date": now}
+author = {"name": "ashare-screener", "email": "72593777+ashare-screener@users.noreply.github.com", "date": now}  # @since P0-1: GitHub 可识别 noreply 格式
 c = requests.post(f"{API}/git/commits", headers=H,
                   data=json.dumps({"message": MSG, "tree": tree_sha,
                                    "parents": [base_commit], "author": author, "committer": author}),
