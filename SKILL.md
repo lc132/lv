@@ -256,3 +256,12 @@ _pl_sorted = sorted(_pl_data, key=lambda x: (-x[2], -x[1]))
 - 主力净流入: >1亿
 - 评分维度: 封板质量(0-3) + 空间潜力(0-3) + 板块强度(0-3) + 资金强度(0-3)
 - 输出: /workspace/overnight_result.json
+
+## 仓库结构治理 (P1-1, v6.20.12)
+
+生成物与源码物理分离（main 体积下降约 55%，code diff 信噪比显著提升）：
+- **main**：仅源码 + 配置（83 文件 / ~2.4MB），禁止承载制品。
+- **gh-pages**：承载全部制品——`ashare-screening-*/`、`*.html`、`短线标的*.md`、`回测报告*`、`推荐历史_*.json`、`持仓跟踪.xlsx`，由 GitHub Pages 托管，报告对外 URL 不变。
+- step26_github_sync 已改为推送 `gh-pages`（克隆 `gh-pages` 分支、`git push origin gh-pages`）；`.gitignore` 已忽略上述制品，杜绝 main 再次膨胀。
+- lib/sync.py 的 `git add -A` 收紧为仅暂存实际写入的 `SKILL.md` / `策略调整记录.json`。
+- 运维：每日运行产出的新报告写入 gh-pages；GitHub Pages 发布源须在仓库 Settings → Pages 设为 **gh-pages** 分支（根目录）。
