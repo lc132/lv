@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# ============================================================================
+# hooks/pre-commit — 提交者身份白名单 (P0-1)
+#
+# 硬校验: git config user.name / user.email 必须属于白名单
+#   {lc132,        72593777+lc132@users.noreply.github.com}
+#   {ashare-screener, 72593777+ashare-screener@users.noreply.github.com}
+# 不匹配直接拒绝提交 (exit 1)，堵死 IDE/Trae Bot 等泄漏路径。
+#
+# 启用 (克隆仓库执行一次):  git config core.hooksPath hooks
+# 紧急跳过:                  git commit --no-verify
+# ============================================================================
+set -euo pipefail
+
+# 合并 / 变基由 git 自动生成的提交不强制门禁
+if git rev-parse --verify MERGE_HEAD >/dev/null 2>&1; then
+  exit 0
+fi
+
+NAME="$(git config user.name 2>/dev/null || true)"
+EMAIL="$(git config user.email 2>/dev/null || true)"
+
+ALLOW_LC132="72593777+lc132@users.noreply.github.com"
+ALLOW_BOT="72593777+ashare-screener@users.noreply.github.com"
+
+ok=0
+if [ "$NAME" = "lc132" ] && [ "$EMAIL" = "$ALLOW_LC132" ]; then
+  ok=1
+elif [ "$NAME" = "ashare-screener" ] && [ "$EMAIL" = "$ALLOW_BOT" ]; then
+  ok=1
+fi
+
+if [ "$ok" -eq 1 ]; then
+  exit 0
+fi
+
+echo "" >&2
+echo "❌ 提交者身份不在白名单，提交已中止。" >&2
+echo "   当前: name='${NAME}' email='${EMAIL}'" >&2
+echo "   允许: lc132 <${ALLOW_LC132}> | ashare-screener <${ALLOW_BOT}>" >&2
+echo "   检查: git config user.name / git config user.email" >&2
+echo "   紧急跳过: git commit --no-verify (仍会被 pre_push_check / CI 拦截)" >&2
+exit 1
