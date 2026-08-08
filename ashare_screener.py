@@ -5598,10 +5598,31 @@ def step26_github_sync(mp, hd, candidates):
             fp = os.path.join('/workspace', f)
             if os.path.exists(fp):
                 shutil.copy(fp, os.path.join(rd, f))
+        # @since v6.20.12 治理(P0 Task 1): 自动提交信息前置门禁，杜绝 vv/版本回落绕过门禁
+        _commit_msg = f"data: 筛选结果 {prediction_date} ({file_version})"
+        try:
+            _SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts")
+            import importlib.util as _ilu
+            _spec = _ilu.spec_from_file_location(
+                "commit_gate", os.path.join(_SCRIPTS_DIR, "commit_gate.py"))
+            _cg = _ilu.module_from_spec(_spec)
+            _spec.loader.exec_module(_cg)
+            _ok, _reason = _cg.validate_commit_message(_commit_msg, current_version=BUILTIN_VERSION)
+            if not _ok:
+                log_alert("WARNING", "GitHub同步", f"提交信息未过门禁，跳过推送: {_reason}")
+                return
+            # 防御性: 在克隆仓安装 commit-msg 钩子(门禁兜底，即使代码路径被绕过也能拦)
+            _hook = os.path.join(rd, ".git", "hooks", "commit-msg")
+            os.makedirs(os.path.dirname(_hook), exist_ok=True)
+            shutil.copy(os.path.join(_SCRIPTS_DIR, "lint_commit_msg.py"), _hook)
+            os.chmod(_hook, 0o755)
+        except Exception as _e:
+            log_alert("WARNING", "GitHub同步", f"门禁校验异常，保守跳过推送: {str(_e)[:80]}")
+            return
         subprocess.run(["git", "-C", rd, "config", "user.email", BOT_AUTHOR_EMAIL], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", rd, "config", "user.name", BOT_AUTHOR_NAME], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", rd, "add", "."], capture_output=True, timeout=15)
-        subprocess.run(["git", "-C", rd, "commit", "-m", f"data: 筛选结果 {prediction_date} ({file_version})", "--allow-empty"], capture_output=True, timeout=15)
+        subprocess.run(["git", "-C", rd, "commit", "-m", _commit_msg, "--allow-empty"], capture_output=True, timeout=15)
         result = _git_with_token(["git", "-C", rd, "push", "origin", "main"], timeout=30, check=False)  # @since v6.16.30: 60→30s
         if result.returncode == 0: log_alert("INFO", "GitHub同步", f"✅ {prediction_date} 已推送")
         else: log_alert("WARNING", "GitHub同步", f"推送失败: {result.stderr[:100]}")
