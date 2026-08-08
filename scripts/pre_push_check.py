@@ -9,6 +9,7 @@ pre_push_check.py — 发版前轻量质量门禁（治理整改#5 / P0-3）
   3) 静态检查: 关键函数/常量已定义（文本扫描，避免重导入 lib 依赖）
   4) 版本单调性(可选): 新 VERSION >= baseline (可选 --require-bump 要求严格 >)
   5) 提交信息检查(可选): 拒绝双 v、拒绝主题版本 < 当前 VERSION（[version-exempt] 放行）
+  6) 提交者身份白名单(可选): baseline..HEAD 的 author email 必须 ∈ 统一身份白名单（P0-4）
 
 用法:
   python3 scripts/pre_push_check.py
@@ -41,6 +42,16 @@ def _git(args):
 
 def _current_version():
     return open(os.path.join(REPO, "VERSION"), encoding="utf-8").read().strip()
+
+
+# 统一提交者身份白名单（P0-4）
+# 仅允许以下两个「可关联 GitHub」的真实身份（P0-4 审计结论：历史上 4 种非统一身份共 6 次提交，
+# 其中 bot@trae.ai / Trae Bot、A-Share Screener、A股筛选机器人 等含无法关联 GitHub 的虚构域名，
+# 已收敛）。下一轮巡检提交者身份数须 ≤ 2。
+ALLOWED_AUTHOR_EMAILS = {
+    "ashare-bot@github.com",                 # 机器人 ashare-screener
+    "72593777+lc132@users.noreply.github.com",  # 人类维护者 lc132
+}
 
 
 def _check_sync_version():
@@ -183,6 +194,33 @@ def check_file_version_rollback():
     return _check_sync_version()
 
 
+def check_author_email_whitelist(baseline_ref):
+    """提交者身份白名单校验（P0-4）。
+
+    扫描 baseline..HEAD 全部提交的 author email，凡 ∉ ALLOWED_AUTHOR_EMAILS 一律 FAIL，
+    以收敛残留提交身份，确保「下周巡检提交者身份数 ≤ 2」。
+    非 git 环境 / 未指定 baseline_ref / 无新提交时优雅跳过。
+    """
+    if not baseline_ref:
+        print("⚠ 未指定 --baseline-ref，跳过提交者身份白名单校验")
+        return True
+    rc, out = _git(["log", f"{baseline_ref}..HEAD", "--pretty=%ae"])
+    if rc != 0:
+        print(f"⚠ 无法读取 {baseline_ref}..HEAD 提交者，跳过身份白名单校验")
+        return True
+    emails = [e.strip() for e in out.splitlines() if e.strip()]
+    if not emails:
+        print("⚠ baseline..HEAD 无新提交，跳过提交者身份白名单校验")
+        return True
+    bad = sorted({e for e in emails if e not in ALLOWED_AUTHOR_EMAILS})
+    if bad:
+        print(f"❌ 提交者身份白名单未过（非统一身份共 {len(bad)} 个）: {bad}")
+        print(f"   允许身份: {sorted(ALLOWED_AUTHOR_EMAILS)}")
+        return False
+    print(f"提交者身份白名单 OK ({len(set(emails))} 个身份，均合规)")
+    return True
+
+
 def main():
     p = argparse.ArgumentParser(description="发版前质量门禁")
     p.add_argument("--baseline-ref", default=None,
@@ -198,6 +236,7 @@ def main():
         ("版本单调性", check_version_monotonic(args.baseline_ref, args.require_bump)),
         ("提交信息", check_commit_messages(args.baseline_ref)),
         (".py 版本回落", check_file_version_rollback()),
+        ("提交者身份白名单", check_author_email_whitelist(args.baseline_ref)),
     ]
     ok = all(passed for _, passed in checks)
     print("--- 门禁汇总 ---")
