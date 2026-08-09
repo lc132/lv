@@ -686,20 +686,36 @@ def _git_with_token(cmd_args, timeout=30, check=True, log_prefix=""):
 # 步骤0A：拉取持仓跟踪
 # ============================================================
 def step0A_pull_holdings():
+    """@since v6.20.12 hotfix(P1-1 回归): 恢复源由 main 改为 gh-pages。
+    P1-1 生成物分离后，推荐历史_*.json / 持仓跟踪.xlsx 已从 main 删除并 gitignore，
+    改由 step26 推送到 gh-pages（见 :5604-5606 / :5692-5693）；恢复源必须与写入侧同分支，
+    否则从 main 拉到 0 个历史样本 → run_backtest 无输入 → 回测数据不显示。"""
     try:
         repo_dir = "/tmp/lv_holdings_pull"
         if os.path.exists(repo_dir): shutil.rmtree(repo_dir, ignore_errors=True)
         repo_url = f"https://github.com/{GITHUB_REPO}.git"
-        _git_with_token(["git", "clone", "--depth", "1", "--branch", "main", repo_url, repo_dir], timeout=30)
+        # 制品位于 gh-pages 根目录（与 step26 写入侧一致），不可用 main
+        _git_with_token(["git", "clone", "--depth", "1", "--branch", "gh-pages", repo_url, repo_dir], timeout=30)
         xlsx_src = os.path.join(repo_dir, "持仓跟踪.xlsx")
         if os.path.exists(xlsx_src):
             shutil.copy(xlsx_src, "/workspace/持仓跟踪.xlsx")
             log_alert("INFO", "持仓拉取", "持仓跟踪.xlsx 已同步")
+        else:
+            print("⚠️ gh-pages 未找到 持仓跟踪.xlsx，持仓状态可能不完整")
+            log_alert("WARNING", "持仓拉取", "gh-pages 未找到 持仓跟踪.xlsx")
+        found = 0
         for f in os.listdir(repo_dir):
             if f.startswith("推荐历史_") and f.endswith(".json"):
+                found += 1
                 lp = os.path.join("/workspace", f); rp = os.path.join(repo_dir, f)
                 if not os.path.exists(lp) or os.path.getmtime(rp) > os.path.getmtime(lp):
                     shutil.copy(rp, lp); log_alert("INFO", "持仓拉取", f"{f} 已更新")
+        # 显式暴露"恢复到 0 个样本"，避免像 P1-1 回归那样静默失效
+        if found == 0:
+            print("⚠️ 从 gh-pages 恢复 0 个推荐历史文件，回测将无样本")
+            log_alert("ERROR", "持仓拉取", "从 gh-pages 恢复 0 个 推荐历史_*.json，回测将无样本")
+        else:
+            log_alert("INFO", "持仓拉取", f"gh-pages 命中 {found} 个 推荐历史_*.json")
         shutil.rmtree(repo_dir, ignore_errors=True)
     except Exception as e: log_alert("WARNING", "持仓拉取", f"{str(e)[:80]}")
 
