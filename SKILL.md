@@ -272,8 +272,18 @@ _pl_sorted = sorted(_pl_data, key=lambda x: (-x[2], -x[1]))
 
 - **本地钩子**：`hooks/commit-msg` 在 `git commit` 阶段即时拦截，委托 `commit_gate.py` 校验；合并/变基提交自动跳过。
 - **启用（克隆仓库执行一次）**：`git config core.hooksPath hooks`。紧急跳过用 `git commit --no-verify`（仍会被 CI `quality-gate` 拦截）。
-- **CI 硬门禁**：`.github/workflows/quality-gate.yml` 的 `quality-gate` 任务为 main 分支**必需状态检查**（分支保护），推送的每条提交均经 `commit_gate` 校验，不合规即阻断。
+- **CI 硬门禁（⚠️ 当前未启用分支保护，仅运行级拦截）**：`.github/workflows/quality-gate.yml` 的 `quality-gate` 任务在 push/PR 到 main 时运行，对每条提交经 `commit_gate` 校验，不合规即标红。但**截至 v6.20.12 仍未开启 main 分支保护**，故本门禁可被一行 `git push origin main` 直接绕过（PR #1「代码变更走 PR」未合并即关闭，是 v6.20.2 以来全部门禁的系统性漏洞）。**待办（P0-2）：为 main 开启分支保护，将「质量门禁 (Quality Gate)」设为必需状态检查，对 `*.py`/`SKILL.md`/`VERSION` 强制走 PR**。
 - 历史登记在 `data:` 等的自定义 type 已正式写入白名单，合规率由 17.2% 提升至 90%+。
+
+## CI 诊断纪律 (P0-1, v6.20.12)
+
+> **背景**：截至 2026-08-09，quality-gate 共 83 次运行、41 次失败（失败率 ~49%），其中 38 次为直推 `main` 触发、另有 `probe-1785948422` / `tmp-push-probe-60251` 两条临时分支的失败记录——均属**用生产分支/临时分支做诊断探针**导致的虚假红灯。仓库长期处红灯态，门禁结论不可信。**禁止把生产分支当调试场**。
+
+- **禁止用生产分支做诊断探针**：不得向 `main` 推送任何 `_qg_diag*.txt` / 探针脚本 / 临时测试提交来排查 CI；此类操作污染失败率统计并制造假红灯。
+- **诊断的正确姿势**：
+  1. **本地**：用 [`act`](https://github.com/nektos/act) 在本地跑 workflow（`act -W .github/workflows/quality-gate.yml`）；
+  2. **远端**：开**临时分支**（如 `diag/xxx`）推送触发，验证完即删，绝不进 `main`。
+- **清理钩子**：`_qg_diag_*.txt` 已纳入 `.gitignore`；若不慎推上 `main`，须立即从 main 删除并 `git fetch -p` 清远端引用。
 
 ## 提交者身份治理 (P0-1, v6.20.12)
 
