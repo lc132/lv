@@ -50,25 +50,51 @@ footer { text-align:center; padding:32px 16px; color:var(--muted); font-size:13p
 
 <script>
 (async function(){
+  // 方案B: 优先同源读取 reports.json 清单(由 step26 部署时生成)
+  // 彻底摆脱 GitHub API 依赖(匿名 60次/小时限流 / CORS / 跨分支)
+  // 兜底: reports.json 缺失时回退到 GitHub API(?ref=gh-pages)
+  let data = null;
   try {
-    const resp = await fetch('https://api.github.com/repos/lc132/lv/contents/');
-    const data = await resp.json();
-    const dirs = data.filter(d => d.type === 'dir' && d.name.startsWith('ashare-screening-'));
-    dirs.sort((a,b) => b.name.localeCompare(a.name));
-    
-    const container = document.getElementById('report-list');
-    if (dirs.length === 0) {
-      container.innerHTML = '<div class="empty">暂无报告</div>';
-      return;
+    const r = await fetch('./reports.json', {cache: 'no-store'});
+    if (r.ok) data = await r.json();
+  } catch(e) { /* fallback to API */ }
+
+  if (!Array.isArray(data)) {
+    const APIS = [
+      'https://api.github.com/repos/lc132/lv/contents/?ref=gh-pages',
+      'https://api.kkgithub.com/repos/lc132/lv/contents/?ref=gh-pages'
+    ];
+    for (const url of APIS) {
+      try {
+        const resp = await fetch(url);
+        if (resp.ok) { data = await resp.json(); break; }
+      } catch(e) { /* try next */ }
     }
-    
-    let html = '';
-    for (const dir of dirs) {
-      const dateStr = dir.name.replace('ashare-screening-','');
-      const displayDate = dateStr.length === 8
-        ? `${dateStr.slice(0,4)}-${dateStr.slice(4,6)}-${dateStr.slice(6,8)}`
-        : dateStr;
-      html += `
+  }
+
+  const container = document.getElementById('report-list');
+  if (!Array.isArray(data)) {
+    container.innerHTML = '<div class="empty">加载失败，刷新重试</div>';
+    document.getElementById('gen-time').textContent = new Date().toISOString().slice(0,16).replace('T',' ');
+    return;
+  }
+
+  const dirs = data.filter(d => d && d.type === 'dir' && typeof d.name === 'string' && d.name.startsWith('ashare-screening-'));
+  dirs.sort((a,b) => b.name.localeCompare(a.name));
+
+  if (dirs.length === 0) {
+    container.innerHTML = '<div class="empty">暂无报告</div>';
+    document.getElementById('gen-time').textContent = new Date().toISOString().slice(0,16).replace('T',' ');
+    return;
+  }
+
+  let html = '';
+  for (const dir of dirs) {
+    const dateStr = dir.name.replace('ashare-screening-','');
+    const displayDate = dateStr.length === 8
+      ? `${dateStr.slice(0,4)}-${dateStr.slice(4,6)}-${dateStr.slice(6,8)}`
+      : dateStr;
+    html += `
       <div class="report-card">
         <div class="left">
           <div class="report-icon icon-chart">📈</div>
@@ -79,11 +105,8 @@ footer { text-align:center; padding:32px 16px; color:var(--muted); font-size:13p
         </div>
         <a class="report-link" href="./${dir.name}/${dir.name}.html" target="_blank">打开报告 →</a>
       </div>`;
-    }
-    container.innerHTML = html;
-  } catch(e) {
-    document.getElementById('report-list').innerHTML = '<div class="empty">加载失败，刷新重试</div>';
   }
+  container.innerHTML = html;
   document.getElementById('gen-time').textContent = new Date().toISOString().slice(0,16).replace('T',' ');
 })();
 </script>
