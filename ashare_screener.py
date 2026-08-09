@@ -404,13 +404,17 @@ _VALID_SHENWAN_INDUSTRIES = frozenset([
     '家用电器', '美容护理',
 ])
 
+# @since P0-3: 死参数清理——同步 lib/core.py 删除 consecutive_weeks / win_rate_drop_threshold /
+# limit_down_threshold / max_adjust_params / data_tier_l2_skip_on_unavailable /
+# data_tier_l3_downgrade_to_signal（全仓库 0 处读取）。
+# 必须在此处一并删除：step6_file_init 会用本表回填 params（缺键即补默认），
+# 只删 JSON 与 lib/core.py 的话这些键每次运行都会被重新注入，清理等于无效。
 DEFAULT_PARAMS = {
-    "search_budget": 25, "northbound_threshold": 3000, "consecutive_weeks": 2,
-    "win_rate_drop_threshold": 10, "limit_down_threshold": 100,
-    "max_adjust_params": 3, "confidence_position_enabled": True,
-    "strategy_concentration_pct": 30,
-    "data_tier_l2_skip_on_unavailable": True,
-    "data_tier_l3_downgrade_to_signal": True, "strategy_a_weak_market": "closed"
+    "search_budget": 25, "northbound_threshold": 3000,
+    "confidence_position_enabled": True,
+    "strategy_concentration_pct": 25,
+    "history_retention_days": 28,
+    "strategy_a_weak_market": "closed"
 }
 
 # 模块级策略映射表（DRY：避免函数内重复定义）
@@ -864,22 +868,37 @@ def step2A_recovery_monitor():
     
     # 根据修复评分决定策略
     print(f"  修复评分: {recovery_score}/10 | {' | '.join(details)}")
-    
-    if recovery_score >= 7:
+
+    # @since P0-3A: 修复监测的评分阈值与仓位改为从 params 读取，此前为硬编码，
+    # 导致 策略调整记录.json 中的 recovery_* 五个参数被架空（配了也不生效）。
+    # 注意：main() 中 step2A 在 step6_file_init(载入全局 params) 之前执行，此刻全局 params 仍为空，
+    # 若直接读全局将永远落到默认值、参数依然是死的；故此处按需自载入一次。
+    # 只读取不写回全局，避免与 step6 的版本校正/补默认逻辑相互干扰。
+    _p = params
+    if not _p:
+        _adj = safe_read_json('/workspace/策略调整记录.json')
+        _p = (_adj[0].get('params', {}) if _adj else {}) or {}
+    _th_strong = _p.get('recovery_score_threshold_strong', 7)
+    _th_moderate = _p.get('recovery_score_threshold_moderate', 4)
+    _pos_strong = _p.get('recovery_position_strong', 40)
+    _pos_moderate = _p.get('recovery_position_moderate', 25)
+    _pos_weak = _p.get('recovery_position_weak', 20)
+
+    if recovery_score >= _th_strong:
         market_condition = "强市(有力修复)"
-        position_pct = 40
-        print(f"  ✅ 修复有力 → 仓位40% 正常筛选")
-        record_step_status("步骤2A: 修复监测", "OK", f"修复评分{recovery_score}/10 有力修复 仓位40%")
-    elif recovery_score >= 4:
+        position_pct = _pos_strong
+        print(f"  ✅ 修复有力 → 仓位{_pos_strong}% 正常筛选")
+        record_step_status("步骤2A: 修复监测", "OK", f"修复评分{recovery_score}/10 有力修复 仓位{_pos_strong}%")
+    elif recovery_score >= _th_moderate:
         market_condition = "震荡(修复中)"
-        position_pct = 25
-        print(f"  ⚠️ 修复中 → 仓位25% 谨慎筛选")
-        record_step_status("步骤2A: 修复监测", "WARN", f"修复评分{recovery_score}/10 修复中 仓位25%")
+        position_pct = _pos_moderate
+        print(f"  ⚠️ 修复中 → 仓位{_pos_moderate}% 谨慎筛选")
+        record_step_status("步骤2A: 修复监测", "WARN", f"修复评分{recovery_score}/10 修复中 仓位{_pos_moderate}%")
     else:
         market_condition = "弱市(修复无力)"
-        position_pct = 20
-        print(f"  ⚠️ 修复无力 → 仓位20% 保守筛选")
-        record_step_status("步骤2A: 修复监测", "WARN", f"修复评分{recovery_score}/10 修复无力 仓位20%")
+        position_pct = _pos_weak
+        print(f"  ⚠️ 修复无力 → 仓位{_pos_weak}% 保守筛选")
+        record_step_status("步骤2A: 修复监测", "WARN", f"修复评分{recovery_score}/10 修复无力 仓位{_pos_weak}%")
     
     _clear_extreme_flag()
     return False  # 不跳过筛选，继续执行
@@ -1137,7 +1156,15 @@ def step9C_conversion_rate():
 # 步骤5-8：清理 + 初始化 + 财报 + 大盘
 # ============================================================
 def step5_history_clean():
-    c7 = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=7)).strftime('%Y-%m-%d')
+    # @since P1-3: recommendation 保留期由魔数 7 天改为读 history_retention_days(默认28,≥4周)。
+    # main() 中 step5 在 step6_file_init(载入全局 params) 之前执行，此刻全局 params 仍为空，
+    # 若直接读全局将永远落到默认值、参数依然是死的；故沿用 step2A(P0-3A) 的按需自载入模式。
+    # 只读取不写回全局，避免与 step6 的版本校正/补默认逻辑相互干扰。
+    _p = params
+    if not _p:
+        _adj = safe_read_json('/workspace/策略调整记录.json')
+        _p = (_adj[0].get('params', {}) if _adj else {}) or {}
+    c7 = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=_p.get('history_retention_days', 28))).strftime('%Y-%m-%d')
     c90 = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=90)).strftime('%Y-%m-%d')
     tc = 0
     for f in sorted(os.listdir('/workspace')):
@@ -3044,8 +3071,17 @@ def step12_signal_filter(candidates, kline_data=None, fundamental_data=None, ris
         # 8. 首阴标记（不排除，仅加分）— @since v6.9.38: 拆分为独立检测，不受其他信号影响
         if -3 < chg < 0 and to > 3: c['_first_yin'] = True
         # 9. 均线空头排列（MA5<MA10<MA20）
+        # @since P0-2: 策略B(超跌反弹)豁免——本项是无豁免一票否决(见下方 if reasons)，
+        # 而"超跌"与"均线空头排列"在定义上高度重合：跌到 -9.5%~-2.5% 的标的几乎必然 MA5<MA10<MA20，
+        # 导致B候选在 step13 匹配前就被 step12 清空，B策略产出恒为0。
+        # 豁免条件基于B的触发特征而非 c['strategy']——step12 阶段候选尚未标策略
+        # （B 在 step13 才 assign），条件取自 step13 B 分支两个子分支的并集：
+        #   chg∈[-9.5%,-2.5%] 且 amp>3 且 low>0 且 close>low*1.01（反弹确认）。
+        # 写法参照本函数第19项 is_u_candidate。
+        is_b_candidate = (-9.5 <= chg <= -2.5 and amp is not None and amp > 3
+                          and low > 0 and close > low * 1.01)
         ma5 = kd.get('ma5', 0); ma10 = kd.get('ma10', 0); ma20 = kd.get('ma20', 0)
-        if ma5 > 0 and ma10 > 0 and ma20 > 0 and ma5 < ma10 < ma20:
+        if not is_b_candidate and ma5 > 0 and ma10 > 0 and ma20 > 0 and ma5 < ma10 < ma20:
             reasons.append("均线空头排列")
         # 10. MACD顶背离
         high20 = kd.get('high20', 0); dif = kd.get('dif', 0)
@@ -3538,7 +3574,9 @@ def step17_industry_limit(candidates):
             if tn > 0 and tn1 / tn >= elastic_threshold:
                 limited.append(g[industry_limit])
                 elastic_added += 1
-    max_s = max(2, math.ceil(len(limited) * params.get('strategy_concentration_pct', 30) / 100))
+    pct = params.get('strategy_concentration_pct', 25)
+    # @since P1-1: 硬上限——单策略占比不超过 pct%；向下取整确保不超，下限 1 避免少候选时虚高
+    max_s = max(1, int(len(limited) * pct / 100))
     sg = defaultdict(list)
     for c in limited: sg[c.get('strategy', 'Z')].append(c)
     final = []
@@ -4680,7 +4718,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         lines.append("\n## 回测说明\n")
         lines.append("- **回测列格式**：`图标 + 胜/样本`，例如 `🟢2/2` 表示历史同标的样本2笔、盈利2笔。")
         lines.append("- **图标含义**：🟢 最近一次样本盈利；🔴 最近一次样本亏损；⚪ 后续K线不足或未形成有效胜负；⚠️ 历史有限价单未成交（当日最低价>进场价）；空白表示无可匹配历史样本。")
-        lines.append("- **模拟口径**：使用最近90天推荐历史，按推荐表的进场、止损、止盈进行模拟，单笔最大持仓10个交易日。")
+        lines.append("- **模拟口径**：使用保留期内（≥4周）推荐历史，按推荐表的进场、止损、止盈进行模拟，单笔最大持仓10个交易日。")
         lines.append("- **交易规则**：遵循A股T+1，买入当日不检查止盈止损出场，从下一交易日起判断是否触及止损/止盈。")
         lines.append("- **使用限制**：未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素；样本少时仅作参考，不能代表未来表现。\n")
         # @since v6.13.43: 资金去向——按行业汇总主力净流入，无数据时优雅降级
@@ -5474,7 +5512,7 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 <div class="capital-flow">{capital_flow_html if capital_flow_html else '<div style="color:#94a3b8;padding:1rem">暂无资金流向数据</div>'}</div></section>
 {ai_html}
 </div>
-<section><h2 style="display:flex;align-items:center;gap:.5rem">📊 历史回测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">最近90天 | 最大持仓10交易日</span></h2>
+<section><h2 style="display:flex;align-items:center;gap:.5rem">📊 历史回测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">最近保留期(≥4周) | 最大持仓10交易日</span></h2>
 {backtest_html}
 </section>
 <div class="footer"><p>版本: {file_version} | 生成时间: {beijing_date}</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>"""
@@ -5519,10 +5557,17 @@ def step22_write_history(candidates, champion_code=None):
         if key in existing_keys:
             continue
         existing_keys.add(key)
+        # @since P0-1: 补写止损/止盈——回测/复盘需按推荐当时的风控价位回放，
+        # 缺失时下游只能用默认值反推，导致真实收益失真。取值复用模块级
+        # _STRATEGY_STOP_LOSS/_STRATEGY_TAKE_PROFIT（与 _compute_pl_ratios 同源同默认）。
+        # 注意：return_pct 属于事后收益，盘前不可知，此处不写（change_pct 是当日涨跌幅，绝不可当收益）。
+        _s = c.get('strategy', '?')
         rec = {"type": "recommendation", "code": c.get('code'), "name": c.get('name'),
             "strategy": c.get('strategy'), "industry": _industry_str(c), "business": c.get('business', ''),
             "score": c.get('score'), "confidence": c.get('confidence'),
             "entry": entry, "change_pct": c.get('change_pct'),
+            "stop_loss": round(entry * _STRATEGY_STOP_LOSS.get(_s, 0.96), 2) if entry else None,
+            "take_profit": round(entry * _STRATEGY_TAKE_PROFIT.get(_s, 1.05), 2) if entry else None,
             "date": data_date, "prediction_date": prediction_date}
         # @since v6.16.12: 标记当日跨策略冠军
         if champion_code and c.get('code') == champion_code:

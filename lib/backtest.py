@@ -50,12 +50,14 @@ _STRATEGY_STOP_LOSS = {
     'F': 0.965, 'G': 0.95, 'H': 0.94, 'I': 0.95, 'J': 0.94,
     'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95,
     'P': 0.945, 'Q': 0.95, 'R': 0.95, 'S': 0.95, 'T': 0.94,
+    'U': 0.93,  # @since P0-1: 补齐U(涨停追击)，此前缺失导致U策略回落到默认0.96，回测风控价位与主脚本不符
 }
 _STRATEGY_TAKE_PROFIT = {
     'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04,
     'F': 1.04, 'G': 1.05, 'H': 1.06, 'I': 1.05, 'J': 1.06,
     'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05,
     'P': 1.05, 'Q': 1.05, 'R': 1.05, 'S': 1.04, 'T': 1.04,
+    'U': 1.06,  # @since P0-1: 补齐U(涨停追击)，与主脚本 _STRATEGY_TAKE_PROFIT['U'] 一致
 }
 _STRATEGY_NAMES = {
     'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳',
@@ -250,11 +252,16 @@ def _simulate_single(entry, stop_loss, take_profit, kl, hold_days=10, max_floati
             }
 
         # 移动止损: 激活后若跌破保本价则离场
+        # @since P0-1: 修复"虚假胜利"——旧实现硬编码 return_pct=0.0 却标记 result='win'，
+        # 把不赚不亏的保本出场计入胜率分子，系统性高估胜率。
+        # 改为按实际出场价(trailing_stop)算真实收益，result 由 return_pct 派生。
         if trailing_active and k['low'] <= trailing_stop:
+            ts_return_pct = round((trailing_stop - entry) / entry * 100, 2)
             return {
-                'result': 'win', 'exit_price': trailing_stop,
+                'result': 'win' if ts_return_pct > 0 else 'loss',
+                'exit_price': trailing_stop,
                 'exit_date': k['date'], 'exit_reason': 'trailing_stop',
-                'return_pct': 0.0, 'hold_days': i + 1,
+                'return_pct': ts_return_pct, 'hold_days': i + 1,
                 'max_drawdown_pct': round(max_floating_loss, 2),
                 'max_profit_pct': round(max_profit, 2),
             }
@@ -291,7 +298,11 @@ def _compute_metrics(trades):
                 'max_drawdown': 0, 'profit_factor': 0, 'sharpe': 0}
 
     total = len(trades)
-    wins = [t for t in trades if t['result'] == 'win']
+    # @since P0-1: 胜率口径改为"真实收益为正"，不再信任 result 标签。
+    # 旧口径 result=='win' 会把 return_pct=0 的保本出场计为胜；现 result 已由 return_pct 派生
+    # (见 _simulate_single)，此处直接以收益判定，双保险防止历史/外部数据带入错误标签。
+    # no_data/holding 样本 return_pct 恒为 0，不会被误计为胜。
+    wins = [t for t in trades if t.get('return_pct', 0) > 0]
     losses = [t for t in trades if t['result'] == 'loss']
     no_data = [t for t in trades if t['result'] == 'no_data']
     # @since v6.13.38: no_entry独立统计，不计入有效样本（未实际成交）
@@ -525,7 +536,7 @@ def generate_backtest_report(bt_result, output_path=None):
 
     if not trades:
         with open(output_path, 'w', encoding='utf-8') as f:
-            f.write('# 历史回测报告\n\n暂无回测数据。\n\n## 回测说明\n\n- 回测使用最近90天推荐历史。\n- 单笔最大持仓10个交易日。\n- 按推荐时的进场、止损、止盈价格进行模拟。\n- 遵循A股T+1规则，买入当日不检查止盈止损出场。\n- 出场优先级：止盈 > 移动止损(保本) > 固定止损。移动止损盈利达TP50%激活。\n- 持仓3天收盘仍亏损按时间止损离场。\n- 回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。\n')
+            f.write('# 历史回测报告\n\n暂无回测数据。\n\n## 回测说明\n\n- 回测使用保留期内（≥4周）推荐历史。\n- 单笔最大持仓10个交易日。\n- 按推荐时的进场、止损、止盈价格进行模拟。\n- 遵循A股T+1规则，买入当日不检查止盈止损出场。\n- 出场优先级：止盈 > 移动止损(保本) > 固定止损。移动止损盈利达TP50%激活。\n- 持仓3天收盘仍亏损按时间止损离场。\n- 回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。\n')
         return output_path
 
     today_str = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')  # @since v6.13.10: 北京时间
@@ -537,12 +548,12 @@ def generate_backtest_report(bt_result, output_path=None):
         f"",
         f"- **生成日期**: {today_str}",
         f"- **样本日期范围**: {date_range}（{len(sample_dates)}个交易日）",
-        f"- **回测周期**: 最近90天",
+        f"- **回测周期**: 最近保留期（≥4周，实际样本区间见上方日期范围）",
         f"- **最大持仓**: 10个交易日",
         f"",
         "## 回测说明",
         f"",
-        "- **样本来源**：最近90天推荐历史，按当时推荐标的、策略、进场价、止损价、止盈价回放后续K线。",
+        "- **样本来源**：保留期内（≥4周）推荐历史，按当时推荐标的、策略、进场价、止损价、止盈价回放后续K线。",
         "- **出场规则**：单笔最大持仓10个交易日；出场优先级为 止盈 > 移动止损(保本) > 固定止损。移动止损在盈利达止盈目标50%时激活，将止损上移至保本价；持仓第3天收盘仍亏损则按时间止损离场。",
         "- **T+1处理**：遵循A股T+1规则，买入当日不检查止盈止损出场，从下一交易日起判断。",
         "- **结果含义**：`win`为盈利样本，`loss`为亏损样本，`no_entry`为限价单未成交（次日最低价>进场价，买单无法成交，不计入胜负统计），`no_data`为后续K线不足或无法形成有效模拟。",
@@ -737,7 +748,7 @@ def generate_backtest_html(bt_result, output_path=None):
     if not trades:
         html = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>历史回测报告</title>
 <style>body{{font-family:"Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif;max-width:900px;margin:40px auto;padding:20px;background:#f8fafc;color:#1e293b}}h1{{color:#2563eb}}</style></head>
-<body><h1>历史回测报告</h1><p>暂无回测数据。</p><h2>回测说明</h2><ul><li>回测使用最近90天推荐历史。</li><li>单笔最大持仓10个交易日。</li><li>按推荐时的进场、止损、止盈价格进行模拟。</li><li>遵循A股T+1规则，买入当日不检查止盈止损出场。</li><li>回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。</li><li>v6.13.14新增：移动止损(盈利达TP50%保本)、时间止损(持仓3天仍亏损离场)。</li></ul><p style="color:#94a3b8">版本: {BUILTIN_VERSION} | 生成: {today_str}</p></body></html>'''
+<body><h1>历史回测报告</h1><p>暂无回测数据。</p><h2>回测说明</h2><ul><li>回测使用保留期内（≥4周）推荐历史。</li><li>单笔最大持仓10个交易日。</li><li>按推荐时的进场、止损、止盈价格进行模拟。</li><li>遵循A股T+1规则，买入当日不检查止盈止损出场。</li><li>回测未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素，仅供参考。</li><li>v6.13.14新增：移动止损(盈利达TP50%保本)、时间止损(持仓3天仍亏损离场)。</li></ul><p style="color:#94a3b8">版本: {BUILTIN_VERSION} | 生成: {today_str}</p></body></html>'''
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(html)
         return output_path
@@ -847,7 +858,7 @@ tr:hover td{{background:rgba(56,189,248,0.05)}}
 <div class="container">
 <div class="header">
 <h1>\U0001f4ca A\u80a1\u77ed\u7ebf\u7b5b\u9009 \u2014 \u5386\u53f2\u56de\u6d4b\u62a5\u544a</h1>
-<p class="meta">\u751f\u6210\u65e5\u671f: {today_str} | \u56de\u6d4b\u5468\u671f: \u6700\u8fd190\u5929 | \u6700\u5927\u6301\u4ed3: 10\u4e2a\u4ea4\u6613\u65e5</p>
+<p class="meta">\u751f\u6210\u65e5\u671f: {today_str} | \u56de\u6d4b\u5468\u671f: \u6700\u8fd1\u4fdd\u7559\u671f(\u22654\u5468) | \u6700\u5927\u6301\u4ed3: 10\u4e2a\u4ea4\u6613\u65e5</p>
 </div>
 
 <div class="metrics-grid">{cards_html}</div>
@@ -855,7 +866,7 @@ tr:hover td{{background:rgba(56,189,248,0.05)}}
 <div class="section">
 <h2>回测说明</h2>
 <div class="note-grid">
-<div class="note-card"><b>样本来源</b><br>最近90天推荐历史，按当时推荐标的、策略、进场价、止损价、止盈价回放后续K线。</div>
+<div class="note-card"><b>样本来源</b><br>保留期内（≥4周）推荐历史，按当时推荐标的、策略、进场价、止损价、止盈价回放后续K线。</div>
 <div class="note-card"><b>出场规则</b><br>单笔最大持仓10个交易日；若盘中触及止损或止盈，按对应价格出场；若到期未触发，按持仓期末收盘价计算。</div>
 <div class="note-card"><b>T+1处理</b><br>遵循A股T+1规则，买入当日不检查止盈止损出场，从下一交易日起判断。</div>
 <div class="note-card"><b>结果含义</b><br>win为盈利样本，loss为亏损样本，no_entry为限价单未成交（次日最低价>进场价，不计入胜负），no_data为后续K线不足。</div>
@@ -945,7 +956,7 @@ def push_backtest_to_feishu(bt_result):
                 },
                 "elements": [
                     {"tag": "div", "text": {"tag": "lark_md",
-                        "content": f"**回测周期**: 最近90天 | **最大持仓**: 10个交易日 | **总交易**: {metrics['total']}笔 | **限价未成交**: {metrics.get('no_entry', 0)}笔"}},
+                        "content": f"**回测周期**: 最近保留期(≥4周) | **最大持仓**: 10个交易日 | **总交易**: {metrics['total']}笔 | **限价未成交**: {metrics.get('no_entry', 0)}笔"}},
                     {"tag": "hr"},
                     {"tag": "div", "text": {"tag": "lark_md",
                         "content": f"胜率: **{metrics['win_rate']}%** | 均收: **{metrics['avg_return']}%** | 盈亏比: **{metrics['profit_factor']}** | 夏普: **{metrics['sharpe']}**"}},

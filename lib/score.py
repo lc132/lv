@@ -259,7 +259,7 @@ def step17_industry_limit(ctx):
     total_position = ctx.get('position', 55)
     
     # 从参数读取同策略集中度上限(%)
-    strategy_concentration_pct = ctx.get('params', {}).get('strategy_concentration_pct', 60)
+    strategy_concentration_pct = ctx.get('params', {}).get('strategy_concentration_pct', 25)
     
     # 根据市场环境确定各策略推荐上限
     # 从 position_plan 推导各策略数量上限（高分配→多候选，确保仓位分配与实际选股联动）

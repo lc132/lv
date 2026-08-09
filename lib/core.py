@@ -36,16 +36,20 @@ if not FEISHU_WEBHOOK:
 GITHUB_REPO = "lc132/lv"
 
 # 可配置参数默认值
+# @since P0-3: 死参数清理——已删除 consecutive_weeks / win_rate_drop_threshold /
+# limit_down_threshold / max_adjust_params / data_tier_l2_skip_on_unavailable /
+# data_tier_l3_downgrade_to_signal（全仓库 0 处读取，且无明确接线计划，保留只会误导维护者）。
+# 标注「当前未接入主流程」的项属于有潜在用途的预留配置，暂不删除。
 DEFAULT_PARAMS = {
-    "search_budget": 25, "northbound_threshold": 3000, "consecutive_weeks": 2,
-    "win_rate_drop_threshold": 10, "limit_down_threshold": 100,
-    "max_adjust_params": 3, "confidence_position_enabled": True,
-    "max_holding_days": 5, "circuit_breaker_threshold_pct": 3.0,
-    "strategy_concentration_pct": 30, "do_t_success_reset_count": 3,
+    "search_budget": 25,  # 当前未接入主流程
+    "northbound_threshold": 3000,  # 当前未接入主流程
+    "confidence_position_enabled": True,  # 当前未接入主流程
+    "max_holding_days": 5,  # 当前未接入主流程
+    "circuit_breaker_threshold_pct": 3.0,
+    "strategy_concentration_pct": 25,  # 当前未接入主流程
+    "do_t_success_reset_count": 3,  # 当前未接入主流程
     "conversion_rate_window_days": 10, "conversion_rate_threshold": 0.3,
     "conversion_rate_restore": 0.6, "conversion_rate_consecutive_days": 3,
-    "data_tier_l2_skip_on_unavailable": True,
-    "data_tier_l3_downgrade_to_signal": True,
     "strategy_a_weak_market": "closed"
 }
 
