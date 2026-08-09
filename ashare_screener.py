@@ -413,7 +413,7 @@ DEFAULT_PARAMS = {
     "search_budget": 25, "northbound_threshold": 3000,
     "confidence_position_enabled": True,
     "strategy_concentration_pct": 25,
-    "history_retention_days": 28,
+    "data_retention_days": 30,
     "strategy_a_weak_market": "closed"
 }
 
@@ -1172,7 +1172,8 @@ def step9C_conversion_rate():
 # 步骤5-8：清理 + 初始化 + 财报 + 大盘
 # ============================================================
 def step5_history_clean():
-    # @since P1-3: recommendation 保留期由魔数 7 天改为读 history_retention_days(默认28,≥4周)。
+    # @since P1-3: recommendation 保留期由魔数 7 天改为读 data_retention_days(默认30,即1个月)。
+    # @since 统一: 数据保留/回测类窗口统一为 data_retention_days(30天)，holding 记录同用该窗口。
     # main() 中 step5 在 step6_file_init(载入全局 params) 之前执行，此刻全局 params 仍为空，
     # 若直接读全局将永远落到默认值、参数依然是死的；故沿用 step2A(P0-3A) 的按需自载入模式。
     # 只读取不写回全局，避免与 step6 的版本校正/补默认逻辑相互干扰。
@@ -1180,8 +1181,8 @@ def step5_history_clean():
     if not _p:
         _adj = safe_read_json('/workspace/策略调整记录.json')
         _p = (_adj[0].get('params', {}) if _adj else {}) or {}
-    c7 = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=_p.get('history_retention_days', 28))).strftime('%Y-%m-%d')
-    c90 = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=90)).strftime('%Y-%m-%d')
+    c7 = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=_p.get('data_retention_days', 30))).strftime('%Y-%m-%d')
+    c90 = (datetime.strptime(data_date, '%Y-%m-%d') - timedelta(days=_p.get('data_retention_days', 30))).strftime('%Y-%m-%d')
     tc = 0
     for f in sorted(os.listdir('/workspace')):
         if not (f.startswith('推荐历史_') and f.endswith('.json')): continue
@@ -5621,11 +5622,11 @@ def step26_github_sync(mp, hd, candidates):
         # 保证 main 仅含源码+配置；gh-pages 由 Pages 托管(报告 URL 不变)
         _git_with_token(["git", "clone", "--depth", "1", "--branch", "gh-pages", repo_url, rd], timeout=30)
         c15 = (datetime.strptime(prediction_date, '%Y-%m-%d') - timedelta(days=15)).strftime('%Y-%m-%d').replace('-', '')
-        # @since 修复: 推荐历史是 run_backtest(max_days_lookback=90) 的唯一数据源。
-        # 原逻辑与 md/报告目录共用 15 天窗口，导致回测样本永远攒不满 90 天(样本池被提前删除)，
-        # 表现为报告『回测』列大面积空白。此处独立为 120 天(90天窗口+节假日/跨月缓冲)。
-        # 体积代价极小: 约 18KB/交易日 x 120 天 ≈ 2MB。
-        c_hist = (datetime.strptime(prediction_date, '%Y-%m-%d') - timedelta(days=120)).strftime('%Y-%m-%d').replace('-', '')
+        # @since 修复: 推荐历史是 run_backtest(max_days_lookback=data_retention_days) 的唯一数据源。
+        # 原逻辑与 md/报告目录共用 15 天窗口，导致回测样本永远攒不满回看窗口(样本池被提前删除)，
+        # 表现为报告『回测』列大面积空白。此处与回测回看窗口统一为 data_retention_days(默认30天,1个月)。
+        # @since 统一: 数据保留/回测类窗口统一为 data_retention_days，避免多处魔数不一致。
+        c_hist = (datetime.strptime(prediction_date, '%Y-%m-%d') - timedelta(days=params.get('data_retention_days', 30))).strftime('%Y-%m-%d').replace('-', '')
         for f in list(os.listdir(rd)):
             for prefix in ['短线标的_', '推荐历史_']:
                 if f.startswith(prefix):
@@ -6032,7 +6033,7 @@ def main():
 # @since v6.12.15: 历史回测（读取推荐历史，模拟止盈止损，生成HTML/MD报告+飞书推送+筛选标记）
     bt_result = None; bt_lookup = {}
     if any(f.startswith("推荐历史_") and f.endswith(".json") for f in os.listdir(DATA_DIR)):
-        bt_result = run_backtest(hold_days=10, max_days_lookback=90)
+        bt_result = run_backtest(hold_days=10, max_days_lookback=params.get('data_retention_days', 30))
         if bt_result.get('all_trades'):
             generate_backtest_report(bt_result, "/workspace/回测报告.md")
             generate_backtest_html(bt_result, "/workspace/回测报告.html")

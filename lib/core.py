@@ -50,6 +50,7 @@ DEFAULT_PARAMS = {
     "do_t_success_reset_count": 3,  # 当前未接入主流程
     "conversion_rate_window_days": 10, "conversion_rate_threshold": 0.3,
     "conversion_rate_restore": 0.6, "conversion_rate_consecutive_days": 3,
+    "data_retention_days": 30,
     "strategy_a_weak_market": "closed"
 }
 
