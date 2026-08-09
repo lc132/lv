@@ -5560,11 +5560,17 @@ def step26_github_sync(mp, hd, candidates):
         # 保证 main 仅含源码+配置；gh-pages 由 Pages 托管(报告 URL 不变)
         _git_with_token(["git", "clone", "--depth", "1", "--branch", "gh-pages", repo_url, rd], timeout=30)
         c15 = (datetime.strptime(prediction_date, '%Y-%m-%d') - timedelta(days=15)).strftime('%Y-%m-%d').replace('-', '')
+        # @since 修复: 推荐历史是 run_backtest(max_days_lookback=90) 的唯一数据源。
+        # 原逻辑与 md/报告目录共用 15 天窗口，导致回测样本永远攒不满 90 天(样本池被提前删除)，
+        # 表现为报告『回测』列大面积空白。此处独立为 120 天(90天窗口+节假日/跨月缓冲)。
+        # 体积代价极小: 约 18KB/交易日 x 120 天 ≈ 2MB。
+        c_hist = (datetime.strptime(prediction_date, '%Y-%m-%d') - timedelta(days=120)).strftime('%Y-%m-%d').replace('-', '')
         for f in list(os.listdir(rd)):
             for prefix in ['短线标的_', '推荐历史_']:
                 if f.startswith(prefix):
                     d = f.replace(prefix, '').replace('.md', '').replace('.json', '')
-                    if len(d) == 8 and d < c15:
+                    _cut = c_hist if prefix == '推荐历史_' else c15
+                    if len(d) == 8 and d < _cut:
                         pf = os.path.join(rd, f)
                         if os.path.exists(pf): os.remove(pf)
             # @since v6.8.8: 清理超过15天的HTML报告目录
