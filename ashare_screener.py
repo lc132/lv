@@ -5601,6 +5601,18 @@ def step26_github_sync(mp, hd, candidates):
             fp = os.path.join('/workspace', f)
             if os.path.exists(fp):
                 shutil.copy(fp, os.path.join(rd, f))
+        # @since 方案B: 生成 reports.json 清单(同源读取, 彻底摆脱 GitHub API 依赖/限流/跨分支)
+        # 扫描 rd 内所有 ashare-screening-* 目录, 按日期倒序写入 reports.json, 由 index.html 同源 fetch
+        _reports = []
+        for _f in os.listdir(rd):
+            if _f.startswith('ashare-screening-') and os.path.isdir(os.path.join(rd, _f)):
+                _d = _f.replace('ashare-screening-', '')
+                if len(_d) == 8:  # 仅纳入合法日期目录
+                    _reports.append({"type": "dir", "name": _f, "path": _f})
+        _reports.sort(key=lambda x: x["name"], reverse=True)  # 新→旧
+        with open(os.path.join(rd, "reports.json"), "w", encoding="utf-8") as _rf:
+            json.dump(_reports, _rf, ensure_ascii=False, indent=2)
+
         # @since v6.20.12 治理(P0 Task 1): 自动提交信息前置门禁，杜绝 vv/版本回落绕过门禁
         _commit_msg = f"data: 筛选结果 {prediction_date} ({file_version})"
         try:
