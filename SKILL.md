@@ -272,7 +272,7 @@ _pl_sorted = sorted(_pl_data, key=lambda x: (-x[2], -x[1]))
 
 - **本地钩子**：`hooks/commit-msg` 在 `git commit` 阶段即时拦截，委托 `commit_gate.py` 校验；合并/变基提交自动跳过。
 - **启用（克隆仓库执行一次）**：`git config core.hooksPath hooks`。紧急跳过用 `git commit --no-verify`（仍会被 CI `quality-gate` 拦截）。
-- **CI 硬门禁（⚠️ 当前未启用分支保护，仅运行级拦截）**：`.github/workflows/quality-gate.yml` 的 `quality-gate` 任务在 push/PR 到 main 时运行，对每条提交经 `commit_gate` 校验，不合规即标红。但**截至 v6.20.12 仍未开启 main 分支保护**，故本门禁可被一行 `git push origin main` 直接绕过（PR #1「代码变更走 PR」未合并即关闭，是 v6.20.2 以来全部门禁的系统性漏洞）。**待办（P0-2）：为 main 开启分支保护，将「质量门禁 (Quality Gate)」设为必需状态检查，对 `*.py`/`SKILL.md`/`VERSION` 强制走 PR**。
+- **CI 硬门禁（✅ 已启用分支保护）**：`.github/workflows/quality-gate.yml` 的 `quality-gate` 任务（check context = `quality-gate`，即 job id；顶层 `name` 中文仅是显示名）在 push/PR 到 main 时运行，对每条提交经 `commit_gate` 校验，不合规即阻断。**自 P0-2（v6.20.12+）起 main 已开启分支保护**：禁止直推 main（`enforce_admins=true`，对管理员同样生效）、将 `quality-gate` 设为必需状态检查（strict），对所有 `*.py`/`SKILL.md`/`VERSION` 变更强制走 PR。data 类与纯文档提交由 workflow `paths-ignore`（`data/**`、`**/*.md`）跳过门禁，机器人数据提交应改推 `gh-pages`/`lv-data` 分支。
 - 历史登记在 `data:` 等的自定义 type 已正式写入白名单，合规率由 17.2% 提升至 90%+。
 
 ## CI 诊断纪律 (P0-1, v6.20.12)
