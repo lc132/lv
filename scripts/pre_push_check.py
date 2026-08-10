@@ -16,7 +16,7 @@ pre_push_check.py — 发版前轻量质量门禁（治理整改#5 / P0-3）
   python3 scripts/pre_push_check.py --baseline-ref origin/main --require-bump
 退出码: 0 通过 / 1 未通过
 """
-import os, sys, subprocess, re, glob, argparse
+import os, sys, subprocess, re, glob, argparse, json
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
@@ -104,6 +104,66 @@ def _check_static():
         print("静态检查失败: " + str(e))
         ok = False
     return ok
+
+
+# 敏感配置：触及这些文件（含 DEFAULT_PARAMS / 指标计算 / 参数记录 / 口径文档）必须伴随 VERSION 递增
+_SENSITIVE_FILES = {
+    "ashare_screener.py", "lib/core.py", "lib/backtest.py",
+    "策略调整记录.json", "SKILL.md",
+}
+
+
+def check_version_bump_required(baseline_ref):
+    """PO-1：触及敏感配置（DEFAULT_PARAMS / 指标计算 / 参数记录 / 口径文档）的提交必须 bump VERSION，否则拒推。"""
+    if not baseline_ref:
+        print("⚠ 未指定 --baseline-ref，跳过版本递增强制检查"); return True
+    rc, out = _git(["diff", "--name-only", f"{baseline_ref}..HEAD"])
+    if rc != 0:
+        print("⚠ git diff 失败，跳过版本递增强制检查"); return True
+    changed = {p.strip() for p in out.splitlines() if p.strip()}
+    if not changed:
+        return True
+    touched = changed & _SENSITIVE_FILES
+    if not touched:
+        return True
+    rc_b, base_v = _git(["show", f"{baseline_ref}:VERSION"])
+    new_v = _current_version()
+    vb, vn = _vt(base_v.strip()), _vt(new_v)
+    if vb is None or vn is None:
+        print("❌ 版本号格式异常，无法校验递增")
+        return False
+    if vn <= vb:
+        print(f"❌ 触及敏感配置({', '.join(sorted(touched))}) 但 VERSION 未递增 "
+              f"({vb} → {vn})，发版前必须 bump VERSION")
+        return False
+    print(f"✅ 敏感配置变更已伴随 VERSION 递增 ({vb} → {vn})")
+    return True
+
+
+def check_adjust_record(baseline_ref):
+    """PO-2：策略调整记录.json[0].version 必须等于 VERSION，且首条必须记录参数变更（params/params_diff 非空）。"""
+    p = os.path.join(REPO, "策略调整记录.json")
+    if not os.path.exists(p):
+        print("⚠ 策略调整记录.json 不存在，跳过"); return True
+    try:
+        with open(p, encoding="utf-8") as f:
+            rec = json.load(f)
+    except Exception as e:
+        print(f"❌ 策略调整记录.json 解析失败: {e}")
+        return False
+    if not rec:
+        print("❌ 策略调整记录.json 为空")
+        return False
+    head = rec[0]
+    ver = head.get("version")
+    if ver != _current_version():
+        print(f"❌ 策略调整记录.json[0].version={ver} != VERSION {_current_version()}")
+        return False
+    if not head.get("params") and not head.get("params_diff"):
+        print("❌ 策略调整记录.json[0] 的 params/params_diff 为空，必须记录本次参数变更")
+        return False
+    print("✅ 策略调整记录.json[0] 版本与参数变更记录一致")
+    return True
 
 
 def check_version_monotonic(baseline_ref, require_bump):
@@ -238,6 +298,8 @@ def main():
         ("提交信息", check_commit_messages(args.baseline_ref)),
         (".py 版本回落", check_file_version_rollback()),
         ("提交者身份白名单", check_author_email_whitelist(args.baseline_ref)),
+        ("敏感配置版本递增(PO-1)", check_version_bump_required(args.baseline_ref)),
+        ("参数记录审计(PO-2)", check_adjust_record(args.baseline_ref)),
     ]
     ok = all(passed for _, passed in checks)
     print("--- 门禁汇总 ---")
