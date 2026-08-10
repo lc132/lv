@@ -5805,6 +5805,8 @@ def step22_write_history(candidates, champion_code=None):
     # 旧逻辑仅在"新写入"记录上标记 is_champion；若冠军标的此前已写入(去重跳过)则无法补标，
     # 导致 is_champion 停留在最早写入时的冠军，与主报告最新冠军不一致(如000603错标、002015漏标)。
     # 此处对文件全部记录重算：清旧标记，仅本次 champion_code 标 True。
+    # 注意: 本归一化仅作用于当日文件 推荐历史_{prediction_date}.json, 其它日期文件互不影响,
+    #   故历史各日冠军标记天然保留, 回测"皇冠回测"可取到上一交易日冠军(见 lib/backtest.py @since v6.20.16)。
     if champion_code:
         all_recs = safe_read_json(hf)
         changed = False

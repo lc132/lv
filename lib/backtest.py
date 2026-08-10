@@ -379,13 +379,15 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     #   2) K线获取起点仍用 prediction_date(买入日)，保证从实际买入日开盘回放；
     #   3) 买入日尚未收盘(prediction_date>=today)的推荐标记 holding/no_data，仅展示、不计入胜率，
     #      待买入日收盘后自动转为有效样本；报表分组/日期列改用 date(运行日)，使"昨日"可定位。
-    # 皇冠处理：在完整 history(尚未按 today 过滤) 中取 prediction_date 最大的 is_champion 记录，
-    #   并豁免其"同日运行排除"，保证最新一期冠军尽早进入回测(买入日收盘后才会有有效收益)。
+    # 皇冠处理：在完整 history(尚未按 today 过滤) 中取 prediction_date 最大且严格 < today 的 is_champion 记录，
+    #   即"上一个交易日冠军"——其买入日已收盘、已有可回测的已发生数据；
+    #   盘前当日新选冠军(prediction_date==today)尚无数据，不纳入板块(避免展示无收益的当天推荐标的)。
+    #   历史各日冠军标记按"推荐历史_{prediction_date}.json"分文件保留, 盘前运行时上一交易日冠军标记仍在, 故可取。
     current_champion_code = None
     latest_champion_date = None
     for h in history:  # 注意：此循环在 date 过滤之前，history 为完整推荐历史
-        # @since v6.20.5: 仅纳入 prediction_date<=today 的冠军(已发生、可回测)，排除未来买入日冠军
-        if h.get('is_champion') and h.get('prediction_date') <= today_str:
+        # @since v6.20.16: 严格 < today, 取上一个交易日冠军(有已发生数据); 排除当日新选冠军
+        if h.get('is_champion') and h.get('prediction_date') < today_str:
             pd = h.get('prediction_date')
             if pd and (latest_champion_date is None or pd > latest_champion_date):
                 latest_champion_date = pd
