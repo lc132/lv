@@ -5795,7 +5795,7 @@ def step22_write_history(candidates, champion_code=None):
             "entry": entry, "change_pct": c.get('change_pct'),
             "stop_loss": round(entry * _STRATEGY_STOP_LOSS.get(_s, 0.96), 2) if entry else None,
             "take_profit": round(entry * _STRATEGY_TAKE_PROFIT.get(_s, 1.05), 2) if entry else None,
-            "date": data_date, "prediction_date": prediction_date}
+            "date": data_date, "prediction_date": prediction_date, "run_date": beijing_date}
         # @since v6.16.12: 标记当日跨策略冠军
         if champion_code and c.get('code') == champion_code:
             rec["is_champion"] = True

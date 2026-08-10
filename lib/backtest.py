@@ -392,17 +392,19 @@ def run_backtest(hold_days=10, max_days_lookback=90):
                 current_champion_code = h.get('code')
     cutoff = today - timedelta(days=max_days_lookback)
     # @since v6.20.12: 包含过滤改用运行日 date(而非买入日 prediction_date)，修复盘后推荐被整体排除；
-    #   同日新生成的推荐(date==today)仍排除——尚无完整运行日数据；冠军记录豁免该排除。
+    #   同日新生成的推荐(运行日==today)仍排除——尚无完整运行日数据；冠军记录豁免该排除。
+    # @since v6.20.16: 运行日优先取 run_date(实际运行日历日)，无则回退 date(=data_date)
+    _rdate = lambda h: h.get('run_date') or h.get('date') or ''
     history = [h for h in history
-               if h.get('date') and h['date'] >= cutoff.strftime('%Y-%m-%d')
-               and (h['date'] < today.strftime('%Y-%m-%d') or h.get('is_champion'))]
+               if _rdate(h) and _rdate(h) >= cutoff.strftime('%Y-%m-%d')
+               and (_rdate(h) < today.strftime('%Y-%m-%d') or h.get('is_champion'))]
 
     # @since v6.13.10: 去重key改为(code,date,strategy,entry)，保留同股票不同策略的推荐
     # @since v6.20.12: 去重key改用运行日 date(与包含过滤一致)，避免盘后推荐(prediction_date=次日)被误并
     seen = set()
     unique_history = []
     for h in history:
-        key = (h.get('code'), h.get('date'), h.get('strategy'), round(h.get('entry') or 0, 2))
+        key = (h.get('code'), (h.get('run_date') or h.get('date')), h.get('strategy'), round(h.get('entry') or 0, 2))
         if key not in seen:
             seen.add(key)
             unique_history.append(h)
@@ -460,8 +462,8 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         code = h.get('code', '')
         strategy = h.get('strategy', '?')
         entry = h.get('entry') or 0
-        # @since v6.20.12: 运行日 date 优先(=data_date)；无 date 的旧格式回退到 prediction_date(兼容历史)
-        date = h.get('date') or h.get('prediction_date', '')
+        # @since v6.20.16: 报表分组优先 run_date(实际运行日历日)，无则回退 date(=data_date)，再回退 prediction_date(兼容历史)
+        date = h.get('run_date') or h.get('date') or h.get('prediction_date', '')
         pred_date = h.get('prediction_date', '')
         # @since v6.20.12: 包含已按 date 过滤，故以 date 判空(缺运行日则跳过)，pred_date 缺失时仅标记无数据
         if not code or not entry or not date:
@@ -480,7 +482,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         trade['entry'] = entry
         trade['stop_loss'] = sl
         trade['take_profit'] = tp
-        trade['date'] = date                  # @since v6.20.12: 运行日(=data_date)，报表分组/日期列改用
+        trade['date'] = date                  # @since v6.20.16: 报表分组/日期列用 run_date(实际运行日历日)，旧记录回退 data_date
         trade['prediction_date'] = pred_date  # 买入日，仅供K线起点与参考
         trade['score'] = h.get('score', 0)
         trade['is_champion'] = (code == current_champion_code)  # @since v6.20.3: 标记最新一期冠军
