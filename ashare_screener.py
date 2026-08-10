@@ -2831,46 +2831,74 @@ def step10D_fetch_financials():
 
     # 2. 商誉占比 — RPT_GOODWILL_STOCKDETAILS
     try:
-        # 获取最新报告期（取最近一个季度末）
+        # @since v6.20.17: 修复 report_date 硬算导致未披露期返回空(0只)
+        # 财报披露滞后(中报8/31截止)，须向更早报告期回退直到取到非空
         bj = datetime.strptime(beijing_date, '%Y-%m-%d')
-        # 计算最近报告期：Q1=03-31, Q2=06-30, Q3=09-30, Q4=12-31
-        if bj.month <= 3:
-            report_date = f'{bj.year-1}-12-31'
-        elif bj.month <= 6:
-            report_date = f'{bj.year}-03-31'
-        elif bj.month <= 9:
-            report_date = f'{bj.year}-06-30'
-        else:
-            report_date = f'{bj.year}-09-30'
+
+        def _recent_report_dates(d, n=4):
+            """生成最近 n 个季末报告期(从最近往前回溯)，用于空结果回退。"""
+            y, m = d.year, d.month
+            if m <= 3:
+                cur = (y - 1, 12, 31)
+            elif m <= 6:
+                cur = (y, 3, 31)
+            elif m <= 9:
+                cur = (y, 6, 30)
+            else:
+                cur = (y, 9, 30)
+            seq = [cur]
+            cy, cm = cur[0], cur[1]
+            for _ in range(n - 1):
+                if cm == 3:
+                    cy, cm = cy - 1, 12
+                elif cm == 6:
+                    cm = 3
+                elif cm == 9:
+                    cm = 6
+                elif cm == 12:
+                    cm = 9
+                _qend = {3: 31, 6: 30, 9: 30, 12: 31}
+                seq.append((cy, cm, _qend[cm]))
+            return [f'{yy}-{mm:02d}-{dd:02d}' for (yy, mm, dd) in seq]
+
         goodwill_data_raw = {}
-        page = 1
-        while True:
-            gw_url = ('https://datacenter-web.eastmoney.com/api/data/v1/get'
-                      '?reportName=RPT_GOODWILL_STOCKDETAILS'
-                      '&columns=SECURITY_CODE,SUMSHEQUITY_RATIO'
-                      f'&pageNumber={page}&pageSize=500'
-                      '&sortColumns=NOTICE_DATE,SECURITY_CODE&sortTypes=-1,-1'
-                      '&source=WEB&client=WEB'
-                      '&token=894050c76af8597a853f5b408b759f5d'
-                      f"&filter=(REPORT_DATE='{report_date}')")
-            req = urllib.request.Request(gw_url, headers=headers)
-            with _http_retry(req, timeout=15) as resp:
-                g_r = json.loads(resp.read().decode('utf-8'))
-            result = g_r.get('result')
-            if not result:
+        used_report_date = None
+        for report_date in _recent_report_dates(bj):
+            page = 1
+            while True:
+                gw_url = ('https://datacenter-web.eastmoney.com/api/data/v1/get'
+                          '?reportName=RPT_GOODWILL_STOCKDETAILS'
+                          '&columns=SECURITY_CODE,SUMSHEQUITY_RATIO'
+                          f'&pageNumber={page}&pageSize=500'
+                          '&sortColumns=NOTICE_DATE,SECURITY_CODE&sortTypes=-1,-1'
+                          '&source=WEB&client=WEB'
+                          '&token=894050c76af8597a853f5b408b759f5d'
+                          f"&filter=(REPORT_DATE='{report_date}')")
+                req = urllib.request.Request(gw_url, headers=headers)
+                with _http_retry(req, timeout=15) as resp:
+                    g_r = json.loads(resp.read().decode('utf-8'))
+                result = g_r.get('result')
+                if not result:
+                    break
+                for row in (result.get('data') or []):
+                    code = row.get('SECURITY_CODE', '')
+                    ratio = row.get('SUMSHEQUITY_RATIO')
+                    if code and ratio is not None:
+                        goodwill_data_raw[code] = float(ratio)
+                total_pages = result.get('pages', 1)
+                if page >= total_pages:
+                    break
+                page += 1
+                time.sleep(0.1)
+            if goodwill_data_raw:
+                used_report_date = report_date
                 break
-            for row in (result.get('data') or []):
-                code = row.get('SECURITY_CODE', '')
-                ratio = row.get('SUMSHEQUITY_RATIO')
-                if code and ratio is not None:
-                    goodwill_data_raw[code] = float(ratio)
-            total_pages = result.get('pages', 1)
-            if page >= total_pages:
-                break
-            page += 1
-            time.sleep(0.1)
+            log_alert("WARNING", "商誉数据", f"RPT_GOODWILL_STOCKDETAILS({report_date}) 返回空, 回退更早报告期")
         goodwill_data = goodwill_data_raw
-        log_alert("INFO", "商誉数据", f"RPT_GOODWILL_STOCKDETAILS({report_date}): {len(goodwill_data)}只")
+        if used_report_date:
+            log_alert("INFO", "商誉数据", f"RPT_GOODWILL_STOCKDETAILS({used_report_date}): {len(goodwill_data)}只")
+        else:
+            log_alert("WARNING", "商誉数据", "RPT_GOODWILL_STOCKDETAILS 所有候选报告期均返回空")
     except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError, ssl.SSLError) as e:
         log_alert("WARNING", "商誉数据", f"RPT_GOODWILL_STOCKDETAILS不可达: {str(e)[:60]}")
 
