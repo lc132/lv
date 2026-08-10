@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.20.14
+A股每日盘前短线标的智能筛选 v6.20.15
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import Counter, defaultdict
 
 # @since v6.13.42: axdata K线降级（需要Python 3.11+）
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.20.14"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.20.15"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -2641,6 +2641,130 @@ def step10C_flow_fetch_main_inflow(candidates):
     return flow_data
 
 # ============================================================
+# 步骤10C-附2：龙虎榜机构席位 + 融资融券日变动（@since v6.20.15: 替代北向取消后的日频资金面因子）
+# 北向官方信披2026-08-07取消后，原「北向资金」策略名实不符；v6.20.14已正名为「主力资金」。
+# 本段补齐两类真实日频资金面信号，作为主力资金策略F的共振/增援因子：
+#   - 龙虎榜机构席位：东财 datacenter-web RPT_DAILYBILLBOARD_DETAILSNEW（单次调用覆盖全市场，稳健）
+#   - 融资融券日变动：同花顺 rzrqgg 个股页(HTML, re解析，限定final短名单，逐股抓取+超时降级)
+# 两者均在接口不可达/解析失败时优雅降级(返回空)，绝不影响主流程。
+# ============================================================
+_MARGIN_CACHE_FILE = "/workspace/融资融券日变动缓存.json"
+_MARGIN_CACHE = {}
+
+def _load_margin_cache():
+    global _MARGIN_CACHE
+    try:
+        if os.path.exists(_MARGIN_CACHE_FILE):
+            _MARGIN_CACHE = json.load(open(_MARGIN_CACHE_FILE, encoding='utf-8'))
+    except Exception:
+        _MARGIN_CACHE = {}
+
+def _save_margin_cache():
+    try:
+        json.dump(_MARGIN_CACHE, open(_MARGIN_CACHE_FILE, 'w', encoding='utf-8'), ensure_ascii=False)
+    except Exception:
+        pass
+
+def _parse_cn_amount(s):
+    """把 '233.52亿' / '8.21亿' / '1234万' 转为浮点数值(元)。失败返回None。"""
+    if not s:
+        return None
+    s = str(s).strip()
+    try:
+        if '亿' in s:
+            return float(re.sub(r'[^0-9.]', '', s)) * 1e8
+        if '万' in s:
+            return float(re.sub(r'[^0-9.]', '', s)) * 1e4
+        return float(re.sub(r'[^0-9.]', '', s))
+    except Exception:
+        return None
+
+def step10C_lhb_fetch(candidates):
+    """@since v6.20.15: 龙虎榜机构席位信号。东财 RPT_DAILYBILLBOARD_DETAILSNEW 单次调用取全市场龙虎榜，
+    筛选候选股。返回 {code: {'lhb_net': 龙虎榜净买额(元), 'lhb_inst': 机构席位数}}。
+    lhb_inst 由 EXPLAIN('N家机构买入')解析；接口不可达时返回空dict(优雅降级)。"""
+    out = {}
+    if not candidates:
+        return out
+    codes = {c.get('code') for c in candidates if c.get('code')}
+    try:
+        url = ("https://datacenter-web.eastmoney.com/api/data/v1/get"
+               "?reportName=RPT_DAILYBILLBOARD_DETAILSNEW&columns=ALL"
+               "&pageSize=500&sortColumns=TRADE_DATE&sortTypes=-1&source=WEB")
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Referer": "https://data.eastmoney.com/"})
+        with _http_retry(req, timeout=10) as resp:
+            obj = json.loads(resp.read().decode('utf-8', 'ignore'))
+        rows = (obj.get('result') or {}).get('data') or []
+        for r in rows:
+            code = (r.get('SECURITY_CODE') or '').strip()
+            if code not in codes:
+                continue
+            net = r.get('BILLBOARD_NET_AMT') or 0
+            explain = r.get('EXPLAIN') or ''
+            inst = 0
+            m = re.search(r'(\d+)\s*家机构买入', explain)
+            if m:
+                inst = int(m.group(1))
+            elif '机构买入' in explain:
+                inst = 1
+            out[code] = {'lhb_net': float(net or 0), 'lhb_inst': inst}
+    except Exception:
+        out = {}
+    return out
+
+def step10C_margin_fetch(candidates):
+    """@since v6.20.15: 融资融券日变动%。同花顺 rzrqgg 个股页(HTML)解析融资余额(最新/上一交易日)算日变动。
+    逐股抓取(限定final短名单)，超时/解析失败单股跳过(优雅降级)。结果按交易日缓存于 /workspace。
+    返回 {code: chg_pct}。"""
+    out = {}
+    if not candidates:
+        return out
+    _load_margin_cache()
+    today = (beijing_now or datetime.now(timezone(timedelta(hours=8)))).strftime('%Y-%m-%d')
+    cached_today = (_MARGIN_CACHE.get('date') == today)
+    # 候选日期回退(规避周末/节假日接口无数据)
+    cand_dates = [(datetime.now(timezone(timedelta(hours=8))) - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(4)]
+    for c in candidates:
+        code = c.get('code', '')
+        if not code:
+            continue
+        if cached_today and code in _MARGIN_CACHE.get('data', {}):
+            out[code] = _MARGIN_CACHE['data'][code]
+            continue
+        chg = None
+        for d in cand_dates:
+            try:
+                url = f"http://news.10jqka.com.cn/data/api/rzrqgg/code/{code}/date/{d}/"
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                    "Referer": f"http://data.10jqka.com.cn/market/rzrqgg/code/{code}/"})
+                with _http_retry(req, timeout=6) as resp:
+                    html = resp.read().decode('gbk', 'ignore')
+                rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.S)
+                data = []
+                for row in rows:
+                    cols = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', row, re.S)
+                    cols = [re.sub(r'<[^>]+>', '', x).strip() for x in cols]
+                    if len(cols) >= 3 and re.match(r'\d{4}-\d{2}-\d{2}', cols[1] or ''):
+                        data.append(cols)
+                if len(data) >= 2:
+                    bal0 = _parse_cn_amount(data[0][2])  # 最新融资余额
+                    bal1 = _parse_cn_amount(data[1][2])  # 上一交易日融资余额
+                    if bal0 and bal1:
+                        chg = round((bal0 - bal1) / bal1 * 100.0, 2)
+                        break
+            except Exception:
+                continue
+        if chg is not None:
+            out[code] = chg
+            _MARGIN_CACHE.setdefault('data', {})[code] = chg
+    _MARGIN_CACHE['date'] = today
+    _save_margin_cache()
+    return out
+
+# ============================================================
 # 步骤10D：东方财富批量质押/商誉数据拉取（@since v6.16.35: 新API替代已废弃dcfm）
 # @since v6.9.15: 旧dcfm.eastmoney.com API全部废弃。
 # @since v6.16.35: 迁移至datacenter-web新API:
@@ -3333,17 +3457,33 @@ def step13_strategy_match(candidates, kline_data=None):
                     s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%"; score = 6
                 elif vr is None and to is not None and to >= 1.0:
                     s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 6
-        # ── F 主力资金（@since v6.9.39: 预计算recent_5d字典，避免循环内重复IO）──
-        if s == "E":
-            mi = c.get('main_inflow')
+        # ── F 主力资金（@since v6.9.39: 预计算recent_5d字典；v6.20.15 接入龙虎榜机构席位+融资融券日变动）──
+        mi = c.get('main_inflow')
+        lhb_inst = c.get('lhb_inst') or 0
+        lhb_net = c.get('lhb_net') or 0
+        margin_chg = c.get('margin_chg_pct') or 0.0
+        if s == "E" or (not s and (lhb_inst > 0 or margin_chg >= 3.0)):
+            nb_days = recent_5d.get(c.get('code', ''), 0)
+            promoted = False
             if mi is not None and mi > 50_000_000:  # @since v6.16.24: 修正阈值从5000→5000万，与R/S/T一致
-                nb_days = recent_5d.get(c.get('code', ''), 0)
                 if nb_days >= 3:
-                    s = "F"; reason = f"主力资金:涨{chg:.1f}%+主力流入{mi/1e4:.0f}万+持续{nb_days}日"; score = 7
+                    s = "F"; score = 7
+                    reason = f"主力资金:涨{chg:.1f}%+主力流入{mi/1e4:.0f}万+持续{nb_days}日"; promoted = True
             elif mi is None and vr is not None and vr >= 0.8 and to is not None and to >= 1.5:
-                nb_days = recent_5d.get(c.get('code', ''), 0)
                 if nb_days >= 2:
-                    s = "F"; reason = f"主力资金(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%+持续{nb_days}日"; score = 6
+                    s = "F"; score = 6
+                    reason = f"主力资金(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%+持续{nb_days}日"; promoted = True
+            # 龙虎榜机构席位 增援：机构净买 + 明确有机构买入
+            if lhb_inst > 0 and lhb_net > 0:
+                if not promoted:
+                    s = "F"; score = 7; reason = reason or f"主力资金:涨{chg:.1f}%"
+                reason += f"+龙虎榜机构{lhb_inst}家净买{lhb_net/1e4:.0f}万"
+                promoted = True
+            # 融资融券日变动 增援：融资余额单日增≥3% = 融资客积极看多
+            if margin_chg >= 3.0:
+                if not promoted:
+                    s = "F"; score = 6; reason = reason or f"主力资金:涨{chg:.1f}%"
+                reason += f"+融资增{margin_chg:.1f}%"
         # ── G 横盘突破 (@since v6.9.22: vr≥1.0,弱市不折扣,chg<3.0%避免与D重叠) ──
         if not s and 1.0 <= chg < 3.0 and close > op:
             if amp is not None and 1.5 <= amp <= 6:
@@ -6065,6 +6205,20 @@ def main():
         else:
             s['main_inflow'] = None
     log_alert("INFO", "主力资金", f"获取{sum(1 for v in flow_data.values() if v is not None)}只/{len(final)}只")
+    # @since v6.20.15: 龙虎榜机构席位 + 融资融券日变动（替代北向取消后的日频资金面因子）
+    print("\n[步骤15A-2] 龙虎榜机构席位 / 融资融券日变动...")
+    lhb_data = step10C_lhb_fetch(final)
+    for s in final:
+        code = s.get('code', '')
+        if code in lhb_data:
+            s['lhb_net'] = lhb_data[code]['lhb_net']
+            s['lhb_inst'] = lhb_data[code]['lhb_inst']
+    margin_data = step10C_margin_fetch(final)
+    for s in final:
+        code = s.get('code', '')
+        if code in margin_data:
+            s['margin_chg_pct'] = margin_data[code]
+    log_alert("INFO", "资金面因子", f"龙虎榜命中{len(lhb_data)}只 / 融资融券{len(margin_data)}只")
     print("\n[步骤15B] AI智能分析(TOP10)..."); ai_report = step15B_ai_analysis(final, kline_data, index_data, market_condition, sector_limit_up, total_raw, ae, asig, astr, amicro, aind, fc)
     
 
