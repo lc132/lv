@@ -152,7 +152,7 @@ def generate_market_overview(final_candidates, index_data, market_condition,
     lines.append("### 1.5 策略分布概览")
     lines.append("")
     sn = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏',
-          'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头',
+          'F': '主力资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头',
           'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线',
           'P': '地量反弹', 'Q': 'W底突破', 'R': '主力共振(强)', 'S': '主力共振(弱)', 'T': '主力观察'}
     sorted_s = sorted(strat_count.items(), key=lambda x: -x[1])
@@ -313,7 +313,7 @@ def generate_candidate_analysis(c, kline_data, idx, total, is_champion=False):
 
     strategy_names = {
         'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳',
-        'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底',
+        'E': '资金埋伏', 'F': '主力资金', 'G': '横盘突破', 'H': '地量见底',
         'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑',
         'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹',
         'Q': 'W底突破', 'R': '主力共振(强)', 'S': '主力共振(弱)', 'T': '主力观察'
@@ -412,7 +412,7 @@ def _build_strategy_logic(strat, sname, change_pct, ampl, vr, turnover, industry
     elif strat == 'E':
         parts.append(f"资金埋伏策略：主力底部建仓痕迹明显，当前处于主力成本区附近，安全边际较高。")
     elif strat == 'F':
-        parts.append(f"北向资金策略：外资持续增持，看好中长期价值，短期涨幅有限提供较好进场窗口。")
+        parts.append(f"主力资金策略：主力资金持续流入，资金面转强，短期涨幅有限提供较好低吸窗口。")
     elif strat == 'G':
         parts.append(f"横盘突破策略：突破横盘整理区间，量比{vr:.1f}确认放量，横盘筹码充分换手后上行空间打开。")
     elif strat == 'H':

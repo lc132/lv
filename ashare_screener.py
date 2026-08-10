@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.20.13
+A股每日盘前短线标的智能筛选 v6.20.14
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.20.13"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.20.14"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -410,7 +410,7 @@ _VALID_SHENWAN_INDUSTRIES = frozenset([
 # 必须在此处一并删除：step6_file_init 会用本表回填 params（缺键即补默认），
 # 只删 JSON 与 lib/core.py 的话这些键每次运行都会被重新注入，清理等于无效。
 DEFAULT_PARAMS = {
-    "search_budget": 25, "northbound_threshold": 3000,
+    "search_budget": 25,
     "confidence_position_enabled": True,
     "strategy_concentration_pct": 25,
     "data_retention_days": 30,
@@ -419,7 +419,7 @@ DEFAULT_PARAMS = {
 
 # 模块级策略映射表（DRY：避免函数内重复定义）
 _STRATEGY_ORDER = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16, 'R': 17, 'S': 18, 'T': 19, 'U': 20}
-_STRATEGY_NAMES = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '北向资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破', 'R': '主力共振(强)', 'S': '主力共振(弱)', 'T': '主力观察', 'U': '涨停追击'}
+_STRATEGY_NAMES = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '主力资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破', 'R': '主力共振(强)', 'S': '主力共振(弱)', 'T': '主力观察', 'U': '涨停追击'}
 _STRATEGY_COLORS = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4', 'G': '#10b981', 'H': '#f97316', 'I': '#14b8a6', 'J': '#ef4444', 'K': '#a855f7', 'L': '#eab308', 'M': '#f472b6', 'N': '#84cc16', 'O': '#38bdf8', 'P': '#fb923c', 'Q': '#22d3ee', 'R': '#dc2626', 'S': '#f97316', 'T': '#94a3b8', 'U': '#ff3b3b'}
 _STRATEGY_STOP_LOSS = {'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965, 'F': 0.965, 'G': 0.95, 'H': 0.94, 'I': 0.95, 'J': 0.94, 'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95, 'P': 0.945, 'Q': 0.95, 'R': 0.95, 'S': 0.95, 'T': 0.94, 'U': 0.93}
 _STRATEGY_TAKE_PROFIT = {'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04, 'F': 1.04, 'G': 1.05, 'H': 1.06, 'I': 1.05, 'J': 1.06, 'K': 1.05, 'L': 1.06, 'M': 1.05, 'N': 1.05, 'O': 1.05, 'P': 1.05, 'Q': 1.05, 'R': 1.05, 'S': 1.04, 'T': 1.04, 'U': 1.06}
@@ -2579,31 +2579,65 @@ def step10C_fetch_klines_itick(candidates):
 
 # ============================================================
 # ============================================================
-# 步骤10C-附：主力资金流向（v6.13.52修复）
-# 所有外部资金流向API(push2/nufm/sina)在沙箱中不可达，改用智能代理估算
-# 代理公式：主力净流入 ≈ 成交额 × 涨跌幅(%) / 100 × 主力贡献系数
-# 主力贡献系数：量比>1.5时0.20，量比>0.8时0.12，否则0.06
+# 步骤10C-附：主力资金流向（v6.20.14 重写）
+# 背景：北向资金官方信披已于2026-08-07取消(盘后不再披露当日净买入/每日个股港资持股)，
+#   原「北向资金」策略名实不符——实际从未接入北向API，仅用成交额×涨跌幅代理估算。
+# v6.20.14起：①策略正名为「主力资金」；②优先调用东方财富 push2 真实主力净流入接口
+#   (qt/ulist.np/get, f62=主力净流入/元)，沙箱不可达或接口变更时优雅降级到代理估算，
+#   保证下游 main_inflow 数据结构不变、函数永不崩溃。
 # ============================================================
 def step10C_flow_fetch_main_inflow(candidates):
-    """@since v6.13.52: 所有外部资金流API不可达，使用成交额×涨跌幅代理估算主力净流入。
-    代理逻辑：量比反映主力参与度，高量比→高主力贡献系数
-    返回: {code: float} 字典，值为估算主力净流入(元)"""
+    """@since v6.20.14: 真实主力净流入优先(东财push2 ulist.np.get, f62=元)，
+    失败/沙箱不可达时降级到成交额×涨跌幅代理估算。返回 {code: 主力净流入(元)}"""
     flow_data = {}
-    if not candidates: return flow_data
-    for c in candidates:
-        code = c.get('code', '')
-        if not code: continue
-        amount = c.get('amount', 0) or 0
-        change_pct = c.get('change_pct', 0) or 0
-        vol_ratio = c.get('volume_ratio') or 1.0
-        # 主力贡献系数：量比越高，主力参与度越高
-        if vol_ratio > 1.5: master_ratio = 0.20
-        elif vol_ratio > 0.8: master_ratio = 0.12
-        else: master_ratio = 0.06
-        # 主力净流入 = 成交额 × 涨跌幅% × 主力贡献系数
-        # 涨为正(主力买入主导)，跌为负(主力卖出主导)
-        flow = amount * (change_pct / 100.0) * master_ratio
-        flow_data[code] = round(flow, 2)
+    if not candidates:
+        return flow_data
+    # ── 真实API优先：批量拉取主力净流入(元) ──
+    try:
+        secids, code_list = [], []
+        for c in candidates:
+            code = c.get('code', '')
+            if not code:
+                continue
+            secid = f'1.{code}' if code.startswith('6') else f'0.{code}'
+            secids.append(secid)
+            code_list.append(code)
+        if secids:
+            url = ("https://push2.eastmoney.com/api/qt/ulist.np/get?"
+                   "fields=f12,f14,f62&secids=" + ",".join(secids) +
+                   "&ut=fa5fd1943c7b386f172d6893dbfba10b&invt=2")
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "Referer": "https://quote.eastmoney.com/"})
+            with _http_retry(req, timeout=10) as resp:
+                txt = resp.read().decode("utf-8", "ignore")
+            obj = json.loads(txt)
+            diff = (obj.get("data") or {}).get("diff") or []
+            for it in diff:
+                raw = it.get("f12") or ""
+                code = raw.split(".")[-1] if "." in raw else raw
+                if not code:
+                    continue
+                val = it.get("f62")
+                if isinstance(val, (int, float)):
+                    flow_data[code] = float(val)
+    except Exception:
+        # 沙箱不可达/接口变更 → 清空，走代理全量兜底
+        flow_data = {}
+    # ── 代理估算兜底：补齐真实API未覆盖的标的 ──
+    if len(flow_data) < len(code_list):
+        for c in candidates:
+            code = c.get('code', '')
+            if not code or code in flow_data:
+                continue
+            amount = c.get('amount', 0) or 0
+            change_pct = c.get('change_pct', 0) or 0
+            vol_ratio = c.get('volume_ratio') or 1.0
+            if vol_ratio > 1.5: master_ratio = 0.20
+            elif vol_ratio > 0.8: master_ratio = 0.12
+            else: master_ratio = 0.06
+            flow = amount * (change_pct / 100.0) * master_ratio
+            flow_data[code] = round(flow, 2)
     return flow_data
 
 # ============================================================
@@ -3299,17 +3333,17 @@ def step13_strategy_match(candidates, kline_data=None):
                     s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%"; score = 6
                 elif vr is None and to is not None and to >= 1.0:
                     s = "E"; reason = f"资金埋伏(代理):涨{chg:.1f}%+换手{to:.1f}%"; score = 6
-        # ── F 北向资金（@since v6.9.39: 预计算recent_5d字典，避免循环内重复IO）──
+        # ── F 主力资金（@since v6.9.39: 预计算recent_5d字典，避免循环内重复IO）──
         if s == "E":
             mi = c.get('main_inflow')
             if mi is not None and mi > 50_000_000:  # @since v6.16.24: 修正阈值从5000→5000万，与R/S/T一致
                 nb_days = recent_5d.get(c.get('code', ''), 0)
                 if nb_days >= 3:
-                    s = "F"; reason = f"北向资金:涨{chg:.1f}%+主力流入{mi/1e4:.0f}万+持续{nb_days}日"; score = 7
+                    s = "F"; reason = f"主力资金:涨{chg:.1f}%+主力流入{mi/1e4:.0f}万+持续{nb_days}日"; score = 7
             elif mi is None and vr is not None and vr >= 0.8 and to is not None and to >= 1.5:
                 nb_days = recent_5d.get(c.get('code', ''), 0)
                 if nb_days >= 2:
-                    s = "F"; reason = f"北向资金(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%+持续{nb_days}日"; score = 6
+                    s = "F"; reason = f"主力资金(代理):涨{chg:.1f}%+量比{vr:.1f}+换手{to:.1f}%+持续{nb_days}日"; score = 6
         # ── G 横盘突破 (@since v6.9.22: vr≥1.0,弱市不折扣,chg<3.0%避免与D重叠) ──
         if not s and 1.0 <= chg < 3.0 and close > op:
             if amp is not None and 1.5 <= amp <= 6:
@@ -4174,7 +4208,7 @@ def calc_entry_price(c):
         return round(entry, 2)
     
     elif strategy == 'F':
-        # 北向资金埋伏(@since v6.6.38): 涨幅有限+持续资金流入，次日平开或小幅低开
+        # 主力资金埋伏(@since v6.6.38): 涨幅有限+持续资金流入，次日平开或小幅低开
         # 在收盘价下方0.5%挂单，低吸为主
         if low > 0 and close > low:
             entry = low + (close - low) * 0.3
@@ -5508,7 +5542,7 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 <tr><td><span class="badge strat_c">C事件驱动</span></td><td style="white-space:normal;word-break:break-all">涨1-2%+量比≥1.0或财报季+弱市关闭</td><td>10-12%</td><td>0%(关闭)</td></tr>
 <tr><td><span class="badge strat_d">D回调企稳</span></td><td style="white-space:normal;word-break:break-all">涨3-6%(弱市上限7%)+振幅1.5-10%+阳线+弱市不折扣</td><td>12-15%</td><td>8-12%</td></tr>
 <tr><td><span class="badge strat_e">E资金埋伏</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>3000万(代理vr≥0.6+to≥0.5%)+弱市不折扣</td><td>5-8%</td><td>3-5%</td></tr>
-<tr><td><span class="badge strat_f">F北向资金</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>5000万+近5日持续≥3日+弱市不折扣</td><td>3-5%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_f">F主力资金</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>5000万+近5日持续≥3日+弱市不折扣</td><td>3-5%</td><td>3-5%</td></tr>
 <tr><td><span class="badge strat_g">G横盘突破</span></td><td style="white-space:normal;word-break:break-all">涨1.0-3.0%+振幅1.5-6%+量比≥1.0阳线+弱市不折扣低吸</td><td>8-10%</td><td>5-8%</td></tr>
 <tr><td><span class="badge strat_h">H地量见底</span></td><td style="white-space:normal;word-break:break-all">涨-3~1.0%+量比<1.0+锤子线/十字星阳线+弱市放宽</td><td>5-8%</td><td>3-5%</td></tr>
 <tr><td><span class="badge strat_i">I均线突破</span></td><td style="white-space:normal;word-break:break-all">MA5/10/20粘合<4%+放量vr≥1.0阳线+收盘≥均线×0.98+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>

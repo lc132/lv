@@ -1,8 +1,8 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.20.13)。基于前一日收盘数据，通过37步筛选流程，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
+description: A股每日盘前短线标的智能筛选(v6.20.14)。基于前一日收盘数据，通过37步筛选流程，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
 ---
-# A股盘前短线标的筛选 v6.20.13
+# A股盘前短线标的筛选 v6.20.14
 
 ## 版本历史
 
@@ -316,15 +316,16 @@ _pl_sorted = sorted(_pl_data, key=lambda x: (-x[2], -x[1]))
 - 触发记录：`/workspace/推荐历史_*.json` 中 `{"type":"strategy_check","date":...,"checks":{"circuit_breaker_triggered":bool}}`（step9B）与 `{"type":"strategy_check","version":...,"params":...,"date":...}`（step6）。
 - step9B 读昨日 `strategy_check` 记录的 `checks.circuit_breaker_triggered` 判断是否「连续 2 日」。
 
-### ✅ 失效 / 死参数（已清理 v6.20.13，仅余 1 项）
+### ✅ 失效 / 死参数（已清理 v6.20.13 与 v6.20.14，仅余 1 项遗留）
 
-以下参数历史上为死参数（定义即死，零活动引用）。经 P0-3(v6.20.13) 治理，绝大多数已物理删除：
+以下参数历史上为死参数（定义即死，零活动引用）。经 P0-3(v6.20.13) 与 v6.20.14 治理，绝大多数已物理删除：
 
 | 参数 | 默认值 | 现状 |
 |------|--------|------|
 | `win_rate_drop_threshold` | 10 | ✅ 已删除（v6.20.13，全仓库 0 引用） |
 | `consecutive_weeks` | 2 | ✅ 已删除（v6.20.13，全仓库 0 引用） |
 | `max_adjust_params` | 3 | ✅ 已删除（v6.20.13，全仓库 0 引用） |
+| `northbound_threshold` | 3000 | ✅ 已删除（v6.20.14，全仓库 0 引用；原「北向资金」策略名实不符，策略F已正名为「主力资金」） |
 | `conversion_rate_consecutive_days` | 3 | ⚠️ **唯一遗留**：`ashare_screener.py:1122` 读取但 `step9C` 未使用（读而未用）；`lib/pipeline.py` 有引用但该模块未被 import。待接线或删除（P2 遗留） |
 
 > 注：`search_budget`（默认 25）是**活参数**（step2 区域动态调整 `+5`），**不属于**死参数。
