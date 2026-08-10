@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.20.15
+A股每日盘前短线标的智能筛选 v6.20.16
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.20.15"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.20.16"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -4487,24 +4487,24 @@ def _init_pk_details(c, kline_data, bt_lookup, sentiment_base, sector_heat, max_
     pk_details = []
     
     # ---- 维度1: 成长性(growth) ----
-    # 营收同比 + 净利同比 + 扣非净利同比 取均值，N/A 用0填充
+    # 营收同比 + 净利同比 + 扣非净利同比 取均值，F10数据全缺时用None（不参与PK）
     rev_yoy = _safe_float(c.get('_fd_revenue_yoy'))
     np_yoy = _safe_float(c.get('_fd_net_profit_yoy'))
     dnp_yoy = _safe_float(c.get('_fd_deduct_np_yoy'))
     vals = [v for v in [rev_yoy, np_yoy, dnp_yoy] if v is not None]
-    growth = sum(vals) / len(vals) if vals else 0
+    growth = sum(vals) / len(vals) if vals else None  # @since v6.20.16: 0→None，避免max_val==0跳过维度
     pk_details.append(('growth', growth))
     
     # ---- 维度2: 盈利能力(profitability) ----
-    # ROE → ROIC → 净利率 三级降级
+    # ROE → ROIC → 净利率 三级降级，F10数据全缺时用None
     roe = _safe_float(c.get('_fd_roe'))
     roic = _safe_float(c.get('_fd_roic'))
     net_margin = _safe_float(c.get('_fd_net_margin'))
-    profitability = roe if roe is not None else (roic if roic is not None else (net_margin if net_margin is not None else 0))
+    profitability = roe if roe is not None else (roic if roic is not None else (net_margin if net_margin is not None else None))  # @since v6.20.16: 0→None
     pk_details.append(('profit', profitability))
     
     # ---- 维度3: 估值水位(valuation) ----
-    # PE = 现价/每股收益，越低越好。负PE=最差(-999)，无数据=中位(0)
+    # PE = 现价/每股收益，越低越好。负PE=最差(-999)，F10数据缺失时用None
     eps = _safe_float(c.get('_fd_eps'))
     close = c.get('close', 0) or 0
     if eps is not None and eps > 0 and close > 0:
@@ -4513,7 +4513,7 @@ def _init_pk_details(c, kline_data, bt_lookup, sentiment_base, sector_heat, max_
     elif eps is not None and eps <= 0:
         pe_score = -9999  # 亏损股，估值最差
     else:
-        pe_score = 0      # 无数据，中位
+        pe_score = None   # @since v6.20.16: 0→None，无F10数据时不参与PK，避免max_val==0误跳过
     pk_details.append(('value', pe_score))
     
     # ---- 维度4: 资产质量(quality) ----
@@ -4526,9 +4526,9 @@ def _init_pk_details(c, kline_data, bt_lookup, sentiment_base, sector_heat, max_
     pk_details.append(('quality', quality))
     
     # ---- 维度5: 现金流(cashflow) ----
-    # 经营现金流/营收，越高越好
+    # 经营现金流/营收，越高越好，F10数据缺失时用None
     ocf = _safe_float(c.get('_fd_ocf_to_revenue'))
-    cashflow = ocf if ocf is not None else 0
+    cashflow = ocf if ocf is not None else None  # @since v6.20.16: 0→None
     pk_details.append(('cashflow', cashflow))
     
     # ---- 维度6: 筹码(flow) ----
@@ -4591,7 +4591,11 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
         # growth/profit/value/quality/cashflow/flow/heat
         dims = ['growth', 'profit', 'value', 'quality', 'cashflow', 'flow', 'heat']
         for dim_idx, dim_name in enumerate(dims):
-            values = [(c, c['_pk_details'][dim_idx][1]) for c in group]
+            # @since v6.20.16: 过滤None值（无F10数据），仅在有≥2个有效数据时才评分
+            raw_values = [(c, c['_pk_details'][dim_idx][1]) for c in group]
+            values = [(c, v) for c, v in raw_values if v is not None]
+            if len(values) < 2:
+                continue
             max_val = max(v for _, v in values)
             if max_val == 0:
                 continue
@@ -4667,7 +4671,11 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
         # 复用已有_pk_details，每个维度最高者+1分
         dims = ['growth', 'profit', 'value', 'quality', 'cashflow', 'flow', 'heat']
         for dim_idx, dim_name in enumerate(dims):
-            values = [(c, c['_pk_details'][dim_idx][1]) for c in all_winners]
+            # @since v6.20.16: 过滤None值，仅在有≥2个有效数据时才评分
+            raw_values = [(c, c['_pk_details'][dim_idx][1]) for c in all_winners]
+            values = [(c, v) for c, v in raw_values if v is not None]
+            if len(values) < 2:
+                continue
             max_val = max(v for _, v in values)
             if max_val == 0:
                 continue
