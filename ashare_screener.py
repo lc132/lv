@@ -5626,7 +5626,11 @@ def step26_github_sync(mp, hd, candidates):
         # 原逻辑与 md/报告目录共用 15 天窗口，导致回测样本永远攒不满回看窗口(样本池被提前删除)，
         # 表现为报告『回测』列大面积空白。此处与回测回看窗口统一为 data_retention_days(默认30天,1个月)。
         # @since 统一: 数据保留/回测类窗口统一为 data_retention_days，避免多处魔数不一致。
-        c_hist = (datetime.strptime(prediction_date, '%Y-%m-%d') - timedelta(days=params.get('data_retention_days', 30))).strftime('%Y-%m-%d').replace('-', '')
+        # @since 修复(G): 清理期 = 数据保留期 + 7 天安全余量；回测窗口本身仍为 data_retention_days(默认30天)。
+        # 原因：文件名用 prediction_date(买入日)，而回测按记录内 data_date(运行日)过滤，
+        # prediction_date 通常晚于 data_date 1~3 天（盘后/节假日更久）。若清理期与回测期严格等长，
+        # 窗口边缘的样本会在仍需参与回测时被提前删除。留 7 天余量确保清理期严格宽于回测期。
+        c_hist = (datetime.strptime(prediction_date, '%Y-%m-%d') - timedelta(days=params.get('data_retention_days', 30) + 7)).strftime('%Y-%m-%d').replace('-', '')
         for f in list(os.listdir(rd)):
             for prefix in ['短线标的_', '推荐历史_']:
                 if f.startswith(prefix):
@@ -6032,7 +6036,26 @@ def main():
 
 # @since v6.12.15: 历史回测（读取推荐历史，模拟止盈止损，生成HTML/MD报告+飞书推送+筛选标记）
     bt_result = None; bt_lookup = {}
-    if any(f.startswith("推荐历史_") and f.endswith(".json") for f in os.listdir(DATA_DIR)):
+    # @since 修复(F): 旧守卫只判「推荐历史_*.json 文件是否存在」。但 step6B 会以 prediction_date 命名
+    # 写出仅含 strategy_check(无 recommendation) 的同名文件，因此即便 recommendation 样本全部丢失
+    # (如 step0A 从错误分支恢复到0样本)，文件依然存在 → 守卫通过 → run_backtest 返回空 all_trades
+    # → 却仍记 OK，故障被静默吞掉。现改为统计真实 recommendation 记录条数作为守卫依据。
+    rec_total = 0
+    for _hf in os.listdir(DATA_DIR):
+        if _hf.startswith("推荐历史_") and _hf.endswith(".json"):
+            try:
+                with open(os.path.join(DATA_DIR, _hf), 'r', encoding='utf-8') as _hfh:
+                    _hrecs = json.load(_hfh)
+                if isinstance(_hrecs, list):
+                    rec_total += sum(1 for _r in _hrecs if isinstance(_r, dict) and _r.get('type') == 'recommendation')
+            except (json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+                continue
+    if rec_total == 0:
+        # 0 样本必须显式告警，不能记 OK（否则回测空白无人察觉）
+        print("\n[步骤25] 历史回测... ⚠️ 推荐历史中 recommendation 记录为0条，回测样本为0，跳过")
+        log_alert("WARNING", "回测", "无推荐历史记录，回测样本为0，跳过")
+        record_step_status("步骤25: 历史回测", "SKIP", "无推荐历史记录")
+    else:
         bt_result = run_backtest(hold_days=10, max_days_lookback=params.get('data_retention_days', 30))
         if bt_result.get('all_trades'):
             generate_backtest_report(bt_result, "/workspace/回测报告.md")
@@ -6044,9 +6067,12 @@ def main():
             # @since v6.20.9: 恢复独立回测卡推送（撤销 @since v6.20.8 整合到 step27 的做法，回到8月5日前行为）
             push_backtest_to_feishu(bt_result)
             bt_lookup = _build_backtest_lookup(bt_result)
-        record_step_status("步骤25: 历史回测", "OK", f"{len(bt_result.get('all_trades',[]))}笔交易")
-    else:
-        record_step_status("步骤25: 历史回测", "SKIP", "无推荐历史记录")
+            record_step_status("步骤25: 历史回测", "OK", f"{len(bt_result.get('all_trades',[]))}笔交易")
+        else:
+            # 有推荐样本却回测出0笔有效交易(如K线全 no_data / 全落在窗口外)，同样属异常，记 WARN
+            print(f"  ⚠️ 推荐历史{rec_total}条，但回测0笔有效交易（疑似K线缺失或样本全在回看窗口外）")
+            log_alert("WARNING", "回测", "回测样本0笔有效")
+            record_step_status("步骤25: 历史回测", "WARN", f"推荐历史{rec_total}条但0笔有效交易")
 
     print("\n[步骤19B] 同策略PK..."); pk_results = step19b_strategy_pk(final, kline_data, bt_lookup, sector_limit_up, market_condition, index_data)
     record_step_status("步骤19B: 同策略PK", "OK", f"{sum(1 for v in pk_results.values() if v['count']>=2)}组对决")
