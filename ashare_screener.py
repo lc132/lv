@@ -2641,6 +2641,90 @@ def step10C_flow_fetch_main_inflow(candidates):
     return flow_data
 
 # ============================================================
+# @since v6.20.16: 板块级行业主力净流入排名（替代逐只个股汇总）
+# 主脚本"资金去向"区块优先用此真实板块级排名(东财push2 clist, fs=m:90+t:2, fid=f62)，
+#   一次拿到全行业真实主力净流入排名; 沙箱/接口不可达时返回 [], 下游降级到个股main_inflow汇总。
+G_INDUSTRY_FLOW_RANK = []  # 全局: [{name, net(元), chg(%), pct(主力净流入占比%)}] 按net降序
+
+# 东财行业板块名(f14, fs=m:90+t:2) → 申万一级行业（用于回查推荐标的代表股）
+EM_SECTOR_TO_SW1 = {
+    '半导体': '电子', '消费电子': '电子', '元件': '电子', '光学光电子': '电子', '电子化学品': '电子',
+    '电池': '电力设备', '光伏设备': '电力设备', '电网设备': '电力设备', '风电设备': '电力设备', '电机': '电力设备',
+    '自动化设备': '机械设备', '通用设备': '机械设备', '专用设备': '机械设备', '工程机械': '机械设备', '轨交设备': '机械设备',
+    '航空装备': '国防军工', '航天装备': '国防军工', '军工电子': '国防军工', '航海装备': '国防军工', '地面兵装': '国防军工',
+    '证券': '非银金融', '保险': '非银金融', '多元金融': '非银金融',
+    '白酒': '食品饮料', '乘用车': '汽车', '汽车零部件': '汽车', '汽车整车': '汽车',
+    '养殖业': '农林牧渔', '农产品加工': '农林牧渔', '饲料': '农林牧渔',
+    '化学制药': '医药生物', '中药': '医药生物', '生物制品': '医药生物', '医疗器械': '医药生物',
+    '医疗服务': '医药生物', '医药商业': '医药生物',
+    '房地产开发': '房地产', '房地产服务': '房地产',
+    '煤炭开采': '煤炭', '焦炭加工': '煤炭',
+    '工业金属': '有色金属', '贵金属': '有色金属', '小金属': '有色金属', '能源金属': '有色金属', '金属新材料': '有色金属',
+    '电力': '公用事业', '燃气': '公用事业', '环保': '环保',
+    '航空机场': '交通运输', '铁路公路': '交通运输', '航运港口': '交通运输', '物流': '交通运输',
+    '建筑材料': '建筑材料', '水泥': '建筑材料', '玻璃玻纤': '建筑材料', '装修建材': '建筑材料', '建筑装饰': '建筑装饰',
+    '包装印刷': '轻工制造', '造纸': '轻工制造', '家居用品': '轻工制造',
+    '个护用品': '美容护理', '化妆品': '美容护理',
+    '饰品': '纺织服饰', '服装家纺': '纺织服饰', '纺织制造': '纺织服饰',
+    '家电零部件': '家用电器', '黑色家电': '家用电器', '照明设备': '家用电器', '小家电': '家用电器',
+    '厨卫电器': '家用电器', '白色家电': '家用电器', '家用电器': '家用电器',
+    '贸易': '商贸零售', '一般零售': '商贸零售', '专业连锁': '商贸零售', '商业物业经营': '商贸零售', '互联网电商': '商贸零售',
+    '旅游及景区': '社会服务', '酒店餐饮': '社会服务', '教育': '社会服务', '体育': '社会服务',
+    '专业服务': '社会服务', '检测服务': '社会服务',
+    '出版': '传媒', '影视院线': '传媒', '电视广播': '传媒', '游戏': '传媒', '广告营销': '传媒', '数字媒体': '传媒',
+    '通信服务': '通信', '通信设备': '通信',
+    '计算机设备': '计算机', '软件开发': '计算机', 'IT服务': '计算机',
+}
+
+def _map_em_sector_to_sw1(name):
+    """东财板块名→申万一级; 模糊兜底; 失败返回原名(仍可展示排名, 仅代表标的缺失)"""
+    if not name:
+        return '其他'
+    if name in EM_SECTOR_TO_SW1:
+        return EM_SECTOR_TO_SW1[name]
+    for k, v in EM_SECTOR_TO_SW1.items():
+        if k in name or name in k:
+            return v
+    return name
+
+def step10C_fetch_industry_flow_rank():
+    """@since v6.20.16: 板块级行业主力净流入排名(东财push2 clist, fs=m:90+t:2, fid=f62)
+    一次拿到全行业真实主力净流入排名, 替代逐只个股汇总;
+    沙箱/接口不可达(Empty reply)时返回 [], 由下游降级到个股main_inflow汇总。
+    返回: [{name(板块名), net(元), chg(涨跌幅%), pct(主力净流入占比%)}] 按 net 降序"""
+    rank = []
+    try:
+        url = ("https://push2.eastmoney.com/api/qt/clist/get?"
+               "pn=1&pz=80&po=1&np=1&fltt=2&invt=2"
+               "&fid=f62&fs=m:90+t:2"
+               "&fields=f12,f14,f3,f62,f184"
+               "&ut=fa5fd1943c7b386f172d6893dbfba10b")
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Referer": "https://quote.eastmoney.com/"})
+        with _http_retry(req, timeout=10) as resp:
+            txt = resp.read().decode("utf-8", "ignore")
+        obj = json.loads(txt)
+        diff = (obj.get("data") or {}).get("diff") or []
+        for it in diff:
+            name = it.get("f14") or ""
+            net = it.get("f62")
+            if not name or not isinstance(net, (int, float)):
+                continue
+            chg = it.get("f3")
+            pct = it.get("f184")
+            rank.append({
+                "name": name,
+                "net": float(net),
+                "chg": float(chg) if isinstance(chg, (int, float)) else None,
+                "pct": float(pct) if isinstance(pct, (int, float)) else None,
+            })
+        rank.sort(key=lambda x: -x["net"])
+    except Exception:
+        rank = []
+    return rank
+
+# ============================================================
 # 步骤10C-附2：龙虎榜机构席位 + 融资融券日变动（@since v6.20.15: 替代北向取消后的日频资金面因子）
 # 北向官方信披2026-08-07取消后，原「北向资金」策略名实不符；v6.20.14已正名为「主力资金」。
 # 本段补齐两类真实日频资金面信号，作为主力资金策略F的共振/增援因子：
@@ -4948,31 +5032,44 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         lines.append("- **模拟口径**：使用保留期内（≥4周）推荐历史，按推荐表的进场、止损、止盈进行模拟，单笔最大持仓10个交易日。")
         lines.append("- **交易规则**：遵循A股T+1，买入当日不检查止盈止损出场，从下一交易日起判断是否触及止损/止盈。")
         lines.append("- **使用限制**：未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素；样本少时仅作参考，不能代表未来表现。\n")
-        # @since v6.13.43: 资金去向——按行业汇总主力净流入，无数据时优雅降级
+        # @since v6.20.16: 资金去向——优先板块级行业主力净流入排名(东财push2 clist, 真实),
+        #   无数据时降级到个股main_inflow按行业汇总; 仍无数据则提示。
         lines.append("\n## 资金去向（按行业主力净流入排序）\n")
-        ind_flow = {}
-        has_flow_data = False
-        for c in candidates:
-            ind = _industry_str(c)
-            mi = c.get('main_inflow')
-            if mi is not None: has_flow_data = True
-            if mi is None: mi = 0
-            ind_flow[ind] = ind_flow.get(ind, {'total': 0.0, 'stocks': []})
-            ind_flow[ind]['total'] += mi
-            ind_flow[ind]['stocks'].append((c.get('code',''), c.get('name',''), mi, c.get('strategy','')))
-        if has_flow_data:
-            sorted_ind = sorted(ind_flow.items(), key=lambda x: -x[1]['total'])
-            lines.append("| 行业 | 净流入(亿) | 代表标的 |")
-            lines.append("|---|---|---|")
-            for ind, data in sorted_ind:
-                flow_yi = data['total'] / 1e8
-                direction = "流入" if flow_yi > 0 else "流出"
-                abs_flow = abs(flow_yi)
-                tops = sorted(data['stocks'], key=lambda x: -x[2])[:4]
-                stock_str = '、'.join(f"{s[1]}({'+' if s[2]>=0 else ''}{s[2]/1e8:.2f}亿)" for s in tops)
-                lines.append(f"| {ind} | {direction}{abs_flow:.2f} | {stock_str} |")
+        if G_INDUSTRY_FLOW_RANK:
+            lines.append("| 行业 | 主力净流入(亿) | 涨跌幅% | 代表标的 |")
+            lines.append("|---|---|---|---|")
+            for r in G_INDUSTRY_FLOW_RANK[:15]:
+                net_yi = r['net'] / 1e8
+                direction = "流入" if net_yi > 0 else "流出"
+                sw1 = _map_em_sector_to_sw1(r['name'])
+                reps = [c for c in candidates if _industry_str(c) == sw1][:4]
+                rep_str = '、'.join(c.get('name', '') for c in reps) if reps else "—"
+                chg = f"{r['chg']:+.2f}" if isinstance(r['chg'], (int, float)) else "—"
+                lines.append(f"| {r['name']} | {direction}{abs(net_yi):.2f} | {chg} | {rep_str} |")
         else:
-            lines.append("> ⚠️ 主力资金数据不可得（API通道受限），无法展示行业资金流向。建议结合盘口观察或龙虎榜数据辅助判断。\n")
+            ind_flow = {}
+            has_flow_data = False
+            for c in candidates:
+                ind = _industry_str(c)
+                mi = c.get('main_inflow')
+                if mi is not None: has_flow_data = True
+                if mi is None: mi = 0
+                ind_flow[ind] = ind_flow.get(ind, {'total': 0.0, 'stocks': []})
+                ind_flow[ind]['total'] += mi
+                ind_flow[ind]['stocks'].append((c.get('code',''), c.get('name',''), mi, c.get('strategy','')))
+            if has_flow_data:
+                sorted_ind = sorted(ind_flow.items(), key=lambda x: -x[1]['total'])
+                lines.append("| 行业 | 净流入(亿) | 代表标的 |")
+                lines.append("|---|---|---|")
+                for ind, data in sorted_ind:
+                    flow_yi = data['total'] / 1e8
+                    direction = "流入" if flow_yi > 0 else "流出"
+                    abs_flow = abs(flow_yi)
+                    tops = sorted(data['stocks'], key=lambda x: -x[2])[:4]
+                    stock_str = '、'.join(f"{s[1]}({'+' if s[2]>=0 else ''}{s[2]/1e8:.2f}亿)" for s in tops)
+                    lines.append(f"| {ind} | {direction}{abs_flow:.2f} | {stock_str} |")
+            else:
+                lines.append("> ⚠️ 主力资金数据不可得（API通道受限），无法展示行业资金流向。建议结合盘口观察或龙虎榜数据辅助判断。\n")
     sd = Counter(c.get('strategy') for c in candidates)
     sn = _STRATEGY_NAMES
     lines.append("\n## 策略分布")
@@ -5198,38 +5295,56 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
     else:
         alerts_html = '<div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">今日无异常告警</span></div>'
     
-    # @since v6.13.43: 资金去向——按行业汇总主力净流入，无数据时优雅降级
+    # @since v6.20.16: 资金去向——优先板块级行业主力净流入排名(东财push2 clist, 真实),
+    #   无数据时降级到个股main_inflow按行业汇总; 仍无数据则提示。
     capital_flow_html = ""
-    ind_flow = {}
-    has_flow_data = False
-    for c in candidates:
-        ind = _industry_str(c)
-        mi = c.get('main_inflow')
-        if mi is not None: has_flow_data = True
-        if mi is None: mi = 0
-        ind_flow[ind] = ind_flow.get(ind, {'total': 0.0, 'stocks': []})
-        ind_flow[ind]['total'] += mi
-        ind_flow[ind]['stocks'].append((c.get('code',''), c.get('name',''), mi, c.get('strategy','')))
-    if has_flow_data:
-        sorted_ind = sorted(ind_flow.items(), key=lambda x: -x[1]['total'])
-        if sorted_ind:
-            flow_cards = []
-            for idx, (ind, data) in enumerate(sorted_ind):
-                flow_yi = data['total'] / 1e8
-                direction = "流入" if flow_yi > 0 else "流出"
-                color = "#22c55e" if flow_yi > 0 else "#ef4444"
-                arrow = "↑" if flow_yi > 0 else "↓"
-                tops = sorted(data['stocks'], key=lambda x: -x[2])[:4]
-                tops_html = ''.join(
-                    f'<span class="flow-stock">{s[1]}<span style="color:{color}">{arrow}{abs(s[2]/1e8):.2f}亿</span></span>'
-                    for s in tops
-                )
-                flow_cards.append(f'''<div class="flow-card">
+    if G_INDUSTRY_FLOW_RANK:
+        flow_cards = []
+        for idx, r in enumerate(G_INDUSTRY_FLOW_RANK[:15]):
+            net_yi = r['net'] / 1e8
+            direction = "流入" if net_yi > 0 else "流出"
+            color = "#22c55e" if net_yi > 0 else "#ef4444"
+            arrow = "↑" if net_yi > 0 else "↓"
+            sw1 = _map_em_sector_to_sw1(r['name'])
+            reps = [c for c in candidates if _industry_str(c) == sw1][:4]
+            tops_html = ''.join(f'<span class="flow-stock">{c.get("name","")}</span>' for c in reps) if reps else '<span class="flow-stock">—</span>'
+            chg = f'{r["chg"]:+.2f}%' if isinstance(r['chg'], (int, float)) else '—'
+            flow_cards.append(f'''<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#{idx+1}</span><span class="industry-name">{r['name']}</span><span class="flow-amount" style="color:{color}">{arrow}{abs(net_yi):.2f}亿 {direction}</span></div>
+<div class="flow-chg">涨跌幅 {chg}</div>
+<div class="flow-stocks">{tops_html}</div></div>''')
+        capital_flow_html = '\n'.join(flow_cards)
+    else:
+        ind_flow = {}
+        has_flow_data = False
+        for c in candidates:
+            ind = _industry_str(c)
+            mi = c.get('main_inflow')
+            if mi is not None: has_flow_data = True
+            if mi is None: mi = 0
+            ind_flow[ind] = ind_flow.get(ind, {'total': 0.0, 'stocks': []})
+            ind_flow[ind]['total'] += mi
+            ind_flow[ind]['stocks'].append((c.get('code',''), c.get('name',''), mi, c.get('strategy','')))
+        if has_flow_data:
+            sorted_ind = sorted(ind_flow.items(), key=lambda x: -x[1]['total'])
+            if sorted_ind:
+                flow_cards = []
+                for idx, (ind, data) in enumerate(sorted_ind):
+                    flow_yi = data['total'] / 1e8
+                    direction = "流入" if flow_yi > 0 else "流出"
+                    color = "#22c55e" if flow_yi > 0 else "#ef4444"
+                    arrow = "↑" if flow_yi > 0 else "↓"
+                    tops = sorted(data['stocks'], key=lambda x: -x[2])[:4]
+                    tops_html = ''.join(
+                        f'<span class="flow-stock">{s[1]}<span style="color:{color}">{arrow}{abs(s[2]/1e8):.2f}亿</span></span>'
+                        for s in tops
+                    )
+                    flow_cards.append(f'''<div class="flow-card">
 <div class="flow-card-header"><span class="rank">#{idx+1}</span><span class="industry-name">{ind}</span><span class="flow-amount" style="color:{color}">{arrow}{abs(flow_yi):.2f}亿 {direction}</span></div>
 <div class="flow-stocks">{tops_html}</div></div>''')
-            capital_flow_html = '\n'.join(flow_cards)
-    else:
-        capital_flow_html = '<div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">主力资金数据不可得（API通道受限），无法展示行业资金流向。建议参考盘口/L2数据或龙虎榜。</span></div>'
+                capital_flow_html = '\n'.join(flow_cards)
+        else:
+            capital_flow_html = '<div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">主力资金数据不可得（API通道受限），无法展示行业资金流向。建议参考盘口/L2数据或龙虎榜。</span></div>'
     
     # ── @since v6.13.1: AI 策略分析 HTML（美化版）──
     ai_html = ""
@@ -6243,6 +6358,10 @@ def main():
         else:
             s['main_inflow'] = None
     log_alert("INFO", "主力资金", f"获取{sum(1 for v in flow_data.values() if v is not None)}只/{len(final)}只")
+    # @since v6.20.16: 板块级行业主力净流入排名（优先于个股汇总）; 沙箱不可达时为空, 下游降级
+    G_INDUSTRY_FLOW_RANK.clear()
+    G_INDUSTRY_FLOW_RANK.extend(step10C_fetch_industry_flow_rank())
+    log_alert("INFO", "行业资金", f"板块级排名获取{len(G_INDUSTRY_FLOW_RANK)}个行业")
     # @since v6.20.15: 龙虎榜机构席位 + 融资融券日变动（替代北向取消后的日频资金面因子）
     print("\n[步骤15A-2] 龙虎榜机构席位 / 融资融券日变动...")
     lhb_data = step10C_lhb_fetch(final)
