@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-周日行业补全拉取 v6.21.0
+周日行业补全拉取 v6.21.1
 每周日执行：全量拉取东方财富HTTP行业分类（一级+二级），更新缓存文件并推送到GitHub。
 @since v6.13.39: 用东方财富clist真实A股清单替换暴力枚举代码区间（根治超时——旧方案枚举16999个代码仅~4900真实，
           其余~12000个不存在代码永不在缓存→每次都进to_fetch→顺序抓取数小时超时）；抓取改为并发(max_workers=20)
@@ -160,6 +160,7 @@ _INDUSTRY_CORRECTION = {
     '300750': {'primary': '电力设备', 'secondary': '电池',   'source': '人工核定:宁德时代2025年报+申万指数成份', 'effective_date': '2026-08-06', 'ttl_days': 90},
     '002594': {'primary': '汽车',     'secondary': '乘用车', 'source': '人工核定:比亚迪2025年报+申万指数成份',   'effective_date': '2026-08-06', 'ttl_days': 90},
     '601318': {'primary': '非银金融', 'secondary': '保险',   'source': '人工核定:中国平安2025年报+申万指数成份', 'effective_date': '2026-08-06', 'ttl_days': 90},
+    '000595': {'primary': '公用事业', 'secondary': '电力行业', 'source': '人工核定:新能股份2026一季报(发电业务占比100%)', 'effective_date': '2026-08-11', 'ttl_days': 90},
 }
 
 def _is_date(s):

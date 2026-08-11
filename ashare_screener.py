@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.21.0
+A股每日盘前短线标的智能筛选 v6.21.1
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.21.0"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.21.1"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -2793,6 +2793,23 @@ def step10C_lhb_fetch(candidates):
             elif '机构买入' in explain:
                 inst = 1
             out[code] = {'lhb_net': float(net or 0), 'lhb_inst': inst}
+        # ── 备用：东财 push2 龙虎榜板块排行 ──
+        if len(out) < len(codes) * 0.3:
+            try:
+                url2 = "https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6+f:!50,m:0+t:80+f:!50&fields=f12,f14,f3,f62,f184&ut=fa5fd1943c7b386f172d6893dbfba10b"
+                req2 = urllib.request.Request(url2, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"})
+                with _http_retry(req2, timeout=10) as resp2:
+                    obj2 = json.loads(resp2.read().decode('utf-8', 'ignore'))
+                rows2 = (obj2.get('data') or {}).get('diff') or []
+                for r2 in rows2:
+                    code2 = (r2.get('f12') or '').strip()
+                    if code2 not in codes:
+                        continue
+                    net2 = r2.get('f62') or 0
+                    out[code2] = {'lhb_net': float(net2 or 0), 'lhb_inst': 1}
+            except Exception:
+                pass
+
     except Exception:
         out = {}
     return out
@@ -3035,6 +3052,40 @@ def _fetch_single_f10(code):
                 except (ValueError, TypeError):
                     pass
             return (code, fd, True)
+        # ── 备用：type=1 接口（不同参数获取补充数据） ──
+        if not items:
+            try:
+                url2 = f'https://emweb.securities.eastmoney.com/PC_HSF10/NewFinanceAnalysis/ZYZBAjaxNew?type=1&code={secode}'
+                req2 = urllib.request.Request(url2, headers=headers)
+                with _http_retry(req2, timeout=8) as resp2:
+                    raw2 = resp2.read()
+                if raw2[:2] == b'\x1f\x8b':
+                    raw2 = gzip.decompress(raw2)
+                r2 = json.loads(raw2.decode('utf-8'))
+                items2 = r2.get('data', [])
+                if items2:
+                    latest2 = items2[0]
+                    fd = {
+                        'roe': latest2.get('ROEJQ'),
+                        'net_profit': latest2.get('PARENTNETPROFIT'),
+                        'revenue': latest2.get('TOTALOPERATEREVE'),
+                        'eps': latest2.get('EPSJB'),
+                        'report_date': latest2.get('REPORT_DATE', ''),
+                        'pledge_ratio': latest2.get('PLEDGERATIO'),
+                        'goodwill_ratio': latest2.get('GOODWILLRATIO'),
+                        'revenue_yoy': latest2.get('TOTALOPERATEREVETZ'),
+                        'net_profit_yoy': latest2.get('PARENTNETPROFITTZ'),
+                        'deduct_np_yoy': latest2.get('DJD_DEDUCTDPNP_YOY'),
+                        'gross_margin': latest2.get('XSMLL'),
+                        'net_margin': latest2.get('XSJLL'),
+                        'debt_ratio': latest2.get('ZCFZL'),
+                        'ocf_to_revenue': latest2.get('JYXJLYYSR'),
+                        'roic': latest2.get('ROIC'),
+                    }
+                    return (code, fd, True)
+            except Exception:
+                pass
+
         return (code, None, False)
     except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError):
         return (code, None, False)
