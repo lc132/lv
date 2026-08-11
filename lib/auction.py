@@ -6,47 +6,22 @@ v6.13.38 早盘竞价数据获取与验证模块
 """
 import urllib.request, json, time
 from lib.core import log_alert
+from lib.feeds import tencent_auction
 
-# 东方财富竞价接口
-_AUCTION_URL = "https://push2.eastmoney.com/api/qt/stock/auction/get"
-_AUCTION_FIELDS = "f42,f43,f44,f45,f46,f47,f48,f60,f170,f171"
+# @since v6.21.0: 东财竞价接口(push2 stock/auction)在沙箱被 L7 拦截,
+#   改走腾讯实时行情(集合竞价时段取现价近似). 见 lib/feeds.tencent_auction.
 
 
 def fetch_auction_single(code):
     """
     拉取单只股票竞价数据
     code: 6位股票代码
-    返回: dict 或 None
+    返回: dict 或 None (非竞价时段返回 None, 由调用方优雅降级)
     """
-    if code.startswith('6'):
-        secid = f"1.{code}"
-    elif code.startswith(('0', '3')):
-        secid = f"0.{code}"
-    else:
+    if not (code.startswith('6') or code.startswith(('0', '3'))):
         return None
-    
-    url = f"{_AUCTION_URL}?secid={secid}&fields={_AUCTION_FIELDS}"
-    try:
-        req = urllib.request.Request(url, headers={
-            'User-Agent': 'Mozilla/5.0',
-            'Referer': 'https://quote.eastmoney.com/'
-        })
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            if data.get('data'):
-                d = data['data']
-                return {
-                    'code': code,
-                    'price': d.get('f43', 0) / 100 if d.get('f43') else 0,
-                    'open': d.get('f44', 0) / 100 if d.get('f44') else 0,
-                    'high': d.get('f45', 0) / 100 if d.get('f45') else 0,
-                    'low': d.get('f46', 0) / 100 if d.get('f46') else 0,
-                    'volume': d.get('f47', 0),
-                    'amount': d.get('f48', 0),
-                    'change_pct': d.get('f170', 0) / 100 if d.get('f170') else 0,
-                }
-    except Exception as e:
-        return None
+    # @since v6.21.0: 沙箱可达源替换
+    return tencent_auction(code)
 
 
 def fetch_auction_batch(codes, prev_close_map=None):

@@ -11,7 +11,7 @@ from lib.core import log_alert
 def fetch_intraday_minute(code):
     """
     拉取当日分时数据（分钟K线）
-    东方财富趋势接口
+    @since v6.21.0: 东财 trends2 在沙箱被 L7 拦截, 优先走腾讯分时(沙箱可达), 东财兜底保留.
     """
     if code.startswith('6'):
         secid = f"1.{code}"
@@ -19,7 +19,17 @@ def fetch_intraday_minute(code):
         secid = f"0.{code}"
     else:
         return None
-    
+
+    # 腾讯分时(沙箱可达)
+    try:
+        from lib.feeds import tencent_minute
+        minutes = tencent_minute(code)
+        if minutes:
+            return minutes
+    except Exception:
+        pass
+
+    # 东财 trends2 兜底(非沙箱环境)
     url = f"https://push2.eastmoney.com/api/qt/stock/trends2/get?secid={secid}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&ndays=1"
     try:
         req = urllib.request.Request(url, headers={

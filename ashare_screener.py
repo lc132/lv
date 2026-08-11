@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.20.16
+A股每日盘前短线标的智能筛选 v6.21.0
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.20.16"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.21.0"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -2301,26 +2301,25 @@ def _fetch_single_kline_eastmoney(c):
     if not code:
         return {}
     try:
+        # @since v6.21.0: 东财 push2his 在沙箱被 L7 拦截, 改走腾讯 fqkline(沙箱可达)
         secid = f'1.{code}' if code.startswith('6') else f'0.{code}'
-        url = (f'https://push2his.eastmoney.com/api/qt/stock/kline/get?'
-               f'secid={secid}&fields1=f1,f2,f3,f4,f5,f6&'
-               f'fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&'
-               f'klt=101&fqt=1&end=20500101&lmt=60')
-        req = urllib.request.Request(url, headers={
-            'User-Agent': 'Mozilla/5.0',
-            'Referer': 'https://quote.eastmoney.com/'})
-        with _http_retry(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-        klines = data.get('data', {}).get('klines', [])
-        if not klines or len(klines) < 5:  # @since v6.16.9: 门槛从20降至5
-            return {}
-        # 东方财富格式: "date,open,close,high,low,volume,amount,amplitude,change_pct,change,turnover"
+        prefix = f'sh{code}' if code.startswith('6') else f'sz{code}'
         bars = []
-        for k in klines:
-            parts = k.split(',')
-            if len(parts) >= 6:
-                bars.append([parts[0], float(parts[1]), float(parts[2]),
-                            float(parts[3]), float(parts[4]), float(parts[5])])
+        try:
+            turl = (f'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?'
+                    f'param={prefix},day,,,60,qfq')
+            treq = urllib.request.Request(turl, headers={
+                'User-Agent': 'Mozilla/5.0',
+                'Referer': 'https://gu.qq.com/'})
+            with urllib.request.urlopen(treq, timeout=10) as tresp:
+                tdata = json.loads(tresp.read())
+            tklines = (tdata.get('data', {}).get(f'{prefix}', {}).get('qfqday', []))
+            for k in tklines[-60:]:
+                if len(k) >= 6:
+                    bars.append([k[0], float(k[1]), float(k[2]),
+                                float(k[3]), float(k[4]), float(k[5])])
+        except Exception:
+            return {}
         if len(bars) < 5:  # @since v6.16.9: 门槛从20降至5
             return {}
         closes = [b[2] for b in bars]

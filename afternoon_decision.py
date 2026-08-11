@@ -92,7 +92,17 @@ def main():
 
 
 def _fetch_limit_up_stocks():
-    """获取全市场涨停股（东方财富实时行情）v6.12.0: 分页拉取超过100只"""
+    """获取全市场涨停股. v6.12.0: 分页拉取; @since v6.21.0: 沙箱改腾讯gtimg为主源, 东财push2为兜底."""
+    # ── 腾讯gtimg主源(沙箱可达) ──
+    t = _fetch_limit_up_stocks_tencent()
+    if t:
+        return t
+    # ── 东财push2兜底(本地/Windows可达时) ──
+    return _fetch_limit_up_stocks_eastmoney()
+
+
+def _fetch_limit_up_stocks_eastmoney():
+    """原东财push2实现, @since v6.21.0起作为兜底(本地/Windows可达)."""
     all_stocks = []
     for pn in range(1, 6):  # 最多5页=500只
         url = ("https://push2.eastmoney.com/api/qt/clist/get?"
@@ -121,9 +131,62 @@ def _fetch_limit_up_stocks():
             if not page_stocks:
                 break  # 该页无涨停股，停止分页
         except Exception as e:
-            print(f"[WARN] 获取涨停股第{pn}页失败: {e}")
+            print(f"[WARN] 获取涨停股第{pn}页失败(东财兜底): {e}")
             break
     return all_stocks
+
+
+def _fetch_limit_up_stocks_tencent():
+    """@since v6.21.0: 沙箱降级——腾讯gtimg批量实时行情, 过滤涨停(涨跌幅>=9.8%)."""
+    import urllib.request as _ur
+    ranges = []
+    for i in range(600000, 606000):
+        ranges.append(f"sh{i}")
+    for i in range(688000, 690000):
+        ranges.append(f"sh{i}")
+    for i in range(1, 5000):
+        ranges.append(f"sz{i:06d}")
+    for i in range(300000, 302000):
+        ranges.append(f"sz{i}")
+
+    def _f(parts, i):
+        v = parts[i] if i < len(parts) else ''
+        try:
+            return float(v) if v not in ('', '-') else 0
+        except ValueError:
+            return 0
+
+    stocks = []
+    for s in range(0, len(ranges), 80):
+        grp = ranges[s:s + 80]
+        try:
+            url = "https://qt.gtimg.cn/q=" + ",".join(grp)
+            req = _ur.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0', 'Referer': 'https://gu.qq.com/'})
+            with _ur.request.urlopen(req, timeout=10) as resp:
+                text = resp.read().decode('gbk', 'ignore')
+            for line in text.strip().split('\n'):
+                if not line.startswith('v_') or '=""' in line:
+                    continue
+                parts = line.split('~')
+                if len(parts) < 40:
+                    continue
+                code = parts[2]
+                try:
+                    chg = float(parts[32])
+                except (ValueError, IndexError):
+                    continue
+                if chg >= 9.8:
+                    stocks.append({
+                        'code': code, 'name': parts[1],
+                        'change_pct': chg,
+                        'close': _f(parts, 3), 'prev_close': _f(parts, 4),
+                        'main_inflow': None, 'industry': '',
+                        '_sector_limit_up_count': 0,
+                    })
+        except Exception:
+            continue
+    return stocks
 
 
 def _load_kline_snapshot():

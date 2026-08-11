@@ -6,6 +6,13 @@ import urllib.request, urllib.parse, urllib.error, json, os, sys
 from datetime import datetime, timedelta
 from collections import Counter
 
+# @since v6.21.0: 沙箱数据适配层(腾讯源). 兼容独立运行与被主脚本 import 两种场景.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from lib.feeds import tencent_realtime
+except Exception:
+    tencent_realtime = None
+
 # ============================================================
 # 全局变量
 # ============================================================
@@ -159,21 +166,17 @@ def step1_holiday_check():
 def step2_extreme_market():
     global market_env
     try:
-        # 获取上证指数行情
-        url = "https://push2.eastmoney.com/api/qt/stock/get?secid=1.000001&fields=f43,f44,f45,f46,f47,f48,f50,f51,f52,f170"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-        if data.get('data'):
-            d = data['data']
-            sh_close = d.get('f43', 0) / 100 if d.get('f43') else 0
-            sh_change_pct = d.get('f170', 0) / 100 if d.get('f170') else 0
-            sh_high = d.get('f44', 0) / 100 if d.get('f44') else 0
-            sh_low = d.get('f45', 0) / 100 if d.get('f45') else 0
-            sh_open = d.get('f46', 0) / 100 if d.get('f46') else 0
-            sh_prev = d.get('f60', 0) / 100 if d.get('f60') else 0
+        # @since v6.21.0: 东财 push2 在沙箱被 L7 拦截, 改走腾讯实时行情(指数格式一致)
+        d = tencent_realtime('sh000001') if tencent_realtime else None
+        if d:
+            sh_close = d['price']
+            sh_change_pct = d['change_pct']
+            sh_high = d['high']
+            sh_low = d['low']
+            sh_open = d['open']
+            sh_prev = d['prev_close']
             print(f"✅ 步骤2: 上证指数 收盘={sh_close:.2f} 涨跌={sh_change_pct:.2f}%")
-            
+
             if sh_change_pct < -3:
                 print(f"⚠️ 上证跌超3%，跳过筛选")
                 log_alert("INFO", "极端行情", f"上证跌{sh_change_pct:.2f}%，跳过")
@@ -184,7 +187,7 @@ def step2_extreme_market():
     except Exception as e:
         log_alert("WARNING", "极端行情", f"获取上证指数失败: {str(e)[:80]}")
         print(f"⚠️ 步骤2: 无法获取上证指数: {str(e)[:60]}")
-    
+
     return True
 
 # ============================================================
@@ -193,45 +196,42 @@ def step2_extreme_market():
 def step3_external_markets():
     global market_env
     try:
-        # 美股三大指数
+        # @since v6.21.0: 东财 push2 在沙箱被 L7 拦截, 改走腾讯实时行情
+        # 美股三大指数 (腾讯代码)
         us_indices = {
-            '.DJI': '道琼斯', '.IXIC': '纳斯达克', '.INX': '标普500'
+            '.DJI': ('道琼斯', 'usDJI'),
+            '.IXIC': ('纳斯达克', 'usIXIC'),
+            '.INX': ('标普500', 'usINX'),
         }
         us_down_count = 0
-        for code, name in us_indices.items():
+        for suffix, (name, tcode) in us_indices.items():
             try:
-                url = f"https://push2.eastmoney.com/api/qt/stock/get?secid=100{code}&fields=f43,f170"
-                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    data = json.loads(resp.read())
-                if data.get('data'):
-                    chg = data['data'].get('f170', 0) / 100 if data['data'].get('f170') else 0
+                d = tencent_realtime(tcode) if tencent_realtime else None
+                if d:
+                    chg = d['change_pct']
                     print(f"   美股 {name}: {chg:.2f}%")
                     if chg < -2: us_down_count += 1
-            except Exception:pass
-        
+            except Exception: pass
+
         if us_down_count >= 3:
             print(f"⚠️ 美股三大指数均跌超2%，弱市仓位≤30%")
             market_env = "弱市"
-        
+
         # 恒生指数
         try:
-            url = "https://push2.eastmoney.com/api/qt/stock/get?secid=100.HSI&fields=f43,f170"
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = json.loads(resp.read())
-            if data.get('data'):
-                hsi_chg = data['data'].get('f170', 0) / 100 if data['data'].get('f170') else 0
+            d = tencent_realtime('r_hkHSI') if tencent_realtime else None
+            if d:
+                hsi_chg = d['change_pct']
                 print(f"   恒生指数: {hsi_chg:.2f}%")
                 if hsi_chg < -3:
                     print(f"⚠️ 恒生跌超3%，弱市仅超跌反弹")
                     market_env = "弱市"
-        except Exception:pass
-        
+        except Exception: pass
+
         print(f"✅ 步骤3: 外围市场检查完成，市场环境={market_env}")
     except Exception as e:
         log_alert("WARNING", "外围市场", f"检查失败: {str(e)[:80]}")
-    
+
     return True
 
 # ============================================================
@@ -240,18 +240,17 @@ def step3_external_markets():
 def step3a_premarket_futures():
     global market_env
     try:
-        # 检查标普期货
-        url = "https://push2.eastmoney.com/api/qt/stock/get?secid=100.ES00Y&fields=f43,f170"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read())
-        if data.get('data'):
-            es_chg = data['data'].get('f170', 0) / 100 if data['data'].get('f170') else 0
+        # @since v6.21.0: 东财 push2 在沙箱被 L7 拦截, 改走腾讯实时行情(标普期货 best-effort)
+        d = tencent_realtime('usES00Y') if tencent_realtime else None
+        if d:
+            es_chg = d['change_pct']
             print(f"   标普期货: {es_chg:.2f}%")
             if es_chg < -1:
                 print(f"⚠️ 标普期货跌超1%，外围偏空，仓位降一档")
                 if market_env == "强市": market_env = "震荡"
                 elif market_env == "震荡": market_env = "弱市"
+        else:
+            print(f"   期货数据不可得，跳过")
     except Exception as e:
         log_alert("INFO", "开盘前外围", f"期货数据不可得: {str(e)[:60]}")
         print(f"   期货数据不可得，跳过")
@@ -588,17 +587,12 @@ def step7_earnings_season():
 def step8_market_environment():
     global market_env, market_conditions
     try:
-        # 获取上证指数和MA数据
-        # 简化：使用当前涨跌比和成交量判断
-        url = "https://push2.eastmoney.com/api/qt/stock/get?secid=1.000001&fields=f43,f44,f45,f46,f47,f48,f50,f170"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-        if data.get('data'):
-            d = data['data']
-            sh_close = d.get('f43', 0) / 100 if d.get('f43') else 0
-            sh_change = d.get('f170', 0) / 100 if d.get('f170') else 0
-            
+        # @since v6.21.0: 东财 push2 在沙箱被 L7 拦截, 改走腾讯实时行情
+        d = tencent_realtime('sh000001') if tencent_realtime else None
+        if d:
+            sh_close = d['price']
+            sh_change = d['change_pct']
+
             # 简化判断：基于涨跌幅
             if sh_change > 1:
                 tentative = "强市"
