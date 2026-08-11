@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.21.1
+# A股短线筛选 — 历史回测模块 v6.21.2
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # @since v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
@@ -36,7 +36,7 @@ def _load_version():
                     return _v
         except OSError:
             continue
-    return "v6.21.1"  # 兜底版本（由 sync_version.py 锚定同步）
+    return "v6.21.2"  # 兜底版本（由 sync_version.py 锚定同步）
 
 
 BUILTIN_VERSION = _load_version()
@@ -489,13 +489,16 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         trade['score'] = h.get('score', 0)
         trade['is_champion'] = (code == current_champion_code)  # @since v6.20.3: 标记最新一期冠军
         # @since v6.20.12: 买入日尚未收盘(prediction_date>=today) → 仅展示、不计入胜负(避免盘中噪声污染胜率)
+        # @since v6.21.2: 修复8月10日回测无数据——买入日当天若有K线数据(市场已收盘)则正常模拟，不标记no_data
         if pred_date and pred_date >= today_str:
-            trade['result'] = 'no_data'
-            trade['exit_reason'] = 'holding'
-            trade['return_pct'] = 0.0
-            trade['exit_price'] = entry
-            trade['hold_days'] = 0
-            trade['is_holding'] = True
+            has_pred_kline = any(k['date'] == pred_date for k in post_klines) if pred_date else False
+            if not has_pred_kline:
+                trade['result'] = 'no_data'
+                trade['exit_reason'] = 'holding'
+                trade['return_pct'] = 0.0
+                trade['exit_price'] = entry
+                trade['hold_days'] = 0
+                trade['is_holding'] = True
         trades.append(trade)
 
     metrics = _compute_metrics(trades)
