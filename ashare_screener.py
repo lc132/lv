@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.21.2
+A股每日盘前短线标的智能筛选 v6.21.3
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.21.2"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.21.3"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -414,7 +414,8 @@ DEFAULT_PARAMS = {
     "confidence_position_enabled": True,
     "strategy_concentration_pct": 25,
     "data_retention_days": 30,
-    "strategy_a_weak_market": "closed"
+    "strategy_a_weak_market": "closed",
+    "strategy_a_shock_market_limit": 3
 }
 
 # 模块级策略映射表（DRY：避免函数内重复定义）
@@ -2624,6 +2625,7 @@ def step10C_flow_fetch_main_inflow(candidates):
         # 沙箱不可达/接口变更 → 清空，走代理全量兜底
         flow_data = {}
     # ── 代理估算兜底：补齐真实API未覆盖的标的 ──
+    # @since v6.21.3: 增强估算——加入换手率/振幅因子，提高量价配合估算精度
     if len(flow_data) < len(code_list):
         for c in candidates:
             code = c.get('code', '')
@@ -2632,9 +2634,18 @@ def step10C_flow_fetch_main_inflow(candidates):
             amount = c.get('amount', 0) or 0
             change_pct = c.get('change_pct', 0) or 0
             vol_ratio = c.get('volume_ratio') or 1.0
+            turnover = c.get('turnover') or 0  # @since v6.21.3: 换手率因子
+            amplitude = c.get('amplitude') or 0  # @since v6.21.3: 振幅因子
+            # 基础量比系数
             if vol_ratio > 1.5: master_ratio = 0.20
             elif vol_ratio > 0.8: master_ratio = 0.12
             else: master_ratio = 0.06
+            # @since v6.21.3: 换手率修正——换手率>5%说明交投活跃，主力参与度更高
+            if turnover > 8: master_ratio = min(master_ratio * 1.4, 0.30)
+            elif turnover > 5: master_ratio = min(master_ratio * 1.2, 0.25)
+            # @since v6.21.3: 振幅修正——振幅>5%说明波动大，主力运作痕迹明显
+            if amplitude > 7: master_ratio = min(master_ratio * 1.3, 0.30)
+            elif amplitude > 5: master_ratio = min(master_ratio * 1.15, 0.25)
             flow = amount * (change_pct / 100.0) * master_ratio
             flow_data[code] = round(flow, 2)
     return flow_data
@@ -3800,7 +3811,7 @@ def step13_strategy_match(candidates, kline_data=None):
                 s = "T"; reason = f"主力观察:底仓{pos_score}分+起爆{break_score}分"; score = 5
         if s: c['strategy'] = s; c['score'] = score; matched.append(c)
     # @since v6.16.34: 震荡市策略A数量上限 — 策略A在震荡市回测胜率仅20%，限制最多N只
-    sa_limit = params.get("strategy_a_shock_market_limit", 5)
+    sa_limit = params.get("strategy_a_shock_market_limit", 3)
     if "震荡" in market_condition and sa_limit > 0:
         a_matched = [c for c in matched if c.get("strategy") == "A"]
         if len(a_matched) > sa_limit:
@@ -3978,7 +3989,7 @@ def step18_news_screening(candidates):
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Accept-Language': 'zh-CN,zh;q=0.9'
             })
-            with _http_retry(req, timeout=4) as resp:
+            with _http_retry(req, timeout=6) as resp:
                 html_text = resp.read().decode('utf-8', errors='ignore')
                 _src_status['bing']['ok'] += 1  # @since v6.16.24: 安全阀修复，更新ok计数
                 for kw in NEGATIVE_KW:
