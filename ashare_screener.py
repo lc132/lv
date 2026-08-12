@@ -2609,7 +2609,7 @@ def step10C_flow_fetch_main_inflow(candidates):
             secids.append(secid)
             code_list.append(code)
         if secids:
-            url = ("https://push2.eastmoney.com/api/qt/ulist.np/get?"
+            url = ("https://push2delay.eastmoney.com/api/qt/ulist.np/get?"
                    "fields=f12,f14,f62&secids=" + ",".join(secids) +
                    "&ut=fa5fd1943c7b386f172d6893dbfba10b&invt=2")
             req = urllib.request.Request(url, headers={
@@ -2710,7 +2710,7 @@ def step10C_fetch_industry_flow_rank():
     返回: [{name(板块名), net(元), chg(涨跌幅%), pct(主力净流入占比%)}] 按 net 降序"""
     rank = []
     try:
-        url = ("https://push2.eastmoney.com/api/qt/clist/get?"
+        url = ("https://push2delay.eastmoney.com/api/qt/clist/get?"
                "pn=1&pz=80&po=1&np=1&fltt=2&invt=2"
                "&fid=f62&fs=m:90+t:2"
                "&fields=f12,f14,f3,f62,f184"
@@ -2813,7 +2813,7 @@ def step10C_lhb_fetch(candidates):
         # ── 备用：东财 push2 龙虎榜板块排行 ──
         if len(out) < len(codes) * 0.3:
             try:
-                url2 = "https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6+f:!50,m:0+t:80+f:!50&fields=f12,f14,f3,f62,f184&ut=fa5fd1943c7b386f172d6893dbfba10b"
+                url2 = "https://push2delay.eastmoney.com/api/qt/clist/get?pn=1&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6+f:!50,m:0+t:80+f:!50&fields=f12,f14,f3,f62,f184&ut=fa5fd1943c7b386f172d6893dbfba10b"
                 req2 = urllib.request.Request(url2, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"})
                 with _http_retry(req2, timeout=10) as resp2:
                     obj2 = json.loads(resp2.read().decode('utf-8', 'ignore'))

@@ -1,10 +1,12 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.22.2)。基于前一日收盘数据，通过37步筛选流程+自动整改+策略级胜率监控熔断，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
+description: A股每日盘前短线标的智能筛选(v6.22.3)。基于前一日收盘数据，通过37步筛选流程+自动整改+策略级胜率监控熔断，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
 ---
-# A股盘前短线标的筛选 v6.22.2
+# A股盘前短线标的筛选 v6.22.3
 
 ## 版本历史
+
+- **v6.22.3**: 行业资金排名数据源修复——东方财富API域名从push2.eastmoney.com迁移至push2delay.eastmoney.com(原域名返回Empty reply), 涉及三处URL: (1)step10C_fetch_industry_flow_rank板块级行业主力净流入排名; (2)step10C_flow_fetch_main_inflow个股主力净流入; (3)step10C_lhb_fetch龙虎榜备用源
 
 - **v6.22.2**: 策略级胜率监控熔断重建——(1)win_rate_drop_threshold/consecutive_weeks/max_adjust_params以活参数恢复回DEFAULT_PARAMS; (2)步骤28新增检查6——策略级胜率监控熔断，记录每日各策略回测胜率，检测到单策略连续N期胜率下降超阈值时自动触发熔断(收紧止损0.5%); (3)新增_recorcd_strategy_win_rates/_detect_strategy_circuit_breaker/_incr_strategy_adj_count等辅助函数; (4)调参计数受max_adjust_params限制，超限跳过防无限调整
 
