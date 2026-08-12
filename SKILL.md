@@ -1,12 +1,12 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.22.1)。基于前一日收盘数据，通过37步筛选流程+自动整改+策略级胜率监控熔断，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
+description: A股每日盘前短线标的智能筛选(v6.22.2)。基于前一日收盘数据，通过37步筛选流程+自动整改+策略级胜率监控熔断，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
 ---
-# A股盘前短线标的筛选 v6.22.1
+# A股盘前短线标的筛选 v6.22.2
 
 ## 版本历史
 
-- **v6.22.1**: 策略级胜率监控熔断重建——(1)win_rate_drop_threshold/consecutive_weeks/max_adjust_params以活参数恢复回DEFAULT_PARAMS; (2)步骤28新增检查6——策略级胜率监控熔断，记录每日各策略回测胜率，检测到单策略连续N期胜率下降超阈值时自动触发熔断(收紧止损0.5%); (3)新增_recorcd_strategy_win_rates/_detect_strategy_circuit_breaker/_incr_strategy_adj_count等辅助函数; (4)调参计数受max_adjust_params限制，超限跳过防无限调整
+- **v6.22.2**: 策略级胜率监控熔断重建——(1)win_rate_drop_threshold/consecutive_weeks/max_adjust_params以活参数恢复回DEFAULT_PARAMS; (2)步骤28新增检查6——策略级胜率监控熔断，记录每日各策略回测胜率，检测到单策略连续N期胜率下降超阈值时自动触发熔断(收紧止损0.5%); (3)新增_recorcd_strategy_win_rates/_detect_strategy_circuit_breaker/_incr_strategy_adj_count等辅助函数; (4)调参计数受max_adjust_params限制，超限跳过防无限调整
 
 - **v6.22.0**: 新闻源全网替换——(1)移除Bing网页搜索(反爬/超时/不稳定), 替换为东方财富个股新闻(AKShare直连, 覆盖全市场财经新闻); (2)新增财联社个股新闻(csw API直连, 电报快讯级实时新闻); (3)正面新闻搜索同步改为东方财富, 过滤负面标题; (4)5源并行: 巨潮资讯网+麦蕊智数(公告+跌停)+东方财富+财联社, 可用源从4→5
 
@@ -328,9 +328,9 @@ _pl_sorted = sorted(_pl_data, key=lambda x: (-x[2], -x[1]))
 
 | 参数 | 默认值 | 现状 |
 |------|--------|------|
-| `win_rate_drop_threshold` | 10 | 🔄 **已恢复（v6.22.1）**——活参数，接步骤28策略级胜率监控熔断 |
-| `consecutive_weeks` | 2 | 🔄 **已恢复（v6.22.1）**——活参数，连续观察期数 |
-| `max_adjust_params` | 3 | 🔄 **已恢复（v6.22.1）**——活参数，单策略最大自动调参次数 |
+| `win_rate_drop_threshold` | 10 | 🔄 **已恢复（v6.22.2）**——活参数，接步骤28策略级胜率监控熔断 |
+| `consecutive_weeks` | 2 | 🔄 **已恢复（v6.22.2）**——活参数，连续观察期数 |
+| `max_adjust_params` | 3 | 🔄 **已恢复（v6.22.2）**——活参数，单策略最大自动调参次数 |
 | `northbound_threshold` | 3000 | ✅ 已删除（v6.20.14，全仓库 0 引用；原「北向资金」策略名实不符，策略F已正名为「主力资金」） |
 | `conversion_rate_consecutive_days` | 3 | ⚠️ **唯一遗留**：`ashare_screener.py:1122` 读取但 `step9C` 未使用（读而未用）；`lib/pipeline.py` 有引用但该模块未被 import。待接线或删除（P2 遗留） |
 

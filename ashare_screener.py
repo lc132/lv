@@ -417,7 +417,7 @@ DEFAULT_PARAMS = {
     "strategy_concentration_pct": 25,
     "data_retention_days": 30,
     "strategy_a_weak_market": "closed",
-    "strategy_a_shock_market_limit": 3,
+    "strategy_a_shock_market_limit": 2,
     # @since v6.22.1: 策略级胜率监控熔断活参数
     "win_rate_drop_threshold": 10,   # 单策略胜率连续下降超过N个百分点触发熔断
     "consecutive_weeks": 2,          # 连续观察周数
