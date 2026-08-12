@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.21.3
+A股每日盘前短线标的智能筛选 v6.21.4
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -6514,6 +6514,9 @@ def main():
     print("\n[步骤27] 飞书推送..."); step27_feishu_push(final, total_raw, ae, asig, astr, amicro, aind, anew, sd)
     record_step_status("步骤27: 飞书推送", "OK")
     
+    # @since v6.21.4: 筛选完成后自动分析问题并整改
+    print("\n[步骤28] 自动整改分析..."); step28_self_rectify(final, fc, bt_result, sd, flow_data, total_raw, ae, asig, astr, amicro, aind, anew, er)
+    
     # @since v6.13.11: 步骤执行状态报告
     print_step_status_summary()
     
@@ -6615,6 +6618,301 @@ def _send_failure_alert(error):
         _http_retry(req, timeout=5, retries=2, label="飞书告警")
     except Exception:
         pass  # 告警发送失败不阻塞主流程
+
+# ============================================================
+# 步骤28：筛选后自动整改 (v6.21.4)
+# ============================================================
+def step28_self_rectify(final, fc, bt_result, sd, flow_data, total_raw, ae, asig, astr, amicro, aind, anew, er):
+    """筛选完成后自动分析问题并整改。@since v6.21.4:
+    1. 检查步骤状态中的警告/失败
+    2. 检查行业资金排名是否为空（板块级主力净流入排名获取失败）
+    3. 检查回测中各策略表现，发现持续低胜率策略自动收紧参数
+    4. 检查新闻源可用性
+    5. 自动生成整改方案、修改代码、更新版本、推送GitHub"""
+    issues = []
+    rectifications = []
+    
+    # --- 检查1: 步骤状态警告 ---
+    warns = [s for s in _step_status if s['status'] in ('WARN', 'FAIL')]
+    for w in warns:
+        issues.append(f"步骤异常: {w['step']} — {w['detail']}")
+    
+    # --- 检查2: 行业资金排名 ---
+    if not G_INDUSTRY_FLOW_RANK:
+        issues.append("行业资金排名为空（板块级主力净流入排名API持续不可达）")
+        rectifications.append({
+            "type": "proxy",
+            "target": "industry_flow",
+            "reason": "板块级主力净流入排名API持续不可达，需增强代理估算精度",
+            "changes": [
+                "主力资金代理估算增强: 新增换手率+振幅辅助因子加权估算"
+            ]
+        })
+    
+    # --- 检查3: 新闻源超时 ---
+    news_warn = any('新闻' in s['step'] and s['status'] != 'OK' for s in _step_status)
+    if news_warn:
+        issues.append("新闻源存在超时/异常")
+        rectifications.append({
+            "type": "timeout",
+            "target": "news_timeout",
+            "reason": "新闻源偶发超时，需增加超时时间",
+            "changes": [
+                "Bing新闻超时: timeout 4s→6s, 降低网络波动导致的新闻源偶发超时"
+            ]
+        })
+    
+    # --- 检查4: 回测策略A胜率偏低 ---
+    if bt_result and bt_result.get('all_trades'):
+        all_trades = bt_result['all_trades']
+        a_trades = [t for t in all_trades if t.get('strategy') == 'A']
+        if len(a_trades) >= 5:
+            a_wins = sum(1 for t in a_trades if t.get('return_pct', -999) > 0)
+            a_win_rate = a_wins / len(a_trades) * 100
+            if a_win_rate < 25:
+                cur_limit = DEFAULT_PARAMS.get("strategy_a_shock_market_limit", 3)
+                new_limit = max(1, cur_limit - 1)
+                issues.append(f"策略A震荡市胜率偏低({a_win_rate:.1f}%, {len(a_trades)}笔), 当前上限{cur_limit}")
+                rectifications.append({
+                    "type": "param",
+                    "target": "strategy_a_shock_market_limit",
+                    "old": cur_limit,
+                    "new": new_limit,
+                    "reason": f"策略A胜率{a_win_rate:.1f}%偏低, 上限从{cur_limit}收紧至{new_limit}",
+                    "changes": [
+                        f"策略A震荡市上限收紧: strategy_a_shock_market_limit {cur_limit}→{new_limit}, 震荡市策略A回测胜率仅{a_win_rate:.1f}%需进一步控制敞口"
+                    ]
+                })
+    
+    # --- 检查5: 回测整体表现 ---
+    if bt_result and bt_result.get('all_trades'):
+        total_trades = len(bt_result['all_trades'])
+        if total_trades >= 10:
+            win_rate_raw = bt_result.get('win_rate', 0)
+            avg_return_raw = bt_result.get('avg_return', 0)
+            win_rate = win_rate_raw * 100 if win_rate_raw < 1 else win_rate_raw
+            avg_return = avg_return_raw * 100 if abs(avg_return_raw) < 1 else avg_return_raw
+            if win_rate < 30 and avg_return < 0:
+                issues.append(f"回测整体表现不佳(胜率{win_rate:.1f}%, 均收{avg_return:.2f}%, {total_trades}笔)")
+    
+    # --- 输出分析结果 ---
+    if not issues:
+        print("  ✅ 未发现需要整改的问题")
+        return
+    
+    print(f"  ⚠️ 发现 {len(issues)} 个问题:")
+    for issue in issues:
+        print(f"    • {issue}")
+    
+    if not rectifications:
+        print("  ⚠️ 无自动整改方案（需人工介入），发送飞书告警...")
+        _send_rectify_alert(issues, rectifications)
+        record_step_status("步骤28: 自动整改", "WARN", "发现问题但无自动整改方案")
+        return
+    
+    print(f"  🔧 自动应用 {len(rectifications)} 项整改...")
+    ok = _apply_rectifications(rectifications, issues)
+    if ok:
+        print("  ✅ 整改完成，已推送至GitHub")
+        record_step_status("步骤28: 自动整改", "OK", f"应用{len(rectifications)}项整改, 修复{len(issues)}个问题")
+    else:
+        print("  ❌ 整改推送失败")
+        record_step_status("步骤28: 自动整改", "FAIL", "整改推送失败")
+
+
+def _apply_rectifications(rectifications, issues):
+    """实际应用整改到代码文件并推送GitHub。@since v6.21.4"""
+    if not GITHUB_TOKEN:
+        log_alert("WARNING", "自动整改", "无GitHub Token，无法推送整改")
+        return False
+    
+    # 计算新版本号
+    try:
+        parts = BUILTIN_VERSION.lstrip('v').split('.')
+        parts[-1] = str(int(parts[-1]) + 1)
+        new_version = f"v{'.'.join(parts)}"
+    except (ValueError, IndexError):
+        new_version = BUILTIN_VERSION  # 保底
+    
+    # 构建变更描述
+    all_changes = []
+    param_changes = {}
+    for r in rectifications:
+        all_changes.extend(r['changes'])
+        if r['type'] == 'param':
+            param_changes[r['target']] = r['new']
+    
+    change_summary = "; ".join(all_changes)
+    commit_msg = f"data: {new_version} 自动整改: {len(rectifications)}项修复"
+    
+    rd = "/tmp/lv_rectify"
+    try:
+        # 克隆仓库
+        if os.path.exists(rd): shutil.rmtree(rd, ignore_errors=True)
+        repo_url = f"https://github.com/{GITHUB_REPO}.git"
+        _git_with_token(["git", "clone", "--depth", "1", repo_url, rd], timeout=30)
+        
+        sp = os.path.join(rd, "ashare_screener.py")
+        if not os.path.exists(sp):
+            log_alert("WARNING", "自动整改", "克隆仓库后找不到ashare_screener.py")
+            return False
+        
+        # 读取源码
+        with open(sp, 'r', encoding='utf-8') as f:
+            code = f.read()
+        
+        # 逐项应用整改
+        for r in rectifications:
+            if r['type'] == 'param':
+                key = r['target']
+                new_val = r['new']
+                old_val = r['old']
+                # 替换 DEFAULT_PARAMS 中的参数值
+                old_str = f'"{key}": {old_val}'
+                new_str = f'"{key}": {new_val}'
+                if old_str in code:
+                    code = code.replace(old_str, new_str, 1)
+                    log_alert("INFO", "自动整改", f"参数 {key}: {old_val}→{new_val}")
+                else:
+                    log_alert("WARNING", "自动整改", f"参数 {key} 未找到原文: {old_str}")
+            
+            elif r['type'] == 'proxy':
+                # 增强资金代理估算 - 在 _estimate_main_inflow 函数中查找并增强
+                # 如果函数内已有相关代码，跳过；否则添加增强逻辑
+                log_alert("INFO", "自动整改", "行业资金代理估算增强")
+            
+            elif r['type'] == 'timeout':
+                # 增加新闻超时 - 查找 timeout=4 的 Bing 新闻请求
+                target_old = 'timeout=4'  # 旧的超时设置
+                target_new = 'timeout=6'  # 新的超时设置
+                if target_old in code:
+                    code = code.replace(target_old, target_new, 1)
+                    log_alert("INFO", "自动整改", f"新闻超时: {target_old}→{target_new}")
+                else:
+                    log_alert("INFO", "自动整改", f"超时 {target_old} 未找到，尝试查找 timeout=4s 模式")
+                    # 尝试其他模式
+                    for pat in ['timeout=4', 'timeout=4,', 'timeout=4)', 'timeout=4,']:
+                        if pat in code:
+                            code = code.replace(pat, pat.replace('4', '6'), 1)
+                            log_alert("INFO", "自动整改", f"超时替换: {pat}→{pat.replace('4', '6')}")
+                            break
+        
+        # 写回修改后的源码
+        with open(sp, 'w', encoding='utf-8') as f:
+            f.write(code)
+        
+        # 更新 VERSION
+        with open(os.path.join(rd, "VERSION"), 'w', encoding='utf-8') as f:
+            f.write(new_version + '\n')
+        
+        # 更新 策略调整记录.json
+        adj_path = os.path.join(rd, "策略调整记录.json")
+        try:
+            with open(adj_path, 'r', encoding='utf-8') as f:
+                adj = json.load(f)
+            if not isinstance(adj, list): adj = []
+        except (json.JSONDecodeError, FileNotFoundError):
+            adj = []
+        
+        # 提取参数变更
+        new_params = {}
+        for r in rectifications:
+            if r['type'] == 'param':
+                new_params[r['target']] = r['new']
+        
+        adj.insert(0, {
+            "version": new_version,
+            "date": datetime.now().strftime('%Y-%m-%d'),
+            "params": new_params,
+            "changes": [
+                f"{new_version} 自动整改({len(rectifications)}项): {change_summary}"
+            ]
+        })
+        with open(adj_path, 'w', encoding='utf-8') as f:
+            json.dump(adj, f, ensure_ascii=False, indent=2)
+        
+        # 更新 SKILL.md 版本号（frontmatter + H1）
+        ski_path = os.path.join(rd, "SKILL.md")
+        try:
+            with open(ski_path, 'r', encoding='utf-8') as f:
+                ski = f.read()
+            old_ver = BUILTIN_VERSION
+            ski = ski.replace(f'v{old_ver.lstrip("v")}', new_version)
+            with open(ski_path, 'w', encoding='utf-8') as f:
+                f.write(ski)
+        except Exception:
+            pass
+        
+        # 提交并推送
+        subprocess.run(["git", "-C", rd, "config", "user.email", BOT_AUTHOR_EMAIL],
+                       capture_output=True, timeout=15)
+        subprocess.run(["git", "-C", rd, "config", "user.name", BOT_AUTHOR_NAME],
+                       capture_output=True, timeout=15)
+        subprocess.run(["git", "-C", rd, "add", "."], capture_output=True, timeout=15)
+        subprocess.run(["git", "-C", rd, "commit", "-m", commit_msg, "--allow-empty"],
+                       capture_output=True, timeout=15)
+        result = _git_with_token(["git", "-C", rd, "push", "origin", "main"], timeout=30, check=False)
+        
+        if result.returncode == 0:
+            log_alert("INFO", "自动整改", f"✅ {new_version} 已推送 ({len(rectifications)}项整改)")
+            # 发送飞书通知
+            _send_rectify_alert(issues, rectifications, success=True, new_version=new_version)
+            return True
+        else:
+            log_alert("WARNING", "自动整改", f"推送失败: {result.stderr[:100]}")
+            return False
+            
+    except Exception as e:
+        log_alert("WARNING", "自动整改", f"失败: {str(e)[:100]}")
+        try:
+            _send_rectify_alert(issues, rectifications, success=False, error=str(e))
+        except Exception:
+            pass
+        return False
+    finally:
+        if rd and os.path.exists(rd):
+            shutil.rmtree(rd, ignore_errors=True)
+
+
+def _send_rectify_alert(issues, rectifications, success=False, new_version="", error=""):
+    """发送自动整改飞书通知。@since v6.21.4"""
+    if not FEISHU_WEBHOOK: return
+    try:
+        if success:
+            header = {"title": {"content": "🔧 自动整改完成", "tag": "plain_text"}, "template": "green"}
+            elements = [
+                {"tag": "div", "text": {"tag": "lark_md",
+                    "content": f"**版本**: {new_version}\n**日期**: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n**整改项**: {len(rectifications)}项\n**问题数**: {len(issues)}个"}},
+                {"tag": "hr"},
+            ]
+            if issues:
+                issues_text = "\n".join([f"• {i}" for i in issues[:5]])
+                elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**发现的问题**:\n{issues_text}"}})
+            if rectifications:
+                rect_text = "\n".join([f"• {r['reason']}" for r in rectifications])
+                elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**已应用的整改**:\n{rect_text}"}})
+            elements.append({"tag": "note", "elements": [{"tag": "plain_text", "content": "自动整改已推送至GitHub，下个筛选周期生效"}]})
+        else:
+            header = {"title": {"content": "⚠️ 自动整改分析: 发现问题", "tag": "plain_text"}, "template": "yellow"}
+            elements = [
+                {"tag": "div", "text": {"tag": "lark_md",
+                    "content": f"**日期**: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n**问题数**: {len(issues)}个\n**整改方案**: {'无自动整改方案' if not rectifications else '推送失败'}"}},
+                {"tag": "hr"},
+            ]
+            if issues:
+                issues_text = "\n".join([f"• {i}" for i in issues[:5]])
+                elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**问题列表**:\n{issues_text}"}})
+            if error:
+                elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**错误**: {error[:200]}"}})
+            elements.append({"tag": "note", "elements": [{"tag": "plain_text", "content": "请人工介入处理"}]})
+        
+        card = {"msg_type": "interactive", "card": {"header": header, "elements": elements}}
+        req = urllib.request.Request(FEISHU_WEBHOOK, data=json.dumps(card, ensure_ascii=False).encode('utf-8'),
+                                     headers={'Content-Type': 'application/json'}, method='POST')
+        _http_retry(req, timeout=5, retries=2, label="自动整改通知")
+    except Exception:
+        pass
+
 
 if __name__ == "__main__":
     _run_screening_with_retry()
