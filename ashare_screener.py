@@ -409,13 +409,19 @@ _VALID_SHENWAN_INDUSTRIES = frozenset([
 # data_tier_l3_downgrade_to_signal（全仓库 0 处读取）。
 # 必须在此处一并删除：step6_file_init 会用本表回填 params（缺键即补默认），
 # 只删 JSON 与 lib/core.py 的话这些键每次运行都会被重新注入，清理等于无效。
+# @since v6.22.1: 以"活参数"重建 win_rate_drop_threshold / consecutive_weeks / max_adjust_params，
+# 接入 step28 策略级胜率监控熔断，单策略连续N周胜率下降超过阈值触发自动调参。
 DEFAULT_PARAMS = {
     "search_budget": 25,
     "confidence_position_enabled": True,
     "strategy_concentration_pct": 25,
     "data_retention_days": 30,
     "strategy_a_weak_market": "closed",
-    "strategy_a_shock_market_limit": 3
+    "strategy_a_shock_market_limit": 3,
+    # @since v6.22.1: 策略级胜率监控熔断活参数
+    "win_rate_drop_threshold": 10,   # 单策略胜率连续下降超过N个百分点触发熔断
+    "consecutive_weeks": 2,          # 连续观察周数
+    "max_adjust_params": 3,          # 单策略最大自动调参次数
 }
 
 # 模块级策略映射表（DRY：避免函数内重复定义）
@@ -6620,6 +6626,148 @@ def _send_failure_alert(error):
         pass  # 告警发送失败不阻塞主流程
 
 # ============================================================
+# 策略级胜率监控熔断 — 辅助函数 @since v6.22.1
+# ============================================================
+def _load_strategy_win_rate_history():
+    """从推荐历史加载所有策略胜率记录"""
+    records = []
+    for f in sorted(os.listdir('/workspace')):
+        if f.startswith('推荐历史_') and f.endswith('.json'):
+            data = safe_read_json(os.path.join('/workspace', f))
+            for r in data:
+                if r.get('type') == 'strategy_check' and r.get('strategy_win_rates'):
+                    records.append(r)
+    return records  # 按文件顺序自然升序
+
+def _record_strategy_win_rates(bt_result, data_date):
+    """将当前回测各策略胜率写入推荐历史 strategy_check 记录"""
+    if not bt_result or not bt_result.get('strategy_metrics'):
+        return
+    strategy_rates = {}
+    for s, sm in bt_result['strategy_metrics'].items():
+        if sm['total'] >= 3:
+            strategy_rates[s] = {
+                'total': sm['total'],
+                'win_rate': sm['win_rate'],
+                'avg_return': sm['avg_return'],
+            }
+    if not strategy_rates:
+        return
+    hf = f"/workspace/推荐历史_{data_date.replace('-', '')}.json"
+    existing = safe_read_json(hf, [])
+    updated = False
+    for r in existing:
+        if r.get('type') == 'strategy_check':
+            r['strategy_win_rates'] = strategy_rates
+            updated = True
+            break
+    if not updated:
+        existing.append({
+            "type": "strategy_check",
+            "date": data_date,
+            "strategy_win_rates": strategy_rates,
+        })
+    safe_write_json(hf, existing)
+
+def _get_strategy_adj_count(strategy_key, history):
+    """统计指定策略已被自动调参的次数"""
+    count = 0
+    for r in history:
+        adj = r.get('strategy_adjustments', {})
+        if isinstance(adj, dict):
+            count += adj.get(strategy_key, 0)
+    return count
+
+def _incr_strategy_adj_count(strategy_key, data_date):
+    """在当天 strategy_check 记录中递增指定策略的调参计数"""
+    hf = f"/workspace/推荐历史_{data_date.replace('-', '')}.json"
+    existing = safe_read_json(hf, [])
+    for r in existing:
+        if r.get('type') == 'strategy_check':
+            adj = r.get('strategy_adjustments', {})
+            if not isinstance(adj, dict):
+                adj = {}
+            adj[strategy_key] = adj.get(strategy_key, 0) + 1
+            r['strategy_adjustments'] = adj
+            safe_write_json(hf, existing)
+            return adj[strategy_key]
+    # 无当天记录则新建
+    existing.append({
+        "type": "strategy_check",
+        "date": data_date,
+        "strategy_adjustments": {strategy_key: 1},
+    })
+    safe_write_json(hf, existing)
+    return 1
+
+def _detect_strategy_circuit_breaker(bt_result, history, threshold, lookback, max_adjust):
+    """
+    检测单策略胜率骤降，触发熔断条件：
+    - 策略当前胜率低于历史记录中最近 N 条记录的胜率，差值 >= threshold 个百分点
+    - 且历史记录本身呈下降趋势（或当前显著低于历史最低）
+    - 该策略累计调参次数 < max_adjust
+    返回: [{'strategy', 'name', 'current_wr', 'hist_recent', 'adj_count', 'max_adjust'}, ...]
+    """
+    triggers = []
+    if not bt_result or not bt_result.get('strategy_metrics'):
+        return triggers
+
+    for s, sm in bt_result['strategy_metrics'].items():
+        if sm['total'] < 5:
+            continue  # 样本不足不触发
+        current_wr = sm['win_rate']
+        sname = _STRATEGY_NAMES.get(s, s)
+
+        # 提取该策略的历史胜率序列（按日期升序保留）
+        hist_wr = []
+        for r in history:
+            rates = r.get('strategy_win_rates', {})
+            if s in rates and rates[s]['total'] >= 3:
+                hist_wr.append(rates[s]['win_rate'])
+
+        if len(hist_wr) < lookback:
+            continue  # 历史数据不足无法判断趋势
+
+        # 取最近 lookback 条历史记录
+        recent_hist = hist_wr[-lookback:]
+
+        # 条件1: 当前胜率比每条历史记录都低至少 threshold 个百分点
+        all_below = all(h_wr - current_wr >= threshold for h_wr in recent_hist)
+        if not all_below:
+            continue
+
+        # 条件2: 历史记录本身也呈下降趋势（从旧到新逐级下降）或当前显著低于历史最低
+        declining = True
+        for i in range(1, len(recent_hist)):
+            if recent_hist[i] > recent_hist[i-1]:
+                declining = False
+                break
+
+        if not declining:
+            # 放宽条件：当前胜率低于所有历史记录中的最低值超过 threshold
+            min_hist = min(recent_hist)
+            if current_wr > min_hist - threshold:
+                continue
+
+        # 条件3: 调参次数限制
+        adj_count = _get_strategy_adj_count(s, history)
+        if adj_count >= max_adjust:
+            print(f"  ⚠️ 策略{s}({sname})胜率骤降({current_wr:.1f}% vs 历史{recent_hist[-1]:.1f}%), 但已达最大调参次数({max_adjust}), 跳过")
+            continue
+
+        triggers.append({
+            'strategy': s, 'name': sname,
+            'current_wr': current_wr,
+            'hist_avg': sum(recent_hist) / len(recent_hist),
+            'hist_recent': recent_hist[-1],
+            'adj_count': adj_count,
+            'max_adjust': max_adjust,
+        })
+
+    return triggers
+
+
+# ============================================================
 # 步骤28：筛选后自动整改 (v6.21.4)
 # ============================================================
 def step28_self_rectify(final, fc, bt_result, sd, flow_data, total_raw, ae, asig, astr, amicro, aind, anew, er):
@@ -6694,6 +6842,50 @@ def step28_self_rectify(final, fc, bt_result, sd, flow_data, total_raw, ae, asig
             avg_return = avg_return_raw * 100 if abs(avg_return_raw) < 1 else avg_return_raw
             if win_rate < 30 and avg_return < 0:
                 issues.append(f"回测整体表现不佳(胜率{win_rate:.1f}%, 均收{avg_return:.2f}%, {total_trades}笔)")
+    
+    # --- 检查6: 策略级胜率监控熔断 @since v6.22.1 ---
+    # 记录当前各策略胜率到推荐历史（供后续检测趋势）
+    _record_strategy_win_rates(bt_result, data_date)
+    # 加载历史策略胜率记录
+    swr_history = _load_strategy_win_rate_history()
+    if bt_result and bt_result.get('strategy_metrics'):
+        threshold = params.get("win_rate_drop_threshold", 10)
+        lookback = params.get("consecutive_weeks", 2)
+        max_adjust = params.get("max_adjust_params", 3)
+        triggers = _detect_strategy_circuit_breaker(bt_result, swr_history, threshold, lookback, max_adjust)
+        for t in triggers:
+            s = t['strategy']
+            current_wr = t['current_wr']
+            hist_recent = t['hist_recent']
+            adj_count = t['adj_count']
+            # 计算紧止损幅度（每次收紧0.5个百分点，最低-10%）
+            old_sl = _STRATEGY_STOP_LOSS.get(s, 0.96)
+            new_sl = round(max(0.90, old_sl - 0.005), 3)
+            issues.append(
+                f"策略{s}({t['name']})胜率骤降: 当前{current_wr:.1f}% vs 历史{hist_recent:.1f}%, "
+                f"连续{lookback}期下降超{threshold}个百分点, 触发熔断(已调参{adj_count}次)"
+            )
+            rectifications.append({
+                "type": "strategy_circuit_breaker",
+                "target": f"strategy_{s}_stop_loss",
+                "strategy": s,
+                "old_sl": old_sl,
+                "new_sl": new_sl,
+                "reason": (
+                    f"策略{s}({t['name']})胜率骤降触发熔断: "
+                    f"当前胜率{current_wr:.1f}%骤降{threshold}个百分点以上, "
+                    f"止损从{old_sl}收紧至{new_sl}, "
+                    f"已调参{adj_count+1}/{max_adjust}次"
+                ),
+                "changes": [
+                    f"策略{s}({t['name']})胜率监控熔断: "
+                    f"胜率{current_wr:.1f}%骤降{threshold}个百分点以上, "
+                    f"止损{old_sl}→{new_sl}(收紧), "
+                    f"累计调参{adj_count+1}/{max_adjust}次"
+                ]
+            })
+            # 递增调参计数（立即生效，防止下次运行重复触发）
+            _incr_strategy_adj_count(s, data_date)
     
     # --- 输出分析结果 ---
     if not issues:
@@ -6796,6 +6988,25 @@ def _apply_rectifications(rectifications, issues):
                             code = code.replace(pat, pat.replace('4', '6'), 1)
                             log_alert("INFO", "自动整改", f"超时替换: {pat}→{pat.replace('4', '6')}")
                             break
+            
+            elif r['type'] == 'strategy_circuit_breaker':
+                # 策略级胜率熔断：收紧止损线
+                s = r['strategy']
+                old_sl = r['old_sl']
+                new_sl = r['new_sl']
+                # 在 _STRATEGY_STOP_LOSS 中替换该策略的止损值
+                old_sl_str = f"'{s}': {old_sl}"
+                new_sl_str = f"'{s}': {new_sl}"
+                if old_sl_str in code:
+                    code = code.replace(old_sl_str, new_sl_str, 1)
+                    log_alert("INFO", "自动整改", f"熔断: 策略{s}止损: {old_sl}→{new_sl}")
+                else:
+                    log_alert("WARNING", "自动整改", f"熔断: 策略{s}止损 {old_sl_str} 未找到原文")
+                    # 尝试不带引号的格式
+                    old_sl_str2 = f"'{s}': {old_sl}"
+                    if old_sl_str2 in code:
+                        code = code.replace(old_sl_str2, f"'{s}': {new_sl}", 1)
+                        log_alert("INFO", "自动整改", f"熔断: 策略{s}止损(备选): {old_sl}→{new_sl}")
         
         # 写回修改后的源码
         with open(sp, 'w', encoding='utf-8') as f:

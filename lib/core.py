@@ -40,6 +40,8 @@ GITHUB_REPO = "lc132/lv"
 # limit_down_threshold / max_adjust_params / data_tier_l2_skip_on_unavailable /
 # data_tier_l3_downgrade_to_signal（全仓库 0 处读取，且无明确接线计划，保留只会误导维护者）。
 # 标注「当前未接入主流程」的项属于有潜在用途的预留配置，暂不删除。
+# @since v6.22.1: 以"活参数"重建 win_rate_drop_threshold / consecutive_weeks / max_adjust_params，
+# 接入 step28 策略级胜率监控熔断，单策略连续N周胜率下降超过阈值触发自动调参。
 DEFAULT_PARAMS = {
     "search_budget": 25,  # 当前未接入主流程
     "northbound_threshold": 3000,  # 当前未接入主流程
@@ -51,7 +53,11 @@ DEFAULT_PARAMS = {
     "conversion_rate_window_days": 10, "conversion_rate_threshold": 0.3,
     "conversion_rate_restore": 0.6, "conversion_rate_consecutive_days": 3,
     "data_retention_days": 30,
-    "strategy_a_weak_market": "closed"
+    "strategy_a_weak_market": "closed",
+    # @since v6.22.1: 策略级胜率监控熔断活参数
+    "win_rate_drop_threshold": 10,
+    "consecutive_weeks": 2,
+    "max_adjust_params": 3,
 }
 
 # ============================================================
