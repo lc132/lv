@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股新闻筛查模块 v6.17.0
-基于推荐方案重构：巨潮资讯网(公告) + 麦蕊智数新API(公告+涨跌停) + Bing网页(利空搜索)
-替换旧版：财联社(签名错误)、百度(反爬)、东方财富(502)、麦蕊旧域名(404)
+A股新闻筛查模块 v6.22.0
+多源并行新闻筛查：
+ 源1: 巨潮资讯网(公告全文搜索) — 官方公告利空检测
+ 源2: 麦蕊智数(公告+跌停股池) — API公告+实时跌停检测
+ 源3: 东方财富(个股新闻搜索) — 通过AKShare直连，覆盖全市场财经新闻
+ 源4: 财联社(个股新闻搜索) — 电报快讯级实时新闻
+替换旧版：Bing网页搜索(反爬/超时/不稳定)、财联社旧签名接口(签名错误)
 """
 import urllib.request, urllib.parse, urllib.error
 import json, re, ssl, time, os
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 # ============================================================
 # 全局配置
@@ -209,53 +215,137 @@ def check_mairui_dt(code, data_date):
 
 
 # ============================================================
-# 4. Bing网页搜索 — 利空检测
+# 4. 东方财富 — 个股新闻搜索（通过AKShare直连）
 # ============================================================
-def check_bing_web(code, stock_name, data_date):
+def _try_import_akshare():
+    """延迟导入AKShare，避免模块加载时失败"""
+    try:
+        import akshare as ak
+        return ak
+    except ImportError:
+        return None
+    except Exception:
+        return None
+
+def check_eastmoney_news(code, stock_name, data_date):
     """
-    Bing网页搜索利空信息
+    东方财富个股新闻搜索，检测利空内容
+    使用AKShare stock_news_em() 直连 search-api-web.eastmoney.com
     返回: (has_negative, details_list, status)
     """
+    ak = _try_import_akshare()
+    if ak is None:
+        return False, [], 'eastmoney_no_akshare'
+    
     try:
-        query = urllib.parse.quote('{} 利空 公告'.format(stock_name))
-        url = 'https://www.bing.com/search?q={}&setlang=zh-cn'.format(query)
-        headers = {
-            'Accept': 'text/html,application/xhtml+xml',
-            'Accept-Language': 'zh-CN,zh;q=0.9',
-        }
-        data = _http_get(url, headers=headers)
-        if not data:
-            return False, [], 'bing_unavailable'
-        
-        snippets = re.findall(
-            r'<li class="b_algo".*?<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>.*?<p[^>]*>(.*?)</p>',
-            data, re.DOTALL
-        )
+        df = ak.stock_news_em(symbol=code)
+        if df is None or len(df) == 0:
+            return False, [], 'eastmoney_empty'
         
         negatives = []
-        for href, title, snippet in snippets:
-            combined = title + snippet
+        for _, row in df.iterrows():
+            title = str(row.get('新闻标题', ''))
+            content = str(row.get('新闻内容', ''))
+            combined = title + content
             for kw in NEGATIVE_KEYWORDS:
                 if kw in combined:
                     negatives.append({
-                        'source': 'bing',
-                        'title': re.sub(r'<[^>]+>', '', title)[:100],
+                        'source': 'eastmoney',
+                        'title': title[:100],
                         'keyword': kw,
-                        'url': href,
+                        'date': str(row.get('发布时间', '')),
+                        'url': str(row.get('新闻链接', '')),
                     })
                     break
         
-        return len(negatives) > 0, negatives, 'bing_ok'
+        return len(negatives) > 0, negatives, 'eastmoney_ok'
     except Exception as e:
-        return False, [], 'bing_error:{}'.format(str(e)[:60])
+        return False, [], 'eastmoney_error:{}'.format(str(e)[:60])
 
 
 # ============================================================
-# 5. 综合新闻筛查（多源并行）
+# 5. 财联社 — 个股新闻搜索（直连csw API）
+# ============================================================
+def check_cls_news(code, stock_name, data_date):
+    """
+    财联社个股新闻搜索，检测利空内容
+    使用 www.cls.cn/api/csw 接口，按股票名称关键词搜索
+    返回: (has_negative, details_list, status)
+    """
+    try:
+        url = 'https://www.cls.cn/api/csw?app=CailianpressWeb&os=web&sv=8.4.6&sign=9f8797a1f4de66c2370f7a03990d2737'
+        payload = json.dumps({
+            'lastTime': 0,
+            'keyword': stock_name,
+            'category': '',
+            'os': 'web',
+            'sv': '8.4.6',
+            'app': 'CailianpressWeb',
+        }).encode('utf-8')
+        
+        ctx = ssl.create_default_context()
+        req = urllib.request.Request(url, data=payload, headers={
+            'User-Agent': UA,
+            'Content-Type': 'application/json;charset=UTF-8',
+            'Referer': 'https://www.cls.cn/telegraph',
+            'Origin': 'https://www.cls.cn',
+            'Accept': 'application/json, text/plain, */*',
+        })
+        
+        for attempt in range(2):
+            try:
+                resp = urllib.request.urlopen(req, timeout=8, context=ctx)
+                data = resp.read().decode('utf-8')
+                j = json.loads(data)
+                break
+            except Exception:
+                if attempt == 0:
+                    time.sleep(1)
+                else:
+                    return False, [], 'cls_unavailable'
+        
+        # 兼容两种响应格式: {"data":{"list":[...]}} 或 {"total":N,"list":[...]}
+        items = []
+        if 'data' in j and isinstance(j['data'], dict):
+            items = j['data'].get('list', [])
+        elif 'list' in j:
+            items = j['list']
+        
+        if not items:
+            return False, [], 'cls_empty'
+        
+        negatives = []
+        for item in items:
+            title = item.get('title', '') or ''
+            content = item.get('content', '') or ''
+            combined = title + content
+            for kw in NEGATIVE_KEYWORDS:
+                if kw in combined:
+                    negatives.append({
+                        'source': 'cls',
+                        'title': title[:100],
+                        'keyword': kw,
+                        'date': str(item.get('ctime', '')),
+                        'url': 'https://www.cls.cn/detail/{}'.format(item.get('id', '')),
+                    })
+                    break
+        
+        return len(negatives) > 0, negatives, 'cls_ok'
+    except Exception as e:
+        return False, [], 'cls_error:{}'.format(str(e)[:60])
+
+
+# ============================================================
+# 6. 综合新闻筛查（多源并行）
 # ============================================================
 def check_stock_news(code, stock_name, data_date, lookback_days=30, timeout=15):
     """
     多源并行新闻筛查，任一源发现利空即排除
+    源1: 巨潮资讯网(公告) — 官方公告全文搜索
+    源2: 麦蕊智数公告 — API公告查询
+    源3: 麦蕊智数跌停 — 实时跌停股池检测
+    源4: 东方财富 — 个股新闻搜索（AKShare直连）
+    源5: 财联社 — 个股新闻搜索（csw API）
     返回: {
         'excluded': bool,
         'sources_checked': int,
@@ -299,9 +389,17 @@ def check_stock_news(code, stock_name, data_date, lookback_days=30, timeout=15):
         if 'ok' in status:
             sources_available += 1
     
-    # 源4: Bing网页搜索
-    has_neg, negs, status = check_bing_web(code, stock_name, data_date)
-    details['bing'] = status
+    # 源4: 东方财富个股新闻
+    has_neg, negs, status = check_eastmoney_news(code, stock_name, data_date)
+    details['eastmoney'] = status
+    if has_neg:
+        all_negatives.extend(negs)
+    if 'ok' in status:
+        sources_available += 1
+    
+    # 源5: 财联社个股新闻
+    has_neg, negs, status = check_cls_news(code, stock_name, data_date)
+    details['cls'] = status
     if has_neg:
         all_negatives.extend(negs)
     if 'ok' in status:
@@ -309,7 +407,7 @@ def check_stock_news(code, stock_name, data_date, lookback_days=30, timeout=15):
     
     return {
         'excluded': len(all_negatives) > 0,
-        'sources_checked': 4,
+        'sources_checked': 5,
         'sources_available': sources_available,
         'negatives': all_negatives,
         'details': details,
@@ -328,7 +426,7 @@ def batch_check_news(candidates, data_date, max_workers=8):
     """
     passed = []
     excluded = []
-    sources_stats = {'cninfo': 0, 'mairui_ann': 0, 'mairui_dt': 0, 'bing': 0}
+    sources_stats = {'cninfo': 0, 'mairui_ann': 0, 'mairui_dt': 0, 'eastmoney': 0, 'cls': 0}
     total_negatives = 0
     
     dt_pool = None
@@ -378,7 +476,7 @@ def batch_check_news(candidates, data_date, max_workers=8):
 
 
 # ============================================================
-# 6. 龙虎榜/正面新闻 (TOP10增强)
+# 7. 龙虎榜/正面新闻 (TOP10增强)
 # ============================================================
 def get_top10_longhubang(data_date):
     """获取涨停股池，用于TOP10龙虎榜展示"""
@@ -389,41 +487,41 @@ def get_top10_longhubang(data_date):
 
 def get_top10_positive_news(code, stock_name, data_date):
     """
-    获取个股正面新闻（Bing搜索）
+    获取个股正面新闻（东方财富搜索）
     返回: list of {title, url, source}
     """
+    ak = _try_import_akshare()
+    if ak is None:
+        return []
     try:
-        query = urllib.parse.quote('{} 利好 业绩'.format(stock_name))
-        url = 'https://www.bing.com/search?q={}&setlang=zh-cn'.format(query)
-        data = _http_get(url)
-        if not data:
+        df = ak.stock_news_em(symbol=code)
+        if df is None or len(df) == 0:
             return []
-        
-        snippets = re.findall(
-            r'<li class="b_algo".*?<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>.*?<p[^>]*>(.*?)</p>',
-            data, re.DOTALL
-        )
-        
         results = []
-        for href, title, snippet in snippets[:3]:
+        for _, row in df.head(5).iterrows():
+            title = str(row.get('新闻标题', ''))
+            # 过滤掉明显偏负面的新闻
+            neg_hints = ['减持', '亏损', '下降', '流出', '利空', '风险']
+            if any(h in title for h in neg_hints):
+                continue
             results.append({
-                'title': re.sub(r'<[^>]+>', '', title)[:100],
-                'url': href,
-                'snippet': re.sub(r'<[^>]+>', '', snippet)[:200],
-                'source': 'bing',
+                'title': title[:100],
+                'url': str(row.get('新闻链接', '')),
+                'snippet': str(row.get('新闻内容', ''))[:200],
+                'source': 'eastmoney',
             })
-        return results
-    except:
+        return results[:3]
+    except Exception:
         return []
 
 
 # ============================================================
-# 7. 主脚本兼容接口（step18/step19）
+# 8. 主脚本兼容接口（step18/step19）
 # ============================================================
 def step18_news_screening(ctx):
     """
     新闻筛查（兼容主脚本接口）
-    使用多源并行检测：巨潮资讯网 + 麦蕊智数(公告+跌停) + Bing搜索
+    使用多源并行检测：巨潮资讯网 + 麦蕊智数(公告+跌停) + 东方财富 + 财联社
     利空标的直接排除，正面标的加分
     """
     print("\n" + "=" * 60)
@@ -467,7 +565,7 @@ def step18_news_screening(ctx):
                 news_bonus += 1
             passed.append(c)
             if result['sources_available'] < 2:
-                print("  ⚠️ {}({}): 仅{}/4源可用".format(name, code, result['sources_available']))
+                print("  ⚠️ {}({}): 仅{}/5源可用".format(name, code, result['sources_available']))
 
     ctx['candidates'] = passed
     ctx['passed_news'] = len(passed)
@@ -510,7 +608,8 @@ def step19_insufficient_downgrade(ctx):
 # ============================================================
 if __name__ == '__main__':
     print('============================================================')
-    print('A股新闻筛查模块 v6.17.0 — 自测')
+    print('A股新闻筛查模块 v6.22.0 — 自测')
+    print('数据源: 巨潮资讯网 + 麦蕊智数(公告+跌停) + 东方财富 + 财联社')
     lic_status = '已配置' if MAIRUI_LICENCE else '未配置'
     print('麦蕊Licence: {}'.format(lic_status))
     now_str = datetime.now().strftime('%Y-%m-%d')
@@ -532,7 +631,7 @@ if __name__ == '__main__':
     result = check_stock_news(code, name, test_date)
     print('{}({}):'.format(name, code))
     print('  排除: {}'.format(result['excluded']))
-    print('  可用源: {}/4'.format(result['sources_available']))
+    print('  可用源: {}/5'.format(result['sources_available']))
     print('  详情: {}'.format(result['details']))
     if result['negatives']:
         for n in result['negatives']:
