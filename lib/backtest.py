@@ -1,8 +1,9 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.21.2
+# A股短线筛选 — 历史回测模块 v6.22.8
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # @since v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
+# @since v6.22.8: 皇冠回测补全冠军标的完整历史(突破28天窗口) + 主交易明细表强制包含冠军交易
 # @since v6.13.38: no_entry改为独立结果类型——限价单未成交不计入loss，独立标记⚪，显示理论收益但不计入胜率统计
 # @since v6.13.30: no_entry直接标记失败——限价单未成交视为策略失效，计入loss不再排除
 # @since v6.13.24: _try_tencent增加Referer头(修复无数据) + 解析过滤非列表元素 + 超时10s + max_drawdown改用复合收益率
@@ -392,6 +393,8 @@ def run_backtest(hold_days=10, max_days_lookback=90):
             if pd and (latest_champion_date is None or pd > latest_champion_date):
                 latest_champion_date = pd
                 current_champion_code = h.get('code')
+    # @since v6.22.8: 保存完整历史，用于后续补全冠军标的全部历史交易记录
+    _full_history = list(history)
     cutoff = today - timedelta(days=max_days_lookback)
     # @since v6.20.12: 包含过滤改用运行日 date(而非买入日 prediction_date)，修复盘后推荐被整体排除；
     #   同日新生成的推荐(运行日==today)仍排除——尚无完整运行日数据；冠军记录豁免该排除。
@@ -400,6 +403,23 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     history = [h for h in history
                if _rdate(h) and _rdate(h) >= cutoff.strftime('%Y-%m-%d')
                and (_rdate(h) < today.strftime('%Y-%m-%d') or h.get('is_champion'))]
+    # @since v6.22.8: 冠军标的完整历史——将冠军标的的所有历史记录纳入回测，
+    #   确保皇冠回测交易明细不受28天窗口限制，展示完整的冠军交易记录
+    if current_champion_code:
+        _champion_records = [h for h in _full_history if h.get('code') == current_champion_code]
+        _existing_keys = set()
+        for h in history:
+            _key = (h.get('code'), (h.get('run_date') or h.get('date')), h.get('strategy'), round(h.get('entry') or 0, 2))
+            _existing_keys.add(_key)
+        _added = 0
+        for h in _champion_records:
+            _key = (h.get('code'), (h.get('run_date') or h.get('date')), h.get('strategy'), round(h.get('entry') or 0, 2))
+            if _key not in _existing_keys:
+                history.append(h)
+                _existing_keys.add(_key)
+                _added += 1
+        if _added > 0:
+            print(f"  皇冠回测: 补全冠军标的 {current_champion_code} 历史 {_added} 条记录(超出28天窗口)")
 
     # @since v6.13.10: 去重key改为(code,date,strategy,entry)，保留同股票不同策略的推荐
     # @since v6.20.12: 去重key改用运行日 date(与包含过滤一致)，避免盘后推荐(prediction_date=次日)被误并
@@ -616,6 +636,12 @@ def generate_backtest_report(bt_result, output_path=None):
         if len(recent) >= 20:
             break
     recent = recent[:20]
+    # @since v6.22.8: 确保冠军交易始终出现在Markdown交易明细表中
+    _recent_keys_md = set((t['code'], t['date'], t['strategy']) for t in recent)
+    for t in trades:
+        if t.get('is_champion') and (t['code'], t['date'], t['strategy']) not in _recent_keys_md:
+            recent.append(t)
+            _recent_keys_md.add((t['code'], t['date'], t['strategy']))
     for t in recent:
         if t['result'] == 'win':
             res_emoji = '\U0001f7e2'
@@ -807,6 +833,12 @@ def generate_backtest_html(bt_result, output_path=None):
         if len(recent) >= 30:
             break
     recent = recent[:30]
+    # @since v6.22.8: 确保冠军交易始终出现在主交易明细表中，不被均匀采样截断
+    _recent_keys = set((t['code'], t['date'], t['strategy']) for t in recent)
+    for t in trades:
+        if t.get('is_champion') and (t['code'], t['date'], t['strategy']) not in _recent_keys:
+            recent.append(t)
+            _recent_keys.add((t['code'], t['date'], t['strategy']))
     for t in recent:
         if t['result'] == 'win':
             res_cls = 'win'
