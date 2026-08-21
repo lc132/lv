@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.22.8
+A股每日盘前短线标的智能筛选 v6.22.12
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
-import urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
+import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from collections import Counter, defaultdict
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.21.3"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.22.12"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -7015,45 +7015,39 @@ def _apply_rectifications(rectifications, issues):
         # 更新 VERSION
         with open(os.path.join(rd, "VERSION"), 'w', encoding='utf-8') as f:
             f.write(new_version + '\n')
-        
-        # 更新 策略调整记录.json
-        adj_path = os.path.join(rd, "策略调整记录.json")
-        try:
-            with open(adj_path, 'r', encoding='utf-8') as f:
-                adj = json.load(f)
-            if not isinstance(adj, list): adj = []
-        except (json.JSONDecodeError, FileNotFoundError):
-            adj = []
-        
-        # 提取参数变更
+
+        # ── SSOT 同步（@since v6.22.12 修复）：自动整改必须触发 sync_version.py，
+        #    统一同步全部版本声明点——含 SKILL.md frontmatter / H1 / ## 版本历史 与 策略调整记录.json。
+        #    此前用朴素全局替换 SKILL.md，既不调用 sync_version.py，又会污染版本历史、且常未推进到最终版本。
         new_params = {}
         for r in rectifications:
             if r['type'] == 'param':
                 new_params[r['target']] = r['new']
-        
-        adj.insert(0, {
-            "version": new_version,
-            "date": datetime.now().strftime('%Y-%m-%d'),
-            "params": new_params,
-            "changes": [
-                f"{new_version} 自动整改({len(rectifications)}项): {change_summary}"
-            ]
-        })
-        with open(adj_path, 'w', encoding='utf-8') as f:
-            json.dump(adj, f, ensure_ascii=False, indent=2)
-        
-        # 更新 SKILL.md 版本号（frontmatter + H1）
-        ski_path = os.path.join(rd, "SKILL.md")
-        try:
-            with open(ski_path, 'r', encoding='utf-8') as f:
-                ski = f.read()
-            old_ver = BUILTIN_VERSION
-            ski = ski.replace(f'v{old_ver.lstrip("v")}', new_version)
-            with open(ski_path, 'w', encoding='utf-8') as f:
-                f.write(ski)
-        except Exception:
-            pass
-        
+        sync_script = os.path.join(rd, "scripts", "sync_version.py")
+        if os.path.exists(sync_script):
+            # 1) 写入：按 VERSION 同步全部锚点 + SKILL.md 版本历史 + 策略调整记录（带本次参数与变更说明）
+            run_sync = subprocess.run(
+                [sys.executable, sync_script, "--changes", change_summary,
+                 "--params", json.dumps(new_params, ensure_ascii=False)],
+                cwd=rd, capture_output=True, text=True, timeout=60)
+            if run_sync.returncode != 0:
+                log_alert("WARNING", "自动整改", f"SSOT 同步失败: {run_sync.stderr[:200]}")
+                return False
+            # 2) 校验：SSOT 自洽（quality-gate 拦截）——不一致则中止推送，绝不带未同步的 SKILL.md 出库
+            run_chk = subprocess.run(
+                [sys.executable, sync_script, "--check"],
+                cwd=rd, capture_output=True, text=True, timeout=60)
+            if run_chk.returncode != 0:
+                log_alert("WARNING", "自动整改",
+                          f"SSOT 校验未过(quality-gate 拦截): {run_chk.stdout[:160]}{run_chk.stderr[:160]}")
+                return False
+            log_alert("INFO", "自动整改",
+                      f"✅ SSOT 同步校验通过: SKILL.md(frontmatter/H1/版本历史) 与 策略调整记录 已对齐 {new_version}")
+        else:
+            # 兜底：极端情况下 sync_version.py 缺失时，至少保证 VERSION 已更新（降级，不阻断推送但告警）
+            log_alert("WARNING", "自动整改",
+                      "未找到 sync_version.py，跳过 SSOT 同步（仅更新 VERSION，SKILL.md 可能漂移）")
+
         # 提交并推送
         subprocess.run(["git", "-C", rd, "config", "user.email", BOT_AUTHOR_EMAIL],
                        capture_output=True, timeout=15)

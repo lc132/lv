@@ -1,10 +1,13 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.22.9)。基于前一日收盘数据，通过37步筛选流程+自动整改+策略级胜率监控熔断，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
+description: A股每日盘前短线标的智能筛选(v6.22.12)。基于前一日收盘数据，通过37步筛选流程+自动整改+策略级胜率监控熔断，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
 ---
-# A股盘前短线标的筛选 v6.22.9
+# A股盘前短线标的筛选 v6.22.12
 
 ## 版本历史
+- **v6.22.12**: v6.22.12 版本治理: 修复自动整改路径未触发SSOT同步(sync_version.py); 新增SKILL.md版本历史同步+quality-gate自检拦截(未同步则中止推送)
+
+- **v6.22.11**: v6.22.11 自动整改(1项): 策略C震荡市上限收紧: strategy_c_shock_market_limit 3→2, 震荡市策略C回测胜率仅20.8%需进一步控制敞口
 
 - **v6.22.9**: 皇冠回测交易明细显示不全修复——(1)冠军标的完整历史补全: cutoff过滤后将冠军标的的所有历史记录(含超出28天窗口的)纳入回测，确保皇冠回测交易明细不受窗口限制; (2)主交易明细表强制包含冠军: HTML/Markdown报告均匀采样后追加遗漏的冠军交易行; (3)新增日志打印补全条数
 
@@ -23,7 +26,7 @@ description: A股每日盘前短线标的智能筛选(v6.22.9)。基于前一日
 > **版本回落修正说明（sunday_industry_pull.py，2026-08-08）**：commit `f399e69` / `fcec3aa` 在基线 `v6.20.6` 时将 `sunday_industry_pull.py` 的版本标记写为 `v6.13.38`，回落 7 个次版本且长期无留档。依 @since 约定（P2-1）该标记已改为引入版本语义 `@since v6.13.39`（记录该特性实际引入版本，非当前版本）；文件"当前版本"声明点（docstring 首行 L4 与 print 语句 L481）同步至 `v6.20.12`（SSOT 锚点，由 `sync_version.py` 保证与 `VERSION` 一致）。版本回落门禁现覆盖该文件：提交信息级 `commit_gate`（commit-msg 钩子 + CI commit-gate 步骤 + 脚本内自动提交前置校验）对**全部 .py 文件的提交**生效，含 sunday_industry_pull.py 的自动提交（P0 Task 1 已接入）；文件级「当前版本」声明点由 `sync_version.py` 锚点校验保证与 VERSION 一致（8 锚点含 sunday L4/L481）。历史 commit message 中的旧编号不再改写，以此说明为准。
 
 > **代码注释版本号约定（P2-1，@since 语义标记）**：为从根源消除"内联版本注释未随发版同步"的遗漏，**所有代码注释/docstring 中的版本号一律使用 `@since vX.Y.Z` 形式**，表示"引入版本"，**不随发版变动**、不参与同步。
-> - 仅 `scripts/sync_version.py` 的 **8 个锚点**（ashare_screener.py 模块 docstring 首行 + 兜底常量；pre-check-version.py 兜底常量；SKILL.md frontmatter + H1；lib/backtest.py 模块头 + 兜底常量；sunday_industry_pull.py docstring 首行）为"**当前版本**"声明点，发版时由 `sync_version.py` 同步。
+> - 仅 `scripts/sync_version.py` 的 **8 个锚点 + SKILL.md 版本历史** 为"**当前版本**"声明点，发版（含步骤28自动整改）时由 `sync_version.py` 强制同步：**SKILL.md frontmatter + H1 + `## 版本历史` 最新条目**、ashare_screener.py 模块 docstring 首行 + 兜底常量、pre-check-version.py 兜底常量、lib/backtest.py 模块头 + 兜底常量、sunday_industry_pull.py docstring 首行、_meta.json version 字段，以及 策略调整记录.json 头部。任一处未对齐，`sync_version.py --check` 即报错，**自动整改路径会据此中止推送（quality-gate 拦截）**。
 > - 其余内联版本标记（含本次 v6.20.12 的回测日期口径修复、行业白名单治理等）均为 `@since v6.20.12`，即使发版到 v6.20.13 也**保持不动**——它们记录"该特性引入于何版本"，而非"当前版本"。
 > - `策略调整记录.json` 的 `"version"` 字段是数据记录（每条记录描述"该版本引入了哪些变更"），同理不随发版改写，不采用 `@since` 前缀。
 

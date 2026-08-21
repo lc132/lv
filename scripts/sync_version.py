@@ -7,14 +7,19 @@ VERSION 文件是唯一版本来源。本脚本在每次发版时运行，将 VE
 同步到以下锚点位置（它们不再独立硬编码）：
   - ashare_screener.py   模块 docstring 首行版本标记 / 兜底常量
   - pre-check-version.py 兜底常量
-  - SKILL.md              frontmatter description / H1 标题
+  - SKILL.md              frontmatter description / H1 标题 / ## 版本历史 最新条目
   - lib/backtest.py       模块头注释 / 兜底常量
   - _meta.json            version 字段（对外发布展示版本，曾长期失同步）
   - 策略调整记录.json     在头部插入一条新版本记录（version/date/params/changes）
 
+SKILL.md 的「## 版本历史」同步：确保该章节最新一条 == VERSION。缺失时从
+策略调整记录.json 回填（仅插入 > 当前最新且 <= VERSION 的条目，按记录顺序），
+幂等：已存在则跳过。这是发版（含自动整改）必须同步的三处 SKILL.md 声明点之一。
+
 用法:
-  python3 scripts/sync_version.py            # 按 VERSION 同步全部
+  python3 scripts/sync_version.py            # 按 VERSION 同步全部（含 SKILL.md 版本历史）
   python3 scripts/sync_version.py --check     # 仅校验一致性，不写文件
+  python3 scripts/sync_version.py --changes "..." --params '{"k":2}'  # 指定变更说明/参数
 """
 import os
 import re
@@ -66,6 +71,84 @@ def read_version():
         return f.read().strip()
 
 
+def _ver_tuple(v):
+    """'v6.22.11' -> (6, 22, 11)，非法返回 None。"""
+    m = re.match(r"^v(\d+)\.(\d+)\.(\d+)$", v or "")
+    if not m:
+        return None
+    return tuple(int(x) for x in m.groups())
+
+
+def _find_section(text, header):
+    """定位 Markdown 二级章节。返回 (区块起点索引[含 header 行后的换行], 区块文本, 区块终点索引)。
+    找不到返回 (None, None, None)。区块 = header 行到下一个 # 标题之间的内容。"""
+    m = re.search(r"^" + re.escape(header) + r"\s*$", text, re.M)
+    if not m:
+        return None, None, None
+    start = m.end()  # header 行 '\n' 之后
+    rest = text[start:]
+    nxt = re.search(r"^#{1,3} ", rest, re.M)
+    end = start + nxt.start() if nxt else len(text)
+    return start, text[start:end], end
+
+
+def sync_skill_history(ver, changes, check_only, params=None):
+    """SKILL.md 「## 版本历史」同步：确保最新一条 == VERSION。
+
+    - 已为 VERSION：幂等跳过。
+    - 缺失：从 策略调整记录.json 回填（仅插入版本号 > 当前最新 且 <= VERSION 的条目，
+      按记录顺序 newest-first），保证不污染既有历史、不重复。
+    - --check 模式：仅校验，不一致返回错误字符串。
+    """
+    p = os.path.join(REPO, "SKILL.md")
+    if not os.path.exists(p):
+        return f"SKILL.md 不存在"
+    text = open(p, encoding="utf-8").read()
+    s_start, block, _ = _find_section(text, "## 版本历史")
+    if s_start is None:
+        return f"SKILL.md 未找到 '## 版本历史' 章节"
+    bm = re.search(r"^- \*\*v(\d+\.\d+\.\d+)\*\*", block, re.M)
+    top_ver = ("v" + bm.group(1)) if bm else None
+    if top_ver == ver:
+        return None  # 已同步，幂等
+
+    if check_only:
+        if top_ver is None:
+            return f"SKILL.md 版本历史为空，缺 VERSION {ver} 条目"
+        return f"SKILL.md 版本历史最新={top_ver} != VERSION {ver}"
+
+    # --- 写模式：构建待插入条目 ---
+    new_entries = []
+    try:
+        rec = json.load(open(os.path.join(REPO, "策略调整记录.json"), encoding="utf-8"))
+    except Exception:
+        rec = []
+    vt = _ver_tuple(ver)
+    ttop = _ver_tuple(top_ver) if top_ver else None
+    for r in rec:
+        rv = r.get("version", "")
+        if not rv:
+            continue
+        rvt = _ver_tuple(rv)
+        if rvt is None:
+            continue
+        if ttop is not None and rvt <= ttop:
+            continue  # 已有/更旧的条目不回填
+        if rvt > vt:
+            continue  # 超过当前 VERSION 的条目不插入
+        desc = (r.get("changes") or [""])[0] if r.get("changes") else ""
+        new_entries.append(f"- **{rv}**: {desc}")
+    # 兜底：记录里没有当前版本(异常)时用 --changes 补一条
+    if not any(ver in e for e in new_entries):
+        summary = "; ".join(changes) if changes else "版本同步：由 sync_version.py 从 VERSION 写入"
+        new_entries.append(f"- **{ver}**: {summary}")
+
+    insert_block = "\n".join(new_entries)
+    new_text = text[:s_start].rstrip("\n") + "\n" + insert_block + "\n\n" + text[s_start:].lstrip("\n")
+    open(p, "w", encoding="utf-8").write(new_text)
+    return None
+
+
 def apply_anchor(text, pat, ver, path, desc, check_only):
     """对单个锚点做替换或校验。
     返回 (new_text, already_ok, error)。"""
@@ -89,8 +172,10 @@ def apply_anchor(text, pat, ver, path, desc, check_only):
     return text[:match.start()] + new_seg + text[match.end():], False, None
 
 
-def sync_adjust_record(ver, changes, check_only):
-    """在头部插入新版本记录，使 adj[0] 永远为最新（与 ashare_screener.py 对齐）。"""
+def sync_adjust_record(ver, changes, check_only, params=None):
+    """在头部插入新版本记录，使 adj[0] 永远为最新（与 ashare_screener.py 对齐）。
+    params: 指定本版本实际变更的参数字典（自动整改传入）；None 时回退为上一版本 params。
+    """
     p = os.path.join(REPO, "策略调整记录.json")
     rec = json.load(open(p, encoding="utf-8"))
     if rec and rec[0].get("version") == ver:
@@ -98,9 +183,9 @@ def sync_adjust_record(ver, changes, check_only):
     if check_only:
         cur = rec[0].get("version") if rec else None
         return f"策略调整记录.json[0].version={cur} != VERSION {ver}"
-    params = rec[0].get("params", {}) if rec else {}
+    eff_params = params if params is not None else (rec[0].get("params", {}) if rec else {})
     rec.insert(0, {"version": ver, "date": date.today().isoformat(),
-                   "params": params, "changes": changes})
+                   "params": eff_params, "changes": changes})
     with open(p, "w", encoding="utf-8") as f:
         json.dump(rec, f, ensure_ascii=False, indent=2)
         f.write("\n")
@@ -140,7 +225,10 @@ def main():
                     help="仅创建并推送发版标签（不重新同步版本锚点）")
     ap.add_argument("--changes", nargs="*",
                     default=["版本同步：由 sync_version.py 从 VERSION 写入"],
-                    help="追加到策略调整记录的变更说明")
+                    help="追加到策略调整记录/SKILL.md版本历史的变更说明")
+    ap.add_argument("--params", default=None,
+                    help="本版本实际变更的参数(JSON字符串)，如 '{\"k\":2}'；"
+                         "不传则回退为上一版本 params（手动发版场景）")
     args = ap.parse_args()
 
     ver = read_version()
@@ -152,6 +240,14 @@ def main():
     if args.tag_only:
         create_release_tag(ver)
         sys.exit(0)
+
+    params = None
+    if args.params:
+        try:
+            params = json.loads(args.params)
+        except Exception as e:
+            print(f"❌ --params JSON 解析失败: {e}")
+            sys.exit(1)
 
     errors = []
     changed_files = []
@@ -173,7 +269,14 @@ def main():
                 f.write(text)
             changed_files.append(rel)
 
-    err = sync_adjust_record(ver, args.changes, args.check)
+    # SKILL.md 版本历史同步（写/校验，发版必同步点之一）
+    err = sync_skill_history(ver, args.changes, args.check)
+    if err:
+        errors.append(err)
+    elif not args.check:
+        changed_files.append("SKILL.md(版本历史)")
+
+    err = sync_adjust_record(ver, args.changes, args.check, params)
     if err:
         errors.append(err)
 
@@ -183,9 +286,9 @@ def main():
         sys.exit(1)
 
     if args.check:
-        print("✅ 所有版本锚点与 VERSION 一致")
+        print("✅ 所有版本锚点(含 SKILL.md 版本历史)与 VERSION 一致")
     else:
-        print("✅ 已同步: " + (", ".join(changed_files) if changed_files else "无变更"))
+        print("✅ 已同步: " + (", ".join(sorted(set(changed_files))) if changed_files else "无变更"))
 
     if args.release:
         create_release_tag(ver)
