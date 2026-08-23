@@ -2741,6 +2741,94 @@ def step10C_fetch_industry_flow_rank():
     return rank
 
 # ============================================================
+# @since v6.22.14: 预测板块——基于历史资金流向预测下个交易日流入最多板块
+# 保存每日行业资金排名到 /workspace/行业资金历史.json, 分析历史趋势给出预测
+# ============================================================
+_FLOW_HISTORY_FILE = "/workspace/行业资金历史.json"
+
+def _save_flow_history():
+    """保存当日行业资金排名到历史文件"""
+    if not G_INDUSTRY_FLOW_RANK:
+        return
+    history = {}
+    try:
+        if os.path.exists(_FLOW_HISTORY_FILE):
+            with open(_FLOW_HISTORY_FILE, 'r', encoding='utf-8') as f:
+                history = json.load(f)
+    except Exception:
+        history = {}
+    # 只保留最近30天
+    cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+    history = {k: v for k, v in history.items() if k >= cutoff}
+    # 保存当日数据
+    today_key = beijing_date or datetime.now().strftime('%Y-%m-%d')
+    history[today_key] = [{'name': r['name'], 'net': r['net'], 'chg': r['chg']} for r in G_INDUSTRY_FLOW_RANK[:30]]
+    try:
+        with open(_FLOW_HISTORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(history, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+def _predict_sector_inflow():
+    """基于历史资金流向预测下个交易日流入最多板块。
+    评分维度: ①连续流入天数(权重40%) ②近3日净流入趋势(权重35%) ③当日净流入强度(权重25%)
+    返回: [{name, score, trend, consecutive_days, today_net}] 按score降序"""
+    history = {}
+    try:
+        if os.path.exists(_FLOW_HISTORY_FILE):
+            with open(_FLOW_HISTORY_FILE, 'r', encoding='utf-8') as f:
+                history = json.load(f)
+    except Exception:
+        return []
+    
+    if len(history) < 2:
+        return []
+    
+    dates = sorted(history.keys())
+    today_data = {r['name']: r['net'] for r in history.get(dates[-1], [])}
+    if not today_data:
+        return []
+    
+    predictions = []
+    for sector, today_net in today_data.items():
+        # 1. 连续流入天数
+        consecutive = 0
+        for d in reversed(dates):
+            day_data = {r['name']: r['net'] for r in history.get(d, [])}
+            net = day_data.get(sector, 0)
+            if net > 0:
+                consecutive += 1
+            else:
+                break
+        consecutive_score = min(consecutive, 5) / 5 * 40
+        
+        # 2. 近3日净流入趋势
+        recent_nets = []
+        for d in dates[-3:]:
+            day_data = {r['name']: r['net'] for r in history.get(d, [])}
+            recent_nets.append(day_data.get(sector, 0))
+        if len(recent_nets) >= 2:
+            trend = sum(recent_nets) / len(recent_nets)
+            trend_score = min(max(trend / 5e8, 0), 1) * 35
+        else:
+            trend_score = 0
+        
+        # 3. 当日净流入强度
+        intensity_score = min(max(today_net / 5e8, 0), 1) * 25
+        
+        total_score = consecutive_score + trend_score + intensity_score
+        predictions.append({
+            'name': sector,
+            'score': round(total_score, 1),
+            'consecutive_days': consecutive,
+            'today_net': today_net,
+            'trend': '↑ 持续流入' if consecutive >= 3 else ('↑ 转流入' if today_net > 0 else '↓ 流出'),
+        })
+    
+    predictions.sort(key=lambda x: -x['score'])
+    return predictions[:5]
+
+# ============================================================
 # 步骤10C-附2：龙虎榜机构席位 + 融资融券日变动（@since v6.20.15: 替代北向取消后的日频资金面因子）
 # 北向官方信披2026-08-07取消后，原「北向资金」策略名实不符；v6.20.14已正名为「主力资金」。
 # 本段补齐两类真实日频资金面信号，作为主力资金策略F的共振/增援因子：
@@ -5103,16 +5191,31 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         #   无数据时降级到个股main_inflow按行业汇总; 仍无数据则提示。
         lines.append("\n## 资金去向（按行业主力净流入排序）\n")
         if G_INDUSTRY_FLOW_RANK:
-            lines.append("| 行业 | 主力净流入(亿) | 涨跌幅% | 代表标的 |")
-            lines.append("|---|---|---|---|")
+            lines.append("| 行业 | 主力净流入(亿) | 主力净流出(亿) | 涨跌幅% | 代表标的 |")
+            lines.append("|---|---|---|---|---|")
             for r in G_INDUSTRY_FLOW_RANK[:15]:
                 net_yi = r['net'] / 1e8
-                direction = "流入" if net_yi > 0 else "流出"
+                if net_yi >= 0:
+                    inflow_str = f"{net_yi:.2f}"
+                    outflow_str = "—"
+                else:
+                    inflow_str = "—"
+                    outflow_str = f"{abs(net_yi):.2f}"
                 sw1 = _map_em_sector_to_sw1(r['name'])
                 reps = [c for c in candidates if _industry_str(c) == sw1][:4]
                 rep_str = '、'.join(c.get('name', '') for c in reps) if reps else "—"
                 chg = f"{r['chg']:+.2f}" if isinstance(r['chg'], (int, float)) else "—"
-                lines.append(f"| {r['name']} | {direction}{abs(net_yi):.2f} | {chg} | {rep_str} |")
+                lines.append(f"| {r['name']} | {inflow_str} | {outflow_str} | {chg} | {rep_str} |")
+            # @since v6.22.14: 资金流出TOP5——展示主力净流出最多板块
+            outflow_sorted = sorted([r for r in G_INDUSTRY_FLOW_RANK if r['net'] < 0], key=lambda x: x['net'])[:5]
+            if outflow_sorted:
+                lines.append("\n### 资金流出TOP5\n")
+                lines.append("| 行业 | 主力净流出(亿) | 涨跌幅% |")
+                lines.append("|---|---|---|")
+                for r in outflow_sorted:
+                    outflow_yi = abs(r['net']) / 1e8
+                    chg = f"{r['chg']:+.2f}" if isinstance(r['chg'], (int, float)) else "—"
+                    lines.append(f"| {r['name']} | {outflow_yi:.2f} | {chg} |")
         else:
             ind_flow = {}
             has_flow_data = False
@@ -5138,6 +5241,16 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
             else:
                 lines.append("> ⚠️ 主力资金数据不可得（API通道受限），无法展示行业资金流向。建议结合盘口观察或龙虎榜数据辅助判断。\n")
     sd = Counter(c.get('strategy') for c in candidates)
+    # @since v6.22.14: 预测板块——基于历史资金流向预测下个交易日流入最多板块
+    predictions = _predict_sector_inflow()
+    if predictions:
+        lines.append("\n## 预测板块（下个交易日资金流入预测）\n")
+        lines.append("> 基于近30日行业资金流向历史，综合连续流入天数、近3日趋势、当日强度三维度评分。\n")
+        lines.append("| 预测排名 | 板块 | 预测评分 | 连续流入 | 趋势 | 今日净流入(亿) |")
+        lines.append("|---|---|---|---|---|---|")
+        for idx, p in enumerate(predictions):
+            net_yi = p['today_net'] / 1e8
+            lines.append(f"| {idx+1} | {p['name']} | {p['score']:.1f} | {p['consecutive_days']}天 | {p['trend']} | {net_yi:+.2f} |")
     sn = _STRATEGY_NAMES
     lines.append("\n## 策略分布")
     for s in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T']:
@@ -5369,7 +5482,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         flow_cards = []
         for idx, r in enumerate(G_INDUSTRY_FLOW_RANK[:15]):
             net_yi = r['net'] / 1e8
-            direction = "流入" if net_yi > 0 else "流出"
+            inflow_val = f"{net_yi:.2f}亿" if net_yi >= 0 else "—"
+            outflow_val = f"{abs(net_yi):.2f}亿" if net_yi < 0 else "—"
             color = "#22c55e" if net_yi > 0 else "#ef4444"
             arrow = "↑" if net_yi > 0 else "↓"
             sw1 = _map_em_sector_to_sw1(r['name'])
@@ -5377,10 +5491,18 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             tops_html = ''.join(f'<span class="flow-stock">{c.get("name","")}</span>' for c in reps) if reps else '<span class="flow-stock">—</span>'
             chg = f'{r["chg"]:+.2f}%' if isinstance(r['chg'], (int, float)) else '—'
             flow_cards.append(f'''<div class="flow-card">
-<div class="flow-card-header"><span class="rank">#{idx+1}</span><span class="industry-name">{r['name']}</span><span class="flow-amount" style="color:{color}">{arrow}{abs(net_yi):.2f}亿 {direction}</span></div>
-<div class="flow-chg">涨跌幅 {chg}</div>
+<div class="flow-card-header"><span class="rank">#{idx+1}</span><span class="industry-name">{r['name']}</span><span class="flow-amount" style="color:{color}">{arrow}{abs(net_yi):.2f}亿</span></div>
+<div class="flow-chg">涨跌幅 {chg} | 流入:{inflow_val} 流出:{outflow_val}</div>
 <div class="flow-stocks">{tops_html}</div></div>''')
-        capital_flow_html = '\n'.join(flow_cards)
+        # @since v6.22.14: 资金流出TOP5
+        outflow_sorted = sorted([r for r in G_INDUSTRY_FLOW_RANK if r['net'] < 0], key=lambda x: x['net'])[:5]
+        if outflow_sorted:
+            outflow_cards_html = ''.join(
+                f'<div class="flow-card" style="border-left:3px solid #ef4444"><div class="flow-card-header"><span class="rank" style="color:#ef4444">流出</span><span class="industry-name">{r["name"]}</span><span class="flow-amount" style="color:#ef4444">↓{abs(r["net"])/1e8:.2f}亿</span></div></div>'
+                for r in outflow_sorted
+            )
+            capital_flow_html += f'\n<div class="section" style="margin-top:1rem"><h4 style="color:#ef4444">⚠️ 资金流出TOP5</h4><div class="flow-grid">{outflow_cards_html}</div></div>'
+        capital_flow_html = '\n'.join(flow_cards) + (capital_flow_html if outflow_sorted else '')
     else:
         ind_flow = {}
         has_flow_data = False
@@ -6429,6 +6551,8 @@ def main():
     G_INDUSTRY_FLOW_RANK.clear()
     G_INDUSTRY_FLOW_RANK.extend(step10C_fetch_industry_flow_rank())
     log_alert("INFO", "行业资金", f"板块级排名获取{len(G_INDUSTRY_FLOW_RANK)}个行业")
+    # @since v6.22.14: 保存行业资金历史，供预测板块使用
+    _save_flow_history()
     # @since v6.20.15: 龙虎榜机构席位 + 融资融券日变动（替代北向取消后的日频资金面因子）
     print("\n[步骤15A-2] 龙虎榜机构席位 / 融资融券日变动...")
     lhb_data = step10C_lhb_fetch(final)
@@ -6819,18 +6943,22 @@ def step28_self_rectify(final, fc, bt_result, sd, flow_data, total_raw, ae, asig
             a_win_rate = a_wins / len(a_trades) * 100
             if a_win_rate < 25:
                 cur_limit = DEFAULT_PARAMS.get("strategy_a_shock_market_limit", 3)
-                new_limit = max(1, cur_limit - 1)
-                issues.append(f"策略A震荡市胜率偏低({a_win_rate:.1f}%, {len(a_trades)}笔), 当前上限{cur_limit}")
-                rectifications.append({
-                    "type": "param",
-                    "target": "strategy_a_shock_market_limit",
-                    "old": cur_limit,
-                    "new": new_limit,
-                    "reason": f"策略A胜率{a_win_rate:.1f}%偏低, 上限从{cur_limit}收紧至{new_limit}",
-                    "changes": [
-                        f"策略A震荡市上限收紧: strategy_a_shock_market_limit {cur_limit}→{new_limit}, 震荡市策略A回测胜率仅{a_win_rate:.1f}%需进一步控制敞口"
-                    ]
-                })
+                if cur_limit <= 1:
+                    print(f"  ⚠️ 策略A震荡市胜率{a_win_rate:.1f}%偏低, 但上限已为{cur_limit}(最低), 不再收紧")
+                    issues.append(f"策略A震荡市胜率偏低({a_win_rate:.1f}%, {len(a_trades)}笔), 当前上限已达最低{cur_limit}")
+                else:
+                    new_limit = max(1, cur_limit - 1)
+                    issues.append(f"策略A震荡市胜率偏低({a_win_rate:.1f}%, {len(a_trades)}笔), 当前上限{cur_limit}")
+                    rectifications.append({
+                        "type": "param",
+                        "target": "strategy_a_shock_market_limit",
+                        "old": cur_limit,
+                        "new": new_limit,
+                        "reason": f"策略A胜率{a_win_rate:.1f}%偏低, 上限从{cur_limit}收紧至{new_limit}",
+                        "changes": [
+                            f"策略A震荡市上限收紧: strategy_a_shock_market_limit {cur_limit}→{new_limit}, 震荡市策略A回测胜率仅{a_win_rate:.1f}%需进一步控制敞口"
+                        ]
+                    })
     
     # --- 检查5: 回测整体表现 ---
     if bt_result and bt_result.get('all_trades'):

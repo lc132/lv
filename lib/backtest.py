@@ -380,19 +380,22 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     #   2) K线获取起点仍用 prediction_date(买入日)，保证从实际买入日开盘回放；
     #   3) 买入日尚未收盘(prediction_date>=today)的推荐标记 holding/no_data，仅展示、不计入胜率，
     #      待买入日收盘后自动转为有效样本；报表分组/日期列改用 date(运行日)，使"昨日"可定位。
-    # 皇冠处理：在完整 history(尚未按 today 过滤) 中取 prediction_date 最大且严格 < today 的 is_champion 记录，
-    #   即"上一个交易日冠军"——其买入日已收盘、已有可回测的已发生数据；
-    #   盘前当日新选冠军(prediction_date==today)尚无数据，不纳入板块(避免展示无收益的当天推荐标的)。
-    #   历史各日冠军标记按"推荐历史_{prediction_date}.json"分文件保留, 盘前运行时上一交易日冠军标记仍在, 故可取。
-    current_champion_code = None
+    # @since v6.22.14: 皇冠回测——收集所有历史冠军标的(非仅最新一只),
+    #   每只冠军标的都补全完整历史交易记录，展示全部冠军标的的回测表现
+    #   在完整 history(尚未按 today 过滤) 中收集所有 is_champion 且 prediction_date < today 的记录
+    all_champion_codes = set()
+    latest_champion_code = None
     latest_champion_date = None
-    for h in history:  # 注意：此循环在 date 过滤之前，history 为完整推荐历史
-        # @since v6.20.16: 严格 < today, 取上一个交易日冠军(有已发生数据); 排除当日新选冠军
-        if h.get('is_champion') and h.get('prediction_date') < today_str:
-            pd = h.get('prediction_date')
-            if pd and (latest_champion_date is None or pd > latest_champion_date):
-                latest_champion_date = pd
-                current_champion_code = h.get('code')
+    for h in history:
+        if h.get('is_champion') and h.get('prediction_date') and h.get('prediction_date') < today_str:
+            code = h.get('code')
+            if code:
+                all_champion_codes.add(code)
+                pd = h.get('prediction_date')
+                if latest_champion_date is None or pd > latest_champion_date:
+                    latest_champion_date = pd
+                    latest_champion_code = code
+    current_champion_code = latest_champion_code  # 保留兼容，最新冠军用于 trade['is_champion'] 标记
     # @since v6.22.8: 保存完整历史，用于后续补全冠军标的全部历史交易记录
     _full_history = list(history)
     cutoff = today - timedelta(days=max_days_lookback)
@@ -403,14 +406,15 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     history = [h for h in history
                if _rdate(h) and _rdate(h) >= cutoff.strftime('%Y-%m-%d')
                and (_rdate(h) < today.strftime('%Y-%m-%d') or h.get('is_champion'))]
-    # @since v6.22.8: 冠军标的完整历史——将冠军标的的所有历史记录纳入回测，
-    #   确保皇冠回测交易明细不受28天窗口限制，展示完整的冠军交易记录
-    if current_champion_code:
-        _champion_records = [h for h in _full_history if h.get('code') == current_champion_code]
-        _existing_keys = set()
-        for h in history:
-            _key = (h.get('code'), (h.get('run_date') or h.get('date')), h.get('strategy'), round(h.get('entry') or 0, 2))
-            _existing_keys.add(_key)
+    # @since v6.22.14: 所有冠军标的完整历史——将全部冠军标的的所有历史记录纳入回测，
+    #   确保皇冠回测交易明细不受28天窗口限制，展示所有冠军标的完整交易记录
+    _existing_keys = set()
+    for h in history:
+        _key = (h.get('code'), (h.get('run_date') or h.get('date')), h.get('strategy'), round(h.get('entry') or 0, 2))
+        _existing_keys.add(_key)
+    _total_added = 0
+    for champ_code in all_champion_codes:
+        _champion_records = [h for h in _full_history if h.get('code') == champ_code]
         _added = 0
         for h in _champion_records:
             _key = (h.get('code'), (h.get('run_date') or h.get('date')), h.get('strategy'), round(h.get('entry') or 0, 2))
@@ -419,7 +423,10 @@ def run_backtest(hold_days=10, max_days_lookback=90):
                 _existing_keys.add(_key)
                 _added += 1
         if _added > 0:
-            print(f"  皇冠回测: 补全冠军标的 {current_champion_code} 历史 {_added} 条记录(超出28天窗口)")
+            _total_added += _added
+            print(f"  皇冠回测: 补全冠军标的 {champ_code} 历史 {_added} 条记录(超出28天窗口)")
+    if _total_added > 0:
+        print(f"  皇冠回测: 共{len(all_champion_codes)}只冠军标的, 补全{_total_added}条记录")
 
     # @since v6.13.10: 去重key改为(code,date,strategy,entry)，保留同股票不同策略的推荐
     # @since v6.20.12: 去重key改用运行日 date(与包含过滤一致)，避免盘后推荐(prediction_date=次日)被误并
@@ -507,7 +514,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         trade['date'] = date                  # @since v6.20.16: 报表分组/日期列用 run_date(实际运行日历日)，旧记录回退 data_date
         trade['prediction_date'] = pred_date  # 买入日，仅供K线起点与参考
         trade['score'] = h.get('score', 0)
-        trade['is_champion'] = (code == current_champion_code)  # @since v6.20.3: 标记最新一期冠军
+        trade['is_champion'] = (code in all_champion_codes)  # @since v6.22.14: 标记所有历史冠军标的
         # @since v6.20.12: 买入日尚未收盘(prediction_date>=today) → 仅展示、不计入胜负(避免盘中噪声污染胜率)
         # @since v6.21.2: 修复8月10日回测无数据——买入日当天若有K线数据(市场已收盘)则正常模拟，不标记no_data
         if pred_date and pred_date >= today_str:
@@ -533,12 +540,12 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         industry_trades[t['industry']].append(t)
     industry_metrics = {i: _compute_metrics(ts) for i, ts in industry_trades.items()}
 
-    # @since v6.16.12: 皇冠回测——仅统计跨策略冠军标的
-    champion_trades = [t for t in trades if current_champion_code and t['code'] == current_champion_code]
+    # @since v6.22.14: 皇冠回测——统计所有历史冠军标的的交易
+    champion_trades = [t for t in trades if all_champion_codes and t['code'] in all_champion_codes]
     champion_metrics = _compute_metrics(champion_trades) if champion_trades else None
     if champion_trades:
         print(f"  皇冠回测: {champion_metrics['total']}笔 | 胜率{champion_metrics['win_rate']}% | "
-              f"均收{champion_metrics['avg_return']}%")
+              f"均收{champion_metrics['avg_return']}% | {len(all_champion_codes)}只冠军标的")
 
     print(f"  回测结果: {metrics['total']}笔 | 胜率{metrics['win_rate']}% | "
           f"均收{metrics['avg_return']}% | 盈亏比{metrics['profit_factor']} | 夏普{metrics['sharpe']}"
@@ -548,6 +555,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         'all_trades': trades, 'metrics': metrics,
         'strategy_metrics': strategy_metrics, 'industry_metrics': industry_metrics,
         'champion_trades': champion_trades, 'champion_metrics': champion_metrics,  # @since v6.16.12
+        'all_champion_codes': all_champion_codes,  # @since v6.22.14: 所有冠军标的代码集合
     }
 
 
@@ -707,12 +715,13 @@ def _build_backtest_lookup(bt_result):
     return lookup
 
 
-def _champion_html(champion_trades, champion_metrics):
-    """@since v6.16.12: 生成皇冠回测HTML板块"""
+def _champion_html(champion_trades, champion_metrics, all_champion_codes=None):
+    """@since v6.16.12: 生成皇冠回测HTML板块; @since v6.22.14: 展示所有历史冠军标的"""
     if not champion_trades or not champion_metrics:
         return '<div style="color:#94a3b8;padding:1rem;text-align:center">暂无皇冠回测数据（历史推荐中尚未标记冠军标的）</div>'
 
     c = champion_metrics
+    champ_count = len(all_champion_codes) if all_champion_codes else 1
     # 指标卡片
     cards = f'''<div class="metrics-grid">
     <div class="metric-card"><div class="metric-label">总交易</div><div class="metric-value">{c['total']}笔</div></div>
@@ -758,7 +767,7 @@ def _champion_html(champion_trades, champion_metrics):
         <td class="{result_cls}">{ret_sign}{ret:.2f}%</td><td>{hold}天</td></tr>'''
 
     return f'''{cards}
-<div class="section"><h3 style="margin-top:1.5rem">冠军交易明细 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">仅展示跨策略PK冠军标的</span></h3>
+<div class="section"><h3 style="margin-top:1.5rem">冠军交易明细 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">展示{champ_count}只历史冠军标的全部交易</span></h3>
 <table class="champion-trades"><thead><tr><th>日期</th><th>标的</th><th>代码</th><th>策略</th><th>行业</th><th>进场</th><th>结果</th><th>出场</th><th>收益</th><th>持仓</th></tr></thead>
 <tbody>{rows}</tbody></table>
 </div>'''
@@ -915,8 +924,8 @@ tr:hover td{{background:rgba(56,189,248,0.05)}}
 </div>
 
 <div class="section">
-<h2>👑 皇冠回测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">跨策略冠军PK胜者独立统计</span></h2>{
-_champion_html(champion_trades, champion_metrics)
+<h2>👑 皇冠回测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">全部历史冠军标的独立统计</span></h2>{
+_champion_html(champion_trades, champion_metrics, bt_result.get('all_champion_codes'))
 }
 </div>
 
