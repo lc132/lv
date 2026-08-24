@@ -5183,7 +5183,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                     lines.append(f"  - **{strat}策略** ({info['count']}只): 🏆 **{info['winner_name']}**({info['winner_code']}) — {score:.1f}/{dim_label}分{dim_note}{loser_str}\n")
         lines.append("\n## 回测说明\n")
         lines.append("- **回测列格式**：`图标 + 胜/样本`，例如 `🟢2/2` 表示历史同标的样本2笔、盈利2笔。")
-        lines.append("- **图标含义**：🟢 最近一次样本盈利；🔴 最近一次样本亏损；⚪ 后续K线不足或未形成有效胜负；⚠️ 历史有限价单未成交（当日最低价>进场价）；空白表示无可匹配历史样本。")
+        lines.append("- **图标含义**：🟢 最近一次样本盈利；🔴 最近一次样本亏损；⚪ 限价未成交或后续K线不足；⚠️ 历史有限价单未成交（次日最低价>进场价）；空白表示无可匹配历史样本。")
         lines.append("- **模拟口径**：使用保留期内（≥4周）推荐历史，按推荐表的进场、止损、止盈进行模拟，单笔最大持仓10个交易日。")
         lines.append("- **交易规则**：遵循A股T+1，买入当日不检查止盈止损出场，从下一交易日起判断是否触及止损/止盈。")
         lines.append("- **使用限制**：未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素；样本少时仅作参考，不能代表未来表现。\n")

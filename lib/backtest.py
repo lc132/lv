@@ -179,7 +179,7 @@ def _fetch_kline_range(code, start_date, lmt=15):
 def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
     """模拟单笔交易：盘中触及止损/止盈则出场，否则持有到期
     @since v6.13.14: 新增移动止损(盈利达TP50%时保本) + 时间止损(持仓3天仍亏损则离场)
-    @since v6.13.30: no_entry直接标记为失败——限价单未成交视为策略失效，计入loss"""
+    @since v6.22.15: 限价单未成交直接标注no_entry，不再次日开盘追入；no_entry不计入胜负，独立统计"""
     if not klines:
         return {'result': 'no_data', 'exit_price': entry, 'exit_date': '',
                 'exit_reason': 'no_data', 'return_pct': 0, 'hold_days': 0,
@@ -189,20 +189,12 @@ def _simulate_trade(entry, stop_loss, take_profit, klines, hold_days=10):
     max_profit = 0.0
     kl = klines[:hold_days]
 
-    # @since v6.16.34: 限价单未成交 → 以次日开盘价追入，按比例调整止损止盈
-    # 次日最低价>进场价说明限价挂单无法成交，改用开盘价追入确保模拟真实
+    # @since v6.22.15: 限价单未成交直接标注no_entry——次日最低价>进场价说明限价挂单无法成交
+    # 不再以次日开盘价追入，未成交交易独立统计，不计入胜率
     if kl[0]['low'] > entry:
-        chase_entry = kl[0]['open']
-        ratio = chase_entry / entry
-        adjusted_stop = chase_entry * (stop_loss / entry)
-        adjusted_tp = chase_entry * (take_profit / entry)
-        remaining_kl = kl[1:] if len(kl) > 1 else []
-        if not remaining_kl:
-            return {'result': 'loss', 'exit_price': round(chase_entry, 2), 'exit_date': kl[0]['date'],
-                    'exit_reason': 'chase_no_data', 'return_pct': 0, 'hold_days': 1,
-                    'max_drawdown_pct': 0, 'max_profit_pct': 0, 'chased': True}
-        return _simulate_single(chase_entry, adjusted_stop, adjusted_tp, remaining_kl,
-                                hold_days - 1, max_floating_loss, max_profit)
+        return {'result': 'no_entry', 'exit_price': round(entry, 2), 'exit_date': kl[0]['date'],
+                'exit_reason': 'limit_not_filled', 'return_pct': 0, 'hold_days': 0,
+                'max_drawdown_pct': 0, 'max_profit_pct': 0}
 
     return _simulate_single(entry, stop_loss, take_profit, kl, hold_days, max_floating_loss, max_profit)
 
@@ -293,7 +285,7 @@ def _simulate_single(entry, stop_loss, take_profit, kl, hold_days=10, max_floati
 
 def _compute_metrics(trades):
     """计算回测指标
-    @since v6.16.34: 限价单未成交已改为开盘价追入（见_simulate_single），no_entry仅保留向后兼容；chased标记的追入交易计入有效样本"""
+    @since v6.22.15: no_entry独立统计，不计入有效样本（限价未成交），胜率/均收/盈亏比/夏普均排除no_entry"""
     if not trades:
         return {'total': 0, 'win_rate': 0, 'avg_return': 0,
                 'max_drawdown': 0, 'profit_factor': 0, 'sharpe': 0}
@@ -306,33 +298,33 @@ def _compute_metrics(trades):
     wins = [t for t in trades if t.get('return_pct', 0) > 0]
     losses = [t for t in trades if t['result'] == 'loss']
     no_data = [t for t in trades if t['result'] == 'no_data']
-    # @since v6.13.38: no_entry独立统计，不计入有效样本（未实际成交）
-    no_entry = [t for t in trades if t['result'] == 'no_entry']  # @since v6.16.34: 向后兼容，新回测中no_entry已极少出现
+    # @since v6.22.15: no_entry独立统计，不计入有效样本（限价未成交）
+    no_entry = [t for t in trades if t['result'] == 'no_entry']
     no_entry_count = len(no_entry)
-    valid_count = total - len(no_data)  # @since v6.16.34: no_entry追入后计入有效样本
+    valid_count = total - len(no_data) - no_entry_count  # @since v6.22.15: no_entry排除出有效样本
 
     win_rate = len(wins) / max(valid_count, 1) * 100 if valid_count > 0 else 0
-    avg_return = sum(t['return_pct'] for t in trades if t['result'] not in ('no_data',)) / max(valid_count, 1) if valid_count > 0 else 0  # @since v6.16.34: no_entry追入后计入有效样本
+    avg_return = sum(t['return_pct'] for t in trades if t['result'] not in ('no_data', 'no_entry')) / max(valid_count, 1) if valid_count > 0 else 0  # @since v6.22.15: no_entry排除
     avg_win = sum(t['return_pct'] for t in wins) / len(wins) if wins else 0
     avg_loss = sum(t['return_pct'] for t in losses) / len(losses) if losses else 0
-    avg_hold = sum(t['hold_days'] for t in trades if t['hold_days'] > 0) / max(valid_count, 1)  # @since v6.16.34: 追入后hold_days正常计算
+    avg_hold = sum(t['hold_days'] for t in trades if t['hold_days'] > 0 and t['result'] != 'no_entry') / max(valid_count, 1)  # @since v6.22.15: no_entry排除
 
-    # @since v6.16.34: 盈亏比改为总额比（总盈利/总亏损绝对值），排除no_data
+    # @since v6.22.15: 盈亏比改为总额比（总盈利/总亏损绝对值），排除no_data和no_entry
     total_win_amt = sum(t['return_pct'] for t in wins) if wins else 0
     total_loss_amt = abs(sum(t['return_pct'] for t in losses)) if losses else 0
     profit_factor = round(total_win_amt / total_loss_amt, 2) if total_loss_amt > 0 else 0
 
-    # @since v6.16.34: 最大回撤改用复合收益率计算，排除no_data
+    # @since v6.22.15: 最大回撤改用复合收益率计算，排除no_data和no_entry
     max_dd = 0.0; cum_val = 1.0; peak_val = 1.0
     for t in trades:
-        if t['result'] in ('no_data',):  # @since v6.16.34: no_entry追入后计入
+        if t['result'] in ('no_data', 'no_entry'):  # @since v6.22.15: no_entry排除
             continue
         cum_val *= (1 + t['return_pct'] / 100.0)
         peak_val = max(peak_val, cum_val)
         dd = (peak_val - cum_val) / peak_val * 100.0
         max_dd = max(max_dd, dd)
 
-    returns = [t['return_pct'] for t in trades if t['result'] not in ('no_data',)]  # @since v6.16.34: no_entry追入后计入
+    returns = [t['return_pct'] for t in trades if t['result'] not in ('no_data', 'no_entry')]  # @since v6.22.15: no_entry排除
     if len(returns) > 1:
         avg_r = sum(returns) / len(returns)
         variance = sum((r - avg_r) ** 2 for r in returns) / (len(returns) - 1)
