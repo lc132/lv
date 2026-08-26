@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.22.16
+# A股短线筛选 — 历史回测模块 v6.22.17
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # @since v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
@@ -37,7 +37,7 @@ def _load_version():
                     return _v
         except OSError:
             continue
-    return "v6.22.16"  # 兜底版本（由 sync_version.py 锚定同步）
+    return "v6.22.17"  # 兜底版本（由 sync_version.py 锚定同步）
 
 
 BUILTIN_VERSION = _load_version()
@@ -534,6 +534,27 @@ def run_backtest(hold_days=10, max_days_lookback=90):
 
     # @since v6.22.14: 皇冠回测——统计所有历史冠军标的的交易
     champion_trades = [t for t in trades if all_champion_codes and t['code'] in all_champion_codes]
+    # @since v6.22.17: 皇冠回测去重——同一冠军标的在同一运行日多次推荐(不同策略)仅保留一条代表性记录，
+    #   避免皇冠交易明细出现"重复日期"。跨日完整历史仍全部展示(仅去同日重复)。
+    #   代表记录选取：实际成功率(win/loss)>未成交/无数据，其次评分高者优先，保持原相对顺序。
+    if champion_trades:
+        _champ_by_date_code = {}
+        for _t in champion_trades:
+            _k = (_t.get('date'), _t.get('code'))
+            _cur = _champ_by_date_code.get(_k)
+            if _cur is None:
+                _champ_by_date_code[_k] = _t
+            else:
+                def _rep_rank(_x):
+                    _res_ok = 0 if _x.get('result') in ('win', 'loss') else 1
+                    return (_res_ok, -float(_x.get('score') or 0))
+                if _rep_rank(_t) < _rep_rank(_cur):
+                    _champ_by_date_code[_k] = _t
+        _pre = len(champion_trades)
+        champion_trades = list(_champ_by_date_code.values())
+        _deduped = _pre - len(champion_trades)
+        if _deduped > 0:
+            print(f"  皇冠回测去重: 移除 {_deduped} 条同日重复(同一标的·同一运行日不同策略)，明细剩 {len(champion_trades)} 条")
     champion_metrics = _compute_metrics(champion_trades) if champion_trades else None
     if champion_trades:
         print(f"  皇冠回测: {champion_metrics['total']}笔 | 胜率{champion_metrics['win_rate']}% | "
