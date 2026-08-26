@@ -9,7 +9,7 @@
   (curl 返回 "Empty reply"), 且沙箱内无任何通用出口代理, 无法绕墙直连东财.
   实测可达的替代源:
     - 腾讯行情  qt.gtimg.cn/q=               (实时价/指数, 沙箱 200)
-    - 腾讯历史  web.ifzq.gtimg.cn/.../fqkline (日K线, 沙箱 200, 含真实数据)
+    - 腾讯历史  proxy.finance.qq.com/ifzqgtimg/.../fqkline (日K线, 沙箱 200, 含真实数据)
     - 新浪行情  hq.sinajs.cn                  (实时价备选, 沙箱 200)
     - 东财报表  datacenter-web.eastmoney.com  (商誉/质押等 RPT, 沙箱 200, 保持不变)
   腾讯「板块排行 / 竞价控制器」专用接口在沙箱返回 "No dispatch", 不可用,
@@ -23,7 +23,7 @@ import json
 import re
 
 _TENCENT_QUOTE = "https://qt.gtimg.cn/q="
-_TENCENT_KLINE = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+_TENCENT_KLINE = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get"
 _UA = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Referer': 'https://gu.qq.com/',
@@ -175,7 +175,7 @@ def tencent_auction(code):
 def tencent_board_flow():
     """板块级行业主力净流入排名.
 
-    腾讯板块排行接口(proxy.finance.qq.com / web.ifzq.gtimg.cn)在沙箱均返回
+    腾讯板块排行接口(proxy.finance.qq.com / ifzqgtimg)在沙箱均返回
     "No dispatch", 不可用. 返回 [] 让调用方降级到「个股 main_inflow 汇总估算」
     (脚本 v6.20.16 既有的沙箱行为, 不破坏).
     """
@@ -190,7 +190,7 @@ def tencent_minute(code):
     """
     prefix = _normalize_tcode(code)
     try:
-        url = f"https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={prefix}"
+        url = f"https://proxy.finance.qq.com/ifzqgtimg/appstock/app/minute/query?code={prefix}"
         req = urllib.request.Request(url, headers=_UA)
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())

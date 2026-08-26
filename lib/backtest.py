@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.22.15
+# A股短线筛选 — 历史回测模块 v6.22.16
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # @since v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
@@ -37,7 +37,7 @@ def _load_version():
                     return _v
         except OSError:
             continue
-    return "v6.22.15"  # 兜底版本（由 sync_version.py 锚定同步）
+    return "v6.22.16"  # 兜底版本（由 sync_version.py 锚定同步）
 
 
 BUILTIN_VERSION = _load_version()
@@ -104,7 +104,7 @@ def _fetch_kline_range(code, start_date, lmt=15):
     def _try_tencent(req_lmt):
         """尝试腾讯HTTP请求，返回K线列表或None"""
         mc = 'sh' if code.startswith('6') else 'sz'
-        url = (f'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?'
+        url = (f'https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get?'
                f'param={mc}{code},day,,,{req_lmt},qfq')
         # @since v6.13.24: 增加Referer头，修复无数据问题（腾讯API检查Referer）
         req = urllib.request.Request(url, headers={

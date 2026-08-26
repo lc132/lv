@@ -43,7 +43,7 @@ def fetch_t1_close(code, target_date):
     # 主方案: 腾讯日K (沙箱可用)
     prefix = "sh" if code.startswith("6") else "sz"
     try:
-        url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={prefix}{code},day,{target_date.replace('-','')},,1,qfq"
+        url = f"https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get?param={prefix}{code},day,{target_date.replace('-','')},,1,qfq"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=6) as resp:
             data = json.loads(resp.read())
