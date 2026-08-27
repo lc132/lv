@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.22.17
+# A股短线筛选 — 历史回测模块 v6.22.18
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # @since v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
@@ -37,7 +37,7 @@ def _load_version():
                     return _v
         except OSError:
             continue
-    return "v6.22.17"  # 兜底版本（由 sync_version.py 锚定同步）
+    return "v6.22.18"  # 兜底版本（由 sync_version.py 锚定同步）
 
 
 BUILTIN_VERSION = _load_version()
@@ -534,27 +534,35 @@ def run_backtest(hold_days=10, max_days_lookback=90):
 
     # @since v6.22.14: 皇冠回测——统计所有历史冠军标的的交易
     champion_trades = [t for t in trades if all_champion_codes and t['code'] in all_champion_codes]
-    # @since v6.22.17: 皇冠回测去重——同一冠军标的在同一运行日多次推荐(不同策略)仅保留一条代表性记录，
-    #   避免皇冠交易明细出现"重复日期"。跨日完整历史仍全部展示(仅去同日重复)。
+    # @since v6.22.17: 皇冠回测去重——皇冠权责基准：一个运行日仅保留一个标的，杜绝"重复日期"。
+    #   先按(运行日,标的)剔除同标的同日多策略，再按运行日合并多标的为当日唯一代表标的，跨日完整历史仍全保留。
+    # @since v6.22.18: 按"一个日期一个标的"收敛——同一运行日的所有冠军标的仅保留一个代表标的。
     #   代表记录选取：实际成功率(win/loss)>未成交/无数据，其次评分高者优先，保持原相对顺序。
     if champion_trades:
+        def _rep_rank(_x):
+            _res_ok = 0 if _x.get('result') in ('win', 'loss') else 1
+            return (_res_ok, -float(_x.get('score') or 0))
+        # 第一层：同一(运行日,标的)去重（剔除同名标的同日多策略）
         _champ_by_date_code = {}
         for _t in champion_trades:
             _k = (_t.get('date'), _t.get('code'))
             _cur = _champ_by_date_code.get(_k)
             if _cur is None:
                 _champ_by_date_code[_k] = _t
-            else:
-                def _rep_rank(_x):
-                    _res_ok = 0 if _x.get('result') in ('win', 'loss') else 1
-                    return (_res_ok, -float(_x.get('score') or 0))
-                if _rep_rank(_t) < _rep_rank(_cur):
-                    _champ_by_date_code[_k] = _t
-        _pre = len(champion_trades)
+            elif _rep_rank(_t) < _rep_rank(_cur):
+                _champ_by_date_code[_k] = _t
         champion_trades = list(_champ_by_date_code.values())
-        _deduped = _pre - len(champion_trades)
-        if _deduped > 0:
-            print(f"  皇冠回测去重: 移除 {_deduped} 条同日重复(同一标的·同一运行日不同策略)，明细剩 {len(champion_trades)} 条")
+        # 第二层：同一运行日仅保留一个标的（一个日期一个标的，杜绝重复日期）
+        _champ_by_date = {}
+        for _t in champion_trades:
+            _k = _t.get('date')
+            _cur = _champ_by_date.get(_k)
+            if _cur is None:
+                _champ_by_date[_k] = _t
+            elif _rep_rank(_t) < _rep_rank(_cur):
+                _champ_by_date[_k] = _t
+        champion_trades = list(_champ_by_date.values())
+        print(f"  皇冠回测去重: 明细收敛至 {len(champion_trades)} 条(一个运行日一个标的，无重复日期)")
     champion_metrics = _compute_metrics(champion_trades) if champion_trades else None
     if champion_trades:
         print(f"  皇冠回测: {champion_metrics['total']}笔 | 胜率{champion_metrics['win_rate']}% | "
