@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.22.18
+A股每日盘前短线标的智能筛选 v6.22.19
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.22.18"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.22.19"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -2704,41 +2704,53 @@ def _map_em_sector_to_sw1(name):
     return name
 
 def step10C_fetch_industry_flow_rank():
-    """@since v6.20.16: 板块级行业主力净流入排名(东财push2 clist, fs=m:90+t:2, fid=f62)
+    """@since v6.22.19: 双方向拉取修复"资金去向流出为-"——原实现仅按净流入降序(po=1)取前80，
+    全部为 net>=0 行业，导致 Markdown"主力净流出(亿)"列恒为"—"、资金流出TOP5恒为空。
+    现同时拉取净流入(po=1)与净流出(po=0)两个方向合并去重，流出数据正常展示。
+    @since v6.20.16: 板块级行业主力净流入排名(东财push2 clist, fs=m:90+t:2, fid=f62)
     一次拿到全行业真实主力净流入排名, 替代逐只个股汇总;
     沙箱/接口不可达(Empty reply)时返回 [], 由下游降级到个股main_inflow汇总。
     返回: [{name(板块名), net(元), chg(涨跌幅%), pct(主力净流入占比%)}] 按 net 降序"""
     rank = []
-    try:
-        url = ("https://push2delay.eastmoney.com/api/qt/clist/get?"
-               "pn=1&pz=80&po=1&np=1&fltt=2&invt=2"
-               "&fid=f62&fs=m:90+t:2"
-               "&fields=f12,f14,f3,f62,f184"
-               "&ut=fa5fd1943c7b386f172d6893dbfba10b")
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "Referer": "https://quote.eastmoney.com/"})
-        with _http_retry(req, timeout=10) as resp:
-            txt = resp.read().decode("utf-8", "ignore")
-        obj = json.loads(txt)
-        diff = (obj.get("data") or {}).get("diff") or []
-        for it in diff:
-            name = it.get("f14") or ""
-            net = it.get("f62")
-            if not name or not isinstance(net, (int, float)):
-                continue
-            chg = it.get("f3")
-            pct = it.get("f184")
-            rank.append({
-                "name": name,
-                "net": float(net),
-                "chg": float(chg) if isinstance(chg, (int, float)) else None,
-                "pct": float(pct) if isinstance(pct, (int, float)) else None,
-            })
-        rank.sort(key=lambda x: -x["net"])
-    except Exception:
-        rank = []
-    return rank
+    for po in (1, 0):  # 1=净流入降序 | 0=净流出降序(净流入升序)
+        try:
+            url = ("https://push2delay.eastmoney.com/api/qt/clist/get?"
+                   f"pn=1&pz=80&po={po}&np=1&fltt=2&invt=2"
+                   "&fid=f62&fs=m:90+t:2"
+                   "&fields=f12,f14,f3,f62,f184"
+                   "&ut=fa5fd1943c7b386f172d6893dbfba10b")
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "Referer": "https://quote.eastmoney.com/"})
+            with _http_retry(req, timeout=10) as resp:
+                txt = resp.read().decode("utf-8", "ignore")
+            obj = json.loads(txt)
+            diff = (obj.get("data") or {}).get("diff") or []
+            for it in diff:
+                name = it.get("f14") or ""
+                net = it.get("f62")
+                if not name or not isinstance(net, (int, float)):
+                    continue
+                chg = it.get("f3")
+                pct = it.get("f184")
+                rank.append({
+                    "name": name,
+                    "net": float(net),
+                    "chg": float(chg) if isinstance(chg, (int, float)) else None,
+                    "pct": float(pct) if isinstance(pct, (int, float)) else None,
+                })
+        except Exception:
+            continue
+    # 按净流入降序排序（含净流出行业，net<0 排末尾）
+    rank.sort(key=lambda x: -x["net"])
+    # 去重：两方向拉取的板块可能有重叠（交界处）
+    seen = set()
+    dedup = []
+    for r in rank:
+        if r["name"] not in seen:
+            seen.add(r["name"])
+            dedup.append(r)
+    return dedup
 
 # ============================================================
 # @since v6.22.14: 预测板块——基于历史资金流向预测下个交易日流入最多板块
