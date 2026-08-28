@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.22.19
+# A股短线筛选 — 历史回测模块 v6.22.20
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # @since v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
@@ -37,7 +37,7 @@ def _load_version():
                     return _v
         except OSError:
             continue
-    return "v6.22.19"  # 兜底版本（由 sync_version.py 锚定同步）
+    return "v6.22.20"  # 兜底版本（由 sync_version.py 锚定同步）
 
 
 BUILTIN_VERSION = _load_version()
@@ -703,7 +703,10 @@ def generate_backtest_report(bt_result, output_path=None):
 
 def _build_backtest_lookup(bt_result):
     """构建 代码→历史回测汇总 的查找字典，供筛选结果表格标记回测结果
-    @since v6.13.38: no_entry独立统计，不计入win/loss"""
+    @since v6.13.38: no_entry独立统计，不计入win/loss
+    @since v6.22.20: 优先使用推荐历史中的真实收益(real_return_pct)，
+    当真实收益数据存在时，以真实收益替代模拟回测的 last_result/last_return/avg_return，
+    并在 lookup 中标记 has_real_data=True，实现监控/统计切换真实口径。"""
     trades = bt_result.get('all_trades', [])
     if not trades:
         return {}
@@ -726,13 +729,49 @@ def _build_backtest_lookup(bt_result):
                 last_valid = t
                 break
         last = last_valid if last_valid else ts[-1]
-        lookup[code] = {
-            'total': total, 'wins': wins, 'losses': losses, 'no_data': no_data,
-            'no_entry': no_entry_count,
-            'avg_return': round(avg_ret, 2),
-            'last_result': last['result'], 'last_return': last['return_pct'],
-            'last_date': last.get('date', ''),  # @since v6.20.12: 运行日
-        }
+
+        # @since v6.22.20: 优先使用真实收益——从推荐历史文件中查找该代码的真实收益记录
+        real_ret = None
+        real_has_data = False
+        try:
+            _data_dir = os.environ.get('LV_DATA_DIR', '/workspace')
+            for _f in sorted(os.listdir(_data_dir)):
+                if _f.startswith('推荐历史_') and _f.endswith('.json'):
+                    _recs = _safe_read_json(os.path.join(_data_dir, _f), [])
+                    for _r in _recs:
+                        if _r.get('type') == 'recommendation' and _r.get('code') == code:
+                            if _r.get('real_return_pct') is not None:
+                                _rr = _r['real_return_pct']
+                                if real_ret is None:
+                                    real_ret = _rr
+                                    real_has_data = True
+                                # 取最新的真实收益（优先 prediction_date 最新的）
+        except Exception:
+            pass
+
+        if real_has_data and real_ret is not None:
+            # 真实口径：用真实收益替代模拟结果
+            real_result = 'win' if real_ret > 0 else 'loss'
+            # 仅覆盖 last_result/last_return，保留回测的统计量作为参考
+            lookup[code] = {
+                'total': total, 'wins': wins, 'losses': losses, 'no_data': no_data,
+                'no_entry': no_entry_count,
+                'avg_return': round(avg_ret, 2),
+                'last_result': real_result,
+                'last_return': real_ret,
+                'last_date': last.get('date', ''),
+                'has_real_data': True,
+                'real_return': real_ret,
+            }
+        else:
+            lookup[code] = {
+                'total': total, 'wins': wins, 'losses': losses, 'no_data': no_data,
+                'no_entry': no_entry_count,
+                'avg_return': round(avg_ret, 2),
+                'last_result': last['result'], 'last_return': last['return_pct'],
+                'last_date': last.get('date', ''),
+                'has_real_data': False,
+            }
     return lookup
 
 

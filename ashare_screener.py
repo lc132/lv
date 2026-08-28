@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.22.19
+A股每日盘前短线标的智能筛选 v6.22.20
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.22.19"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.22.20"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -775,6 +775,120 @@ def step0B_sync_industry_cache():
     for cf in cache_files:
         if not _is_valid_cache_file(cf):
             _industry_sync_failed(f"{os.path.basename(cf)} 同步后校验仍失败")
+
+# ============================================================
+# 步骤0C: 次日真实收益采集 — @since v6.22.20
+# 扫描推荐历史中 prediction_date == today 的记录，
+# 获取今日K线(open/close/high/low)，计算真收益并写回。
+# ============================================================
+def step0C_collect_real_returns():
+    """@since v6.22.20: 推荐历史新增次日真实收益字段。
+    每次筛选开始时执行，扫描所有推荐历史文件，找到 prediction_date 等于今日日期
+    (beijing_date) 的记录，通过腾讯HTTP获取今日K线，计算真实收益并写回。
+    新字段: real_return_pct, real_open_return_pct, real_high_return_pct, real_low_return_pct,
+            real_next_open, real_next_close, real_next_high, real_next_low, real_confirm_date
+    幂等：已写 real_confirm_date 的记录跳过，避免重复采集。"""
+    global beijing_date
+    if not beijing_date:
+        log_alert("WARNING", "真实收益", "beijing_date 为空，跳过")
+        return
+
+    today = beijing_date
+    updated_total = 0
+    updated_files = set()
+
+    for fname in sorted(os.listdir('/workspace')):
+        if not fname.startswith('推荐历史_') or not fname.endswith('.json'):
+            continue
+        fpath = os.path.join('/workspace', fname)
+        records = safe_read_json(fpath, [])
+        if not records:
+            continue
+
+        changed = False
+        for rec in records:
+            if rec.get('type') != 'recommendation':
+                continue
+            # 仅处理 prediction_date == today 且尚未写真实收益的记录
+            if rec.get('prediction_date') != today:
+                continue
+            if rec.get('real_confirm_date'):
+                continue  # 幂等：已采集过不再重复
+
+            code = rec.get('code', '')
+            entry = rec.get('entry') or 0
+            if not code or not entry:
+                continue
+
+            # 获取今日K线(腾讯HTTP)
+            kline = _fetch_single_kline(code, today)
+            if not kline:
+                log_alert("DEBUG", "真实收益", f"{code} {rec.get('name','')} 今日K线获取失败，跳过")
+                continue
+
+            next_open = kline.get('open', 0)
+            next_close = kline.get('close', 0)
+            next_high = kline.get('high', 0)
+            next_low = kline.get('low', 0)
+
+            if next_open == 0 and next_close == 0:
+                continue
+
+            # 计算真实收益百分比
+            real_open_ret = round((next_open - entry) / entry * 100, 2) if entry else 0
+            real_close_ret = round((next_close - entry) / entry * 100, 2) if entry else 0
+            real_high_ret = round((next_high - entry) / entry * 100, 2) if entry else 0
+            real_low_ret = round((next_low - entry) / entry * 100, 2) if entry else 0
+
+            rec['real_return_pct'] = real_close_ret
+            rec['real_open_return_pct'] = real_open_ret
+            rec['real_high_return_pct'] = real_high_ret
+            rec['real_low_return_pct'] = real_low_ret
+            rec['real_next_open'] = next_open
+            rec['real_next_close'] = next_close
+            rec['real_next_high'] = next_high
+            rec['real_next_low'] = next_low
+            rec['real_confirm_date'] = today
+            changed = True
+            updated_total += 1
+
+        if changed:
+            safe_write_json(fpath, records)
+            updated_files.add(fname)
+
+    if updated_total > 0:
+        log_alert("INFO", "真实收益", f"已采集 {updated_total} 条次日真实收益 (涉及 {len(updated_files)} 个文件)")
+    else:
+        log_alert("INFO", "真实收益", "今日无待采集的推荐记录（prediction_date 均非今日或已采集）")
+
+
+def _fetch_single_kline(code, date_str):
+    """获取某只股票在指定日期的单根K线(腾讯HTTP)。
+    返回 {open, close, high, low, volume} 或 None"""
+    try:
+        mc = 'sh' if code.startswith('6') else 'sz'
+        # 拉取少量K线，从中定位指定日期
+        url = (f'https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get?'
+               f'param={mc}{code},day,,,5,qfq')
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0',
+            'Referer': 'https://gu.qq.com/'})
+        with _http_retry(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8', 'ignore'))
+        days = (data.get('data', {}).get(f'{mc}{code}', {}).get('qfqday', None) or
+                data.get('data', {}).get(f'{mc}{code}', {}).get('day', []))
+        for d in days:
+            if isinstance(d, list) and len(d) >= 6:
+                if d[0] == date_str:
+                    return {
+                        'open': float(d[1]), 'close': float(d[2]),
+                        'high': float(d[3]), 'low': float(d[4]),
+                        'volume': float(d[5]),
+                    }
+    except Exception:
+        pass
+    return None
+
 
 def step1_holiday_check():
     global prediction_date, pred_yyyymmdd, position_pct, market_condition, params
@@ -6367,6 +6481,9 @@ def main():
 
     print("\n[步骤0B] 行业缓存同步..."); step0B_sync_industry_cache()
     record_step_status("步骤0B: 行业缓存同步", "OK")
+
+    print("\n[步骤0C] 真实收益采集..."); step0C_collect_real_returns()
+    record_step_status("步骤0C: 真实收益采集", "OK")
 
     print("\n[步骤1] 节假日...")
     if step1_holiday_check(): print("  节假日跳过"); record_step_status("步骤1: 节假日", "SKIP", "今日为节假日"); return
