@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.22.22
+A股每日盘前短线标的智能筛选 v6.22.23
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -688,6 +688,35 @@ def _git_with_token(cmd_args, timeout=30, check=True, log_prefix=""):
             new_args.append(arg)
         return subprocess.run(new_args, capture_output=True, text=True, timeout=timeout, check=check)
     return subprocess.run(cmd_args, capture_output=True, text=True, timeout=timeout, check=check)
+
+# ============================================================
+# 步骤0D：day-level 防重——当天已生成则跳过
+# @since v6.22.23: 按 prediction_date 判定，MD 与 HTML 均已落盘则跳过主流程。
+# 退出码 0(success) 返回，不触发 _run_screening_with_retry 重试。
+# 可被 environ LV_FORCE_RERUN=1 强制绕过（如主动补跑）
+# ============================================================
+def step0D_day_dedup():
+    global prediction_date, pred_yyyymmdd
+    if os.environ.get("LV_FORCE_RERUN", "").strip() == "1":
+        print(f"  [防重] LV_FORCE_RERUN=1 强制重跑，跳过防重检查")
+        return False
+    if not prediction_date or not pred_yyyymmdd:
+        return False
+    md_path = f"/workspace/短线标的_{prediction_date}.md"
+    html_dir = f"/workspace/ashare-screening-{pred_yyyymmdd}"
+    html_path = f"{html_dir}/ashare-screening-{pred_yyyymmdd}.html"
+    md_exists = os.path.exists(md_path)
+    html_exists = os.path.exists(html_path)
+    if md_exists and html_exists:
+        print(f"  [防重] {prediction_date} 报告已存在(MD+HTML)，跳过当日筛选")
+        log_alert("INFO", "天数防重", f"{prediction_date} 已生成(MD={md_exists},HTML={html_exists})，本次跳过")
+        record_step_status("步骤0D: 天数防重", "SKIP", f"{prediction_date} 报告已存在")
+        sys.exit(0)
+    elif md_exists or html_exists:
+        print(f"  [防重] {prediction_date} 部分产物存在(MD={md_exists},HTML={html_exists})，继续补全")
+    else:
+        print(f"  [防重] {prediction_date} 无产物，正常筛选")
+    return False
 
 # ============================================================
 # 步骤0A：拉取持仓跟踪
@@ -6475,6 +6504,8 @@ def main():
     print("\n[步骤0] 北京时间..."); step0_get_beijing_time()
     print(f"  Beijing={beijing_date} Data={data_date} Pred={prediction_date}")
     record_step_status("步骤0: 北京时间", "OK" if beijing_date else "WARN", "API降级为系统时间" if not _beijing_api_ok else "")
+
+    print("\n[步骤0D] day-level防重..."); step0D_day_dedup()
 
     print("\n[步骤0A] 拉取持仓..."); step0A_pull_holdings()
     record_step_status("步骤0A: 持仓拉取", "OK")
