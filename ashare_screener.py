@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.22.23
+A股每日盘前短线标的智能筛选 v6.22.24
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.22.22"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.22.24"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -752,6 +752,12 @@ def step0A_pull_holdings():
             log_alert("ERROR", "持仓拉取", "从 gh-pages 恢复 0 个 推荐历史_*.json，回测将无样本")
         else:
             log_alert("INFO", "持仓拉取", f"gh-pages 命中 {found} 个 推荐历史_*.json")
+        # @since v6.22.24: 回拉行业资金历史，供预测板块跨天积累（推送侧见 step26）
+        flow_src = os.path.join(repo_dir, "行业资金历史.json")
+        if os.path.exists(flow_src):
+            if not os.path.exists("/workspace/行业资金历史.json") or os.path.getmtime(flow_src) > os.path.getmtime("/workspace/行业资金历史.json"):
+                shutil.copy(flow_src, "/workspace/行业资金历史.json")
+                log_alert("INFO", "持仓拉取", "行业资金历史.json 已同步")
         shutil.rmtree(repo_dir, ignore_errors=True)
     except Exception as e: log_alert("WARNING", "持仓拉取", f"{str(e)[:80]}")
 
@@ -5689,7 +5695,26 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
                 capital_flow_html = '\n'.join(flow_cards)
         else:
             capital_flow_html = '<div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">主力资金数据不可得（API通道受限），无法展示行业资金流向。建议参考盘口/L2数据或龙虎榜。</span></div>'
-    
+
+    # @since v6.22.24: 预测板块——基于历史资金流向预测下个交易日上涨板块(top5)并映射龙头标的
+    #   数据依赖 /workspace/行业资金历史.json 跨天积累(≥2个交易日)，历史不足时显示占位提示
+    prediction_html = ""
+    try:
+        _pred = _predict_sector_inflow()
+        if _pred:
+            _pred_cards = []
+            for _pidx, _p in enumerate(_pred):
+                _sw1 = _map_em_sector_to_sw1(_p['name'])
+                _reps = [c for c in candidates if _industry_str(c) == _sw1][:4]
+                _tops_html = ''.join(f'<span class="flow-stock">{c.get("name","")}</span>' for c in _reps) if _reps else '<span class="flow-stock">—</span>'
+                _pred_cards.append('<div class="flow-card">' + chr(10) +
+                                   '<div class="flow-card-header"><span class="rank">#{}</span><span class="industry-name">{}</span><span class="flow-amount" style="color:#22c55e">↑ {:.1f}分</span></div>' + chr(10) +                                   '<div class="flow-chg">连续流入 {}天 | 趋势 {} | 今日净流入 {:+.2f}亿</div>' + chr(10) +
+                                   '<div class="flow-stocks">{}</div></div>'.format(
+                                       _pidx + 1, _p['name'], _p['score'], _p['consecutive_days'], _p['trend'], _p['today_net'] / 1e8, _tops_html))
+            prediction_html = '<div class="flow-grid">' + chr(10).join(_pred_cards) + '</div>'
+    except Exception:
+        prediction_html = ""
+
     # ── @since v6.13.1: AI 策略分析 HTML（美化版）──
     ai_html = ""
     if ai_report:
@@ -6196,6 +6221,8 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 </tbody></table></section>
 <section><h2>资金去向（行业主力净流入排名）</h2>
 <div class="capital-flow">{capital_flow_html if capital_flow_html else '<div style="color:#94a3b8;padding:1rem">暂无资金流向数据</div>'}</div></section>
+<section><h2>🔮 预测上涨板块（下一交易日）</h2>
+{prediction_html if prediction_html else '<div style="color:#94a3b8;padding:1rem">历史资金数据不足（需 ≥2 个交易日积累），暂无法预测下一交易日上涨板块</div>'}</section>
 {ai_html}
 </div>
 <section><h2 style="display:flex;align-items:center;gap:.5rem">📊 历史回测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">最近保留期(≥4周) | 最大持仓10交易日</span></h2>
@@ -6326,6 +6353,9 @@ def step26_github_sync(mp, hd, candidates):
         for f in os.listdir('/workspace'):
             if f.startswith('推荐历史_') and f.endswith('.json'):
                 shutil.copy(os.path.join('/workspace', f), os.path.join(rd, f))
+        # @since v6.22.24: 同步行业资金历史，供预测板块跨天积累（回拉侧见 step0A）
+        if os.path.exists("/workspace/行业资金历史.json"):
+            shutil.copy("/workspace/行业资金历史.json", os.path.join(rd, "行业资金历史.json"))
         # @since v6.13.18: 同步回测报告到backtest/子目录(GitHub Pages不支持中文文件名)
         bt_html = os.path.join('/workspace', '回测报告.html')
         if os.path.exists(bt_html):
