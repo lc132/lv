@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.22.25
+# A股短线筛选 — 历史回测模块 v6.22.26
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # @since v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
@@ -37,7 +37,7 @@ def _load_version():
                     return _v
         except OSError:
             continue
-    return "v6.22.25"  # 兜底版本（由 sync_version.py 锚定同步）
+    return "v6.22.26"  # 兜底版本（由 sync_version.py 锚定同步）
 
 
 BUILTIN_VERSION = _load_version()
@@ -656,15 +656,15 @@ def generate_backtest_report(bt_result, output_path=None):
         "| 日期 | 标的 | 代码 | 策略 | 行业 | 进场 | 结果 | 出场 | 收益 | 持仓 |",
         "|------|------|------|------|------|------|------|------|------|------|"
     ])
-    # @since v6.16.14: 按日期均匀采样，每日期最多10条，确保多日数据均可见
+    # @since v6.22.25: 扩大采样范围——每日期最多50条、累计最多200条，展示更完整的交易明细
     recent = []
     for date_key in sorted(set(t.get('date', '') for t in trades), reverse=True):
         day_trades = [t for t in trades if t.get('date') == date_key]
         day_trades_sorted = sorted(day_trades, key=lambda x: abs(x.get('return_pct', 0)), reverse=True)
-        recent.extend(day_trades_sorted[:10])
-        if len(recent) >= 20:
+        recent.extend(day_trades_sorted[:50])
+        if len(recent) >= 200:
             break
-    recent = recent[:20]
+    recent = recent[:200]
     # @since v6.22.8: 确保冠军交易始终出现在Markdown交易明细表中
     _recent_keys_md = set((t['code'], t['date'], t['strategy']) for t in recent)
     for t in trades:
@@ -893,15 +893,15 @@ def generate_backtest_html(bt_result, output_path=None):
 
     # 交易明细表
     trade_rows = ''
-    # @since v6.16.14: 按日期均匀采样，每日期最多15条，确保多日数据均可见
+    # @since v6.22.25: 扩大采样范围——每日期最多50条、累计最多200条，展示更完整的交易明细
     recent = []
     for date_key in sorted(set(t.get('date', '') for t in trades), reverse=True):
         day_trades = [t for t in trades if t.get('date') == date_key]
         day_trades_sorted = sorted(day_trades, key=lambda x: abs(x.get('return_pct', 0)), reverse=True)
-        recent.extend(day_trades_sorted[:15])
-        if len(recent) >= 30:
+        recent.extend(day_trades_sorted[:50])
+        if len(recent) >= 200:
             break
-    recent = recent[:30]
+    recent = recent[:200]
     # @since v6.22.8: 确保冠军交易始终出现在主交易明细表中，不被均匀采样截断
     _recent_keys = set((t['code'], t['date'], t['strategy']) for t in recent)
     for t in trades:
