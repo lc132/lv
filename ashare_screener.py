@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.22.27
+A股每日盘前短线标的智能筛选 v6.22.28
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.22.27"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.22.28"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -5316,17 +5316,22 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                 r7d_str = f"{r7d} ({','.join(uniq_s)})"
             url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
             # @since v6.13.34: 回测标记列 — no_entry独立标记，不计入胜负
+            # @since v6.22.28: 改用图标序列——每个样本对应一个图标
             bt_mark = ''
             if bt_lookup and code in bt_lookup:
                 bt = bt_lookup[code]
-                if bt['last_result'] == 'win':
-                    emoji = '🟢'
-                elif bt['last_result'] == 'no_entry':
-                    emoji = '⚪'
-                else:
-                    emoji = '🔴' if bt['last_result'] == 'loss' else '⚪'
-                suffix = '⚠️' if bt.get('no_entry', 0) > 0 else ''
-                bt_mark = f'{emoji}{bt["wins"]}/{bt["total"]}{suffix}'
+                seq = bt.get('results_seq', [])
+                icons = []
+                for r in seq:
+                    if r == 'win':
+                        icons.append('🟢')
+                    elif r == 'loss':
+                        icons.append('🔴')
+                    else:
+                        icons.append('⚪')
+                bt_mark = ''.join(icons)
+                if bt.get('no_entry', 0) > 0:
+                    bt_mark += '⚠️'
             lines.append(f"| {idx} | {top10_mark} | {pk_mark} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {h60_str} | {l60_str} | {tier_label} | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} | {pl_ratio} | {bt_mark} |\n")
         # @since v6.13.31: 同策略PK + 冠军PK总结
         if pk_results:
@@ -5351,8 +5356,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                         loser_str = ' | 败方: ' + '、'.join(f'{name}({code}){s:.1f}分' for code, name, s in info['losers'])
                     lines.append(f"  - **{strat}策略** ({info['count']}只): 🏆 **{info['winner_name']}**({info['winner_code']}) — {score:.1f}/{dim_label}分{dim_note}{loser_str}\n")
         lines.append("\n## 回测说明\n")
-        lines.append("- **回测列格式**：`图标 + 胜/样本`，例如 `🟢2/2` 表示历史同标的样本2笔、盈利2笔。")
-        lines.append("- **图标含义**：🟢 最近一次样本盈利；🔴 最近一次样本亏损；⚪ 限价未成交或后续K线不足；⚠️ 历史有限价单未成交（次日最低价>进场价）；空白表示无可匹配历史样本。")
+        lines.append("- **回测列格式**：每个样本对应一个图标，多个图标顺序排列，例如 `🟢🟢` 表示2笔盈利样本。")
+        lines.append("- **图标含义**：🟢 盈利样本；🔴 亏损样本；⚪ 限价未成交或后续K线不足；⚠️ 历史有限价单未成交（次日最低价>进场价）；空白表示无可匹配历史样本。")
         lines.append("- **模拟口径**：使用保留期内（≥4周）推荐历史，按推荐表的进场、止损、止盈进行模拟，单笔最大持仓10个交易日。")
         lines.append("- **交易规则**：遵循A股T+1，买入当日不检查止盈止损出场，从下一交易日起判断是否触及止损/止盈。")
         lines.append("- **使用限制**：未计入滑点、手续费、涨跌停无法成交、真实排队成交等因素；样本少时仅作参考，不能代表未来表现。\n")
@@ -5587,17 +5592,26 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         scl = f"strat_{s.lower()}"
         url = f"https://quote.eastmoney.com/sh{code}.html" if code.startswith('6') else f"https://quote.eastmoney.com/sz{code}.html"
         # @since v6.13.34: 回测标记列 — no_entry独立标记，不计入胜负
+        # @since v6.22.28: 改用图标序列——每个样本对应一个图标
         bt_mark = ''
         if bt_lookup and code in bt_lookup:
             bt = bt_lookup[code]
-            if bt["last_result"] == "win":
-                bt_emoji = "🟢"
-            elif bt["last_result"] == "no_entry":
-                bt_emoji = "⚪"
-            else:
-                bt_emoji = "🔴" if bt["last_result"] == "loss" else "⚪"
-            bt_suffix = ' ⚠️' if bt.get('no_entry', 0) > 0 else ''
-            bt_mark = f'<span class="{bt["last_result"]}">{bt_emoji}{bt["wins"]}/{bt["total"]}{bt_suffix}</span>'
+            seq = bt.get('results_seq', [])
+            icons = []
+            for r in seq:
+                if r == 'win':
+                    cl = 'win'
+                    icon = '🟢'
+                elif r == 'loss':
+                    cl = 'loss'
+                    icon = '🔴'
+                else:
+                    cl = 'no_data'
+                    icon = '⚪'
+                icons.append(f'<span class="{cl}">{icon}</span>')
+            bt_mark = ''.join(icons)
+            if bt.get('no_entry', 0) > 0:
+                bt_mark += ' <span class="warn">⚠️</span>'
         rows_html += f"""<tr class="{scl}"><td>{idx}</td><td>{top10_mark}</td><td>{pk_mark}</td><td><span class="badge {scl}">{s}</span></td>
         <td><a href="{url}" target="_blank">{html.escape(name)}</a></td><td>{code}</td><td>{ind}</td><td>{html.escape(biz)}</td>
         <td class="{chg_cls}">{chg:+.2f}%</td><td>{op:.2f}</td><td>{close:.2f}</td>
@@ -6192,9 +6206,9 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 <div style="margin-top:1rem;background:#1a2332;border:1px solid #334155;border-radius:8px;padding:.9rem 1.2rem;font-size:.75rem;color:#94a3b8;line-height:1.8">
 <div style="color:#38bdf8;font-weight:700;margin-bottom:.4rem">回测列说明</div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:.3rem 1.5rem">
-<div><span style="color:#e2e8f0;font-weight:600">格式</span>：<code style="background:#0f172a;padding:1px 6px;border-radius:3px;color:#38bdf8">图标 胜/样本</code>，如 <code style="background:#0f172a;padding:1px 6px;border-radius:3px;color:#22c55e">🟢2/2</code> 表示2笔样本均盈利</div>
-<div><span style="color:#22c55e;font-weight:600">🟢</span> 最近一次样本盈利</div>
-<div><span style="color:#ef4444;font-weight:600">🔴</span> 最近一次样本亏损</div>
+<div><span style="color:#e2e8f0;font-weight:600">格式</span>：每个样本对应一个图标，多个图标顺序排列，如 <code style="background:#0f172a;padding:1px 6px;border-radius:3px;color:#22c55e">🟢🟢</code> 表示2笔盈利样本</div>
+<div><span style="color:#22c55e;font-weight:600">🟢</span> 盈利样本</div>
+<div><span style="color:#ef4444;font-weight:600">🔴</span> 亏损样本</div>
 <div><span style="color:#94a3b8;font-weight:600">⚪</span> 后续K线不足或未形成有效胜负</div>
 <div><span style="color:#f59e0b;font-weight:600">⚠️</span> 历史有限价单未成交（当日最低价&gt;进场价）</div>
 <div><span style="color:#64748b;font-weight:600">空白</span> 无可匹配历史样本</div>

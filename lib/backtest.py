@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.22.27
+# A股短线筛选 — 历史回测模块 v6.22.28
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # @since v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
@@ -37,7 +37,7 @@ def _load_version():
                     return _v
         except OSError:
             continue
-    return "v6.22.27"  # 兜底版本（由 sync_version.py 锚定同步）
+    return "v6.22.28"  # 兜底版本（由 sync_version.py 锚定同步）
 
 
 BUILTIN_VERSION = _load_version()
@@ -720,6 +720,8 @@ def _build_backtest_lookup(bt_result):
         losses = sum(1 for t in ts if t['result'] == 'loss')
         no_data = sum(1 for t in ts if t['result'] == 'no_data')
         no_entry_count = sum(1 for t in ts if t['result'] == 'no_entry')
+        # @since v6.22.28: 结果序列——按时间顺序生成图标，每个样本对应一个图标
+        results_seq = [t['result'] for t in ts]
         valid = [t for t in ts if t['result'] not in ('no_data', 'no_entry')]
         avg_ret = sum(t['return_pct'] for t in valid) / len(valid) if valid else 0
         # @since v6.16.27: 从后往前找最后一个有效交易，避免fallback到no_data/no_entry失真
@@ -762,6 +764,7 @@ def _build_backtest_lookup(bt_result):
                 'last_date': last.get('date', ''),
                 'has_real_data': True,
                 'real_return': real_ret,
+                'results_seq': results_seq,
             }
         else:
             lookup[code] = {
@@ -771,6 +774,7 @@ def _build_backtest_lookup(bt_result):
                 'last_result': last['result'], 'last_return': last['return_pct'],
                 'last_date': last.get('date', ''),
                 'has_real_data': False,
+                'results_seq': results_seq,
             }
     return lookup
 
