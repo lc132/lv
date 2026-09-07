@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.22.30
+A股每日盘前短线标的智能筛选 v6.22.31
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.22.30"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.22.31"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -5143,6 +5143,44 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
                 c['_champion_score'] += bonus
                 c['_bt_bonus'] = round(bonus, 1)
         
+        # @since v6.22.31: 第9维度—历史板块参考加分
+        # 参考行业资金历史，若该标的所属板块最近为资金净流入且历史胜率较高，给予加分
+        flow_bonus = 0.0
+        sector_bonus = 0.0
+        try:
+            # 读取行业资金历史
+            if os.path.exists(_FLOW_HISTORY_FILE):
+                with open(_FLOW_HISTORY_FILE, 'r', encoding='utf-8') as f:
+                    flow_data = json.load(f)
+                industry = _industry_str(c)
+                if industry != '未知' and flow_data and isinstance(flow_data, dict):
+                    # 最新日期的排名
+                    dates = sorted(flow_data.keys(), reverse=True)
+                    if dates:
+                        latest = flow_data[dates[0]]
+                        if isinstance(latest, dict) and 'rank' in latest:
+                            rank_data = latest['rank']
+                            if industry in rank_data:
+                                # rank: 正=净流入，越大越强；负=净流出
+                                rank_val = rank_data[industry]
+                                if rank_val > 0:
+                                    # 净流入板块给加分，越强加分越多
+                                    sector_bonus += 0.5
+                                    # 再看历史上该板块的胜率记录
+                                    if 'sector_win_rate' in flow_data and industry in flow_data['sector_win_rate']:
+                                        wr = flow_data['sector_win_rate'][industry]
+                                        if wr >= 0.3:
+                                            sector_bonus += 0.5  # 历史胜率≥30%额外加分
+                                        if wr >= 0.4:
+                                            sector_bonus += 0.5  # 历史胜率≥40%再加
+                            if sector_bonus > flow_bonus:
+                                flow_bonus = sector_bonus
+        except Exception:
+            pass  # 文件缺失或格式错误不加分
+        if flow_bonus > 0:
+            c['_champion_score'] += flow_bonus
+            c['_sector_bonus'] = round(flow_bonus, 1)
+        
         max_champ = max(c['_champion_score'] for c in all_winners)
         top_champs = [c for c in all_winners if c['_champion_score'] == max_champ]
         if len(top_champs) == 1:
@@ -5153,9 +5191,15 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
         for c in all_winners:
             c['_pk_champion'] = (c is champion)
             if c is champion:
-                bonus = c.get('_bt_bonus', 0)
-                if bonus > 0:
-                    champion_note = f"👑冠军(Champion:{c['_champion_score']}/7+{bonus}历史加成)"
+                bt_bonus = c.get('_bt_bonus', 0)
+                sector_bonus = c.get('_sector_bonus', 0)
+                bonus_str = ''
+                if bt_bonus > 0:
+                    bonus_str += f"+{bt_bonus}历史"
+                if sector_bonus > 0:
+                    bonus_str += f"+{sector_bonus}板块"
+                if bonus_str:
+                    champion_note = f"👑冠军(Champion:{c['_champion_score']}/7{bonus_str})"
                 else:
                     champion_note = f"👑冠军(Champion:{c['_champion_score']}/7)"
                 c['_pk_note'] = champion_note
@@ -5170,6 +5214,7 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
             'winner_name': champion.get('name'),
             'winner_score': champion['_champion_score'],
             'bt_bonus': champion.get('_bt_bonus', 0),  # @since v6.22.30: 历史回测盈利加成
+            'sector_bonus': champion.get('_sector_bonus', 0),  # @since v6.22.31: 历史板块参考加分
             'losers': [(c.get('code'), c.get('name'), c['_champion_score']) for c in all_winners if c is not champion]
         }
     else:
@@ -5368,7 +5413,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                 lines.append(f"- 👑 **最强标的**: **{champion_info['winner_name']}**({champion_info['winner_code']}) — 冠军得分 {champion_info['winner_score']}/7")
                 loser_names = ', '.join(f'{name}({code})' for code, name, score in champion_info['losers'])
                 lines.append(f"- 挑战者: {loser_names}")
-                lines.append("- **PK规则**：所有策略获胜者(含独苗)在7维度（成长性/盈利能力/估值水位/资产质量/现金流/筹码/板块热度）对决，另加历史回测盈利加成（有盈利样本+0.5、胜率≥30%+0.5、均收正+0.5），总分最高者加冕👑冠军")
+                lines.append("- **PK规则**：所有策略获胜者(含独苗)在7维度（成长性/盈利能力/估值水位/资产质量/现金流/筹码/板块热度）对决，另加历史回测盈利加成（有盈利样本+0.5、胜率≥30%+0.5、均收正+0.5）和板块资金加成（所属板块资金净流入+0.5、板块历史胜率≥30%+0.5、≥40%+0.5），总分最高者加冕👑冠军")
             if pk_strats:
                 lines.append("\n## 同策略PK\n")
                 lines.append("- **PK规则**：同策略标的在7维度对决，总分最高者获胜；全0时自动降级为技术面3维度(涨跌幅/量比/换手率)")
@@ -5532,11 +5577,17 @@ def _build_pk_html(pk_results):
     if champion_info:
         loser_names = ', '.join(f'{name}({code})' for code, name, score in champion_info['losers'])
         html_parts.append('<section><h2>👑 跨策略冠军PK</h2><div class="pk-summary">')
-        html_parts.append('<p style="color:#94a3b8;font-size:.85rem;margin-bottom:1rem">所有策略获胜者(含独苗)在7个维度对决+历史回测盈利加成，总分最高者加冕👑冠军</p>')
+        html_parts.append('<p style="color:#94a3b8;font-size:.85rem;margin-bottom:1rem">所有策略获胜者(含独苗)在7个维度对决+历史回测盈利加成+历史板块参考，总分最高者加冕👑冠军</p>')
         html_parts.append(f'<div class="pk-card" style="background:linear-gradient(135deg,#1e293b,#2d3748);border-radius:12px;padding:1.2rem;margin-bottom:.75rem;border:2px solid #fbbf24">')
         # @since v6.22.30: 显示历史回测盈利加成
-        _champ_score_display = f'{champion_info["winner_score"]}' if champion_info.get('bt_bonus') is None else f'{champion_info["winner_score"]}（含历史加成{champion_info["bt_bonus"]}）'
-        html_parts.append(f'<div style="color:#fbbf24;font-size:1.3rem;margin-bottom:.25rem">👑 <strong>{champion_info["winner_name"]}</strong> ({champion_info["winner_code"]}) — 冠军得分 {_champ_score_display}</div>')
+        # @since v6.22.31: 显示历史板块参考加分
+        _champ_bt_bonus = champion_info.get('bt_bonus', 0)
+        _champ_sector_bonus = champion_info.get('sector_bonus', 0)
+        _bonus_parts = []
+        if _champ_bt_bonus: _bonus_parts.append(f'历史加成{_champ_bt_bonus}')
+        if _champ_sector_bonus: _bonus_parts.append(f'板块加成{_champ_sector_bonus}')
+        _score_display = f'{champion_info["winner_score"]}' if not _bonus_parts else f'{champion_info["winner_score"]}（含{"、".join(_bonus_parts)}）'
+        html_parts.append(f'<div style="color:#fbbf24;font-size:1.3rem;margin-bottom:.25rem">👑 <strong>{champion_info["winner_name"]}</strong> ({champion_info["winner_code"]}) — 冠军得分 {_score_display}</div>')
         html_parts.append(f'<div style="color:#94a3b8;font-size:.8rem">挑战者: {loser_names}</div>')
         html_parts.append('</div></div></section>')
     # 同策略PK区域
