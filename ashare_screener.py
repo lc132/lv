@@ -4916,8 +4916,9 @@ def _compute_pl_ratios(candidates, sector_limit_up=None):
 # 步骤19B：同策略PK
 # ============================================================
 def _init_pk_details(c, kline_data, bt_lookup, sentiment_base, sector_heat, max_heat):
-    """@since v6.14.0: 基本面+技术面融合7维度PK
+    """@since v6.14.0: 基本面+技术面融合12维度PK
     维度体系: 成长性+盈利能力+估值水位+资产质量+现金流+筹码+板块热度
+    +技术动能+机构认可度+趋势强度+市值风格+量价匹配(@since v6.22.32)
     同行业优先比较，跨行业使用记分卡加权"""
     code = c.get('code', '')
     strat = c.get('strategy', '?')
@@ -4981,6 +4982,70 @@ def _init_pk_details(c, kline_data, bt_lookup, sentiment_base, sector_heat, max_
     heat_normalized = heat / max_heat if max_heat > 0 else 0
     pk_details.append(('heat', heat_normalized))
     
+    # @since v6.22.32: 维度8-12 技术/资金/风格扩展维度
+    # ---- 维度8: 技术动能(tech_momentum) ----
+    # MACD柱+RSI+布林带宽度综合，越高动能越强
+    macd_hist = _safe_float(kd.get('macd_hist'))
+    rsi14 = _safe_float(kd.get('rsi14'))
+    boll_width = _safe_float(kd.get('boll_width'))
+    tm = 0.0
+    if macd_hist is not None: tm += macd_hist * 100  # MACD柱放大
+    if rsi14 is not None: tm += (rsi14 - 50)          # RSI偏离中性值
+    if boll_width is not None: tm += (boll_width - 1) * 100  # 波动率放大
+    pk_details.append(('tech_momentum', tm))
+    
+    # ---- 维度9: 机构认可度(inst_approval) ----
+    # 龙虎榜机构席位+净买额+融资融券变化，越高机构认可越强
+    lhb_inst = c.get('lhb_inst') or 0
+    lhb_net = c.get('lhb_net') or 0
+    margin_chg = c.get('margin_chg_pct') or 0
+    inst_score = (lhb_inst or 0) + (lhb_net or 0) / 1e7 + (margin_chg or 0)
+    pk_details.append(('inst_approval', inst_score))
+    
+    # ---- 维度10: 趋势强度(trend_strength) ----
+    # 均线多头排列+涨停天数+60日位置，趋势越强得分越高
+    ma5 = _safe_float(kd.get('ma5'))
+    ma10 = _safe_float(kd.get('ma10'))
+    ma20 = _safe_float(kd.get('ma20'))
+    limit_up_days = kd.get('limit_up_days') or 0
+    high60 = _safe_float(kd.get('high60'))
+    low60 = _safe_float(kd.get('low60'))
+    trend = 0.0
+    if ma5 is not None and ma10 is not None and ma20 is not None:
+        if ma5 > ma10 > ma20:
+            trend += 1.0  # 多头排列
+        elif ma5 < ma10 < ma20:
+            trend -= 0.5  # 空头排列轻微扣分
+    trend += (limit_up_days or 0) * 0.5  # 涨停天数加权
+    if high60 and low60 and high60 > low60:
+        pos60 = (close - low60) / (high60 - low60)  # 60日位置 0~1
+        trend += max(0.0, min(1.0, pos60))
+    pk_details.append(('trend_strength', trend))
+    
+    # ---- 维度11: 市值风格(mktcap_style) ----
+    # 小市值优先（短线弹性大）+ 动态PE越低越好
+    total_cap = _safe_float(c.get('total_cap'))
+    pe_ttm = _safe_float(c.get('pe_ttm'))
+    mcap = 0.0
+    if total_cap is not None and total_cap > 0:
+        cap_yi = total_cap / 1e8  # 转为亿元
+        if cap_yi < 50: mcap += 3.0
+        elif cap_yi < 100: mcap += 2.0
+        elif cap_yi < 500: mcap += 1.0
+    if pe_ttm is not None and pe_ttm > 0:
+        mcap += -pe_ttm / 100.0  # 动态PE越低越好（取反）
+    pk_details.append(('mktcap_style', mcap))
+    
+    # ---- 维度12: 量价匹配(vol_price) ----
+    # 放量上涨加分，缩量上涨或放量下跌减分
+    change_pct = _safe_float(c.get('change_pct'))
+    volume_ratio = _safe_float(c.get('volume_ratio'))
+    if change_pct is not None and volume_ratio is not None:
+        vol_price = change_pct * (volume_ratio - 1)  # 涨幅 × 量比偏离1
+    else:
+        vol_price = 0.0
+    pk_details.append(('vol_price', vol_price))
+    
     c['_pk_details'] = pk_details
 
 
@@ -4992,7 +5057,7 @@ def _safe_float(val):
 
 def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None, market_condition=None, index_data=None):
     """@since v6.13.33: 同策略PK + 跨策略冠军PK
-    第一阶段: 同策略标的7维度对决，标记组内获胜者
+    第一阶段: 同策略标的12维度对决，标记组内获胜者(@since v6.22.32: 7→12维度)
     第二阶段: 所有获胜者(含独苗)跨策略对决，标记最强👑冠军"""
     strategy_groups = defaultdict(list)
     for c in candidates:
@@ -5025,9 +5090,11 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
             c['_pk_score'] = 0
             c['_pk_champion'] = False
         
-        # @since v6.14.0: 逐维度PK — 基本面+技术面融合7维度
-        # growth/profit/value/quality/cashflow/flow/heat
-        dims = ['growth', 'profit', 'value', 'quality', 'cashflow', 'flow', 'heat']
+        # @since v6.14.0: 逐维度PK — 基本面+技术面融合12维度
+        # @since v6.22.32: 扩展至12维度（新增技术动能/机构认可/趋势强度/市值风格/量价匹配）
+        # growth/profit/value/quality/cashflow/flow/heat/tech_momentum/inst_approval/trend_strength/mktcap_style/vol_price
+        dims = ['growth', 'profit', 'value', 'quality', 'cashflow', 'flow', 'heat',
+                'tech_momentum', 'inst_approval', 'trend_strength', 'mktcap_style', 'vol_price']
         for dim_idx, dim_name in enumerate(dims):
             # @since v6.20.16: 过滤None值（无F10数据），仅在有≥2个有效数据时才评分
             raw_values = [(c, c['_pk_details'][dim_idx][1]) for c in group]
@@ -5044,7 +5111,7 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
                 for w in winners:
                     w['_pk_score'] += 0.5
         
-        # @since v6.16.26: 降级PK — 当7维度全0时，切换为技术面3维度PK（涨跌幅+量比+换手率）
+        # @since v6.16.26: 降级PK — 当12维度全0时，切换为技术面3维度PK（涨跌幅+量比+换手率）
         max_pk = max(c['_pk_score'] for c in group)
         if max_pk == 0:
             # 技术面3维度：涨跌幅(动量) / 量比(放量意愿) / 换手率(活跃度)
@@ -5067,7 +5134,7 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
             max_pk = max(c['_pk_score'] for c in group)
             pk_dim_label = '3'  # 降级PK用3维度标注
         else:
-            pk_dim_label = '7'
+            pk_dim_label = '12'  # @since v6.22.32: 7→12维度
         top_scorers = [c for c in group if c['_pk_score'] == max_pk]
         if len(top_scorers) == 1:
             winner = top_scorers[0]
@@ -5088,7 +5155,7 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
             'losers': [(c.get('code'), c.get('name'), c['_pk_score']) for c in group if c is not winner]
         }
     
-    # @since v6.13.33: 跨策略冠军PK — 所有获胜者(含独苗)进行7维度对决，找出最强标的
+    # @since v6.13.33: 跨策略冠军PK — 所有获胜者(含独苗)进行12维度对决，找出最强标的(@since v6.22.32: 7→12)
     all_winners = []
     for strat, group in strategy_groups.items():
         if len(group) >= 2:
@@ -5107,7 +5174,9 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
             c['_champion_score'] = 0
         
         # 复用已有_pk_details，每个维度最高者+1分
-        dims = ['growth', 'profit', 'value', 'quality', 'cashflow', 'flow', 'heat']
+        # @since v6.22.32: 扩展至12维度
+        dims = ['growth', 'profit', 'value', 'quality', 'cashflow', 'flow', 'heat',
+                'tech_momentum', 'inst_approval', 'trend_strength', 'mktcap_style', 'vol_price']
         for dim_idx, dim_name in enumerate(dims):
             # @since v6.20.16: 过滤None值，仅在有≥2个有效数据时才评分
             raw_values = [(c, c['_pk_details'][dim_idx][1]) for c in all_winners]
@@ -5199,9 +5268,9 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
                 if sector_bonus > 0:
                     bonus_str += f"+{sector_bonus}板块"
                 if bonus_str:
-                    champion_note = f"👑冠军(Champion:{c['_champion_score']}/7{bonus_str})"
+                    champion_note = f"👑冠军(Champion:{c['_champion_score']}/12{bonus_str})"
                 else:
-                    champion_note = f"👑冠军(Champion:{c['_champion_score']}/7)"
+                    champion_note = f"👑冠军(Champion:{c['_champion_score']}/12)"
                 c['_pk_note'] = champion_note
                 if c.get('_pk_strat_winner'):
                     pass  # 来自同策略组获胜者
@@ -5410,17 +5479,17 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
             champion_info = pk_results.get('__champion__')
             if champion_info:
                 lines.append("\n## 跨策略冠军PK\n")
-                lines.append(f"- 👑 **最强标的**: **{champion_info['winner_name']}**({champion_info['winner_code']}) — 冠军得分 {champion_info['winner_score']}/7")
+                lines.append(f"- 👑 **最强标的**: **{champion_info['winner_name']}**({champion_info['winner_code']}) — 冠军得分 {champion_info['winner_score']}/12")
                 loser_names = ', '.join(f'{name}({code})' for code, name, score in champion_info['losers'])
                 lines.append(f"- 挑战者: {loser_names}")
-                lines.append("- **PK规则**：所有策略获胜者(含独苗)在7维度（成长性/盈利能力/估值水位/资产质量/现金流/筹码/板块热度）对决，另加历史回测盈利加成（有盈利样本+0.5、胜率≥30%+0.5、均收正+0.5）和板块资金加成（所属板块资金净流入+0.5、板块历史胜率≥30%+0.5、≥40%+0.5），总分最高者加冕👑冠军")
+                lines.append("- **PK规则**：所有策略获胜者(含独苗)在12维度（成长性/盈利能力/估值水位/资产质量/现金流/筹码/板块热度/技术动能/机构认可/趋势强度/市值风格/量价匹配）对决，另加历史回测盈利加成（有盈利样本+0.5、胜率≥30%+0.5、均收正+0.5）和板块资金加成（所属板块资金净流入+0.5、板块历史胜率≥30%+0.5、≥40%+0.5），总分最高者加冕👑冠军")
             if pk_strats:
                 lines.append("\n## 同策略PK\n")
-                lines.append("- **PK规则**：同策略标的在7维度对决，总分最高者获胜；全0时自动降级为技术面3维度(涨跌幅/量比/换手率)")
+                lines.append("- **PK规则**：同策略标的在12维度对决，总分最高者获胜；全0时自动降级为技术面3维度(涨跌幅/量比/换手率)")
                 lines.append("- **PK标记**：👑 = 跨策略冠军 | 🏆 = 同策略获胜者 | 空格 = 败方 | - = 无对手")
                 for strat, info in pk_strats:
                     score = info.get('winner_score', 0)
-                    dim_label = info.get('dim_label', '7')
+                    dim_label = info.get('dim_label', '12')  # @since v6.22.32: 默认7→12
                     dim_note = '(技术面PK)' if dim_label == '3' else ''
                     loser_str = ''
                     if info.get('losers'):
@@ -5577,7 +5646,7 @@ def _build_pk_html(pk_results):
     if champion_info:
         loser_names = ', '.join(f'{name}({code})' for code, name, score in champion_info['losers'])
         html_parts.append('<section><h2>👑 跨策略冠军PK</h2><div class="pk-summary">')
-        html_parts.append('<p style="color:#94a3b8;font-size:.85rem;margin-bottom:1rem">所有策略获胜者(含独苗)在7个维度对决+历史回测盈利加成+历史板块参考，总分最高者加冕👑冠军</p>')
+        html_parts.append('<p style="color:#94a3b8;font-size:.85rem;margin-bottom:1rem">所有策略获胜者(含独苗)在12个维度对决+历史回测盈利加成+历史板块参考，总分最高者加冕👑冠军</p>')
         html_parts.append(f'<div class="pk-card" style="background:linear-gradient(135deg,#1e293b,#2d3748);border-radius:12px;padding:1.2rem;margin-bottom:.75rem;border:2px solid #fbbf24">')
         # @since v6.22.30: 显示历史回测盈利加成
         # @since v6.22.31: 显示历史板块参考加分
@@ -5593,9 +5662,9 @@ def _build_pk_html(pk_results):
     # 同策略PK区域
     if pk_strats:
         html_parts.append('<section><h2>同策略PK</h2><div class="pk-summary">')
-        html_parts.append('<p style="color:#94a3b8;font-size:.85rem;margin-bottom:1rem">同策略标的在7维度对决，全0时自动降级为技术面3维度(涨跌幅/量比/换手率)，🏆为组内获胜者</p>')
+        html_parts.append('<p style="color:#94a3b8;font-size:.85rem;margin-bottom:1rem">同策略标的在12维度对决，全0时自动降级为技术面3维度(涨跌幅/量比/换手率)，🏆为组内获胜者</p>')
         for strat, info in pk_strats:
-            dim_label = info.get('dim_label', '7')
+            dim_label = info.get('dim_label', '12')  # @since v6.22.32: 默认7→12
             dim_note = ' <span style="color:#f59e0b;font-size:.75rem">(技术面PK)</span>' if dim_label == '3' else ''
             html_parts.append(f'<div class="pk-card" style="background:#1e293b;border-radius:12px;padding:1rem;margin-bottom:.75rem;border-left:4px solid #38bdf8">')
             html_parts.append(f'<div style="font-weight:bold;color:#e2e8f0;margin-bottom:.5rem"><span class="badge strat_{strat.lower()}" style="display:inline-block;margin-right:.5rem">{strat}</span> {info["count"]}只同策略对决</div>')
