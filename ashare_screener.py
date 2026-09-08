@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.22.31
+A股每日盘前短线标的智能筛选 v6.22.33
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.22.31"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.22.33"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -419,6 +419,29 @@ DEFAULT_PARAMS = {
     "strategy_a_weak_market": "closed",
     "strategy_a_shock_market_limit": 1,
     "strategy_e_expand_threshold": 1000,  # @since v6.22.29: 1500万→1000万, E策略30.8%胜率, 扩大候选池
+    # @since v6.22.33: 冠军(皇冠)胜率优化 — 方案一: 冠军候选池策略胜率门槛
+    # 低于该胜率的策略, 其组获胜者不进入跨策略冠军PK（止血: 低胜率策略不再长期霸占👑）
+    "crown_min_strategy_winrate": 30.0,        # 策略历史胜率门槛(%)
+    "crown_min_strategy_trades": 5,            # 统计策略胜率所需最小样本数
+    # @since v6.22.33: 方案三: 历史加成衰减 + 重复夺冠冷却
+    "crown_bt_bonus_decay": 0.5,               # 历史盈利加成衰减系数(0基础~1全额)
+    "crown_sector_bonus_decay": 0.5,           # 板块历史加成衰减系数
+    "crown_repeat_cooldown_days": 5,           # 同一标的N个交易日内重复夺冠视为超频, 施加冷却扣分
+    "crown_repeat_penalty": 1.0,               # 重复夺冠每次冷却扣分
+    # @since v6.22.33: 方案二: 12维度权重向短线动量倾斜(v参数, 长期调优)
+    "crown_dim_weights": {                      # 键=12维度, 值=权重(>>1短线优先, <1长线/基本面后置)
+        "growth": 0.8, "profit": 0.8, "value": 0.8, "quality": 0.8, "cashflow": 0.8,
+        "flow": 1.2, "heat": 1.3,
+        "tech_momentum": 1.4, "inst_approval": 1.0, "trend_strength": 1.3,
+        "mktcap_style": 0.9, "vol_price": 1.2
+    },
+    # @since v6.22.33: step28 独立冠军胜率阈值自动开关（不复用主策略熔断逻辑）
+    "crown_winrate_auto_enabled": True,        # 是否启用独立冠军胜率自动开关
+    "crown_winrate_threshold": 30.0,           # 最近N个冠军胜率低于该值(%)则自动收紧门槛
+    "crown_winrate_lookback": 10,              # 统计最近N个冠军
+    "crown_winrate_min_trades": 5,             # 冠军胜率统计最小样本
+    "crown_winrate_raise_step": 10.0,          # 每次收紧幅度(百分点)
+    "crown_winrate_ceiling": 50.0,             # 门槛上调上限
     # @since v6.22.1: 策略级胜率监控熔断活参数
     # @since v6.22.29: 阈值10→8, 观察期2→3周, 更早触发熔断
     "win_rate_drop_threshold": 8,   # 单策略胜率连续下降超过N个百分点触发熔断
@@ -5055,13 +5078,48 @@ def _safe_float(val):
     try: return float(val)
     except (ValueError, TypeError): return None
 
-def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None, market_condition=None, index_data=None):
+def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None, market_condition=None, index_data=None, strategy_winrates=None):
     """@since v6.13.33: 同策略PK + 跨策略冠军PK
     第一阶段: 同策略标的12维度对决，标记组内获胜者(@since v6.22.32: 7→12维度)
-    第二阶段: 所有获胜者(含独苗)跨策略对决，标记最强👑冠军"""
+    第二阶段: 所有获胜者(含独苗)跨策略对决，标记最强👑冠军
+    @since v6.22.33: 冠军(皇冠)胜率优化三重止血:
+      方案一: 候选池加策略胜率门槛——低胜率策略获胜者被剔除出跨策略冠军PK
+      方案二: 12维度权重向短线动量倾斜(可调v参数 crown_dim_weights)
+      方案三: 历史盈利/板块加成衰减 + 重复夺冠冷却(同标的热窗口内多次夺冠扣分)"""
     strategy_groups = defaultdict(list)
     for c in candidates:
         strategy_groups[c.get('strategy', '?')].append(c)
+    # @since v6.22.33: 读取v参数(默认回退DEFAULT_PARAMS)
+    _cw = params.get('crown_dim_weights') or DEFAULT_PARAMS.get('crown_dim_weights', {})
+    _min_wr = params.get('crown_min_strategy_winrate', 30.0)
+    _min_trades = params.get('crown_min_strategy_trades', 5)
+    _bt_decay = params.get('crown_bt_bonus_decay', 0.5)
+    _sec_decay = params.get('crown_sector_bonus_decay', 0.5)
+    _cd_days = params.get('crown_repeat_cooldown_days', 5)
+    _cd_penalty = params.get('crown_repeat_penalty', 1.0)
+
+    # 方案3: 重复夺冠冷却——统计每个 code 近 _cd_days 交易日内的历史夺冠次数
+    def _champ_repeat_count(code, cd_days):
+        """读取推荐历史, 统计该 code 在 cd_days 个自然日前至今的夺冠次数(不含今日预测)"""
+        try:
+            from datetime import datetime, timedelta
+            cutoff = (datetime.now() - timedelta(days=cd_days)).strftime('%Y%m%d')
+            cnt = 0
+            for f in sorted(os.listdir(DATA_DIR)):
+                if f.startswith('推荐历史_') and f.endswith('.json'):
+                    date_stamp = f[len('推荐历史_'):-5]
+                    if not date_stamp.isdigit() or date_stamp < cutoff:
+                        continue
+                    try:
+                        with open(os.path.join(DATA_DIR, f), 'r', encoding='utf-8') as fh:
+                            for r in json.load(fh):
+                                if isinstance(r, dict) and r.get('type') == 'recommendation' and r.get('is_champion') and r.get('code') == code:
+                                    cnt += 1
+                    except (json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+                        continue
+            return cnt
+        except Exception:
+            return 0
     
     # @since v6.13.32: 市场情绪得分（基于指数涨跌，弱市0分、震荡1分、强市2分）
     sh_info = index_data.get('sh', {}) if index_data else {}
@@ -5157,6 +5215,11 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
     
     # @since v6.13.33: 跨策略冠军PK — 所有获胜者(含独苗)进行12维度对决，找出最强标的(@since v6.22.32: 7→12)
     all_winners = []
+    # @since v6.22.33 方案一: 策略胜率门槛——低胜率策略的获胜者被剔除出跨策略冠军PK
+    # 依据 strategy_winrates（来自回测 strategy_metrics, 百分比口径），仅当样本充足且胜率低于门槛才剔除。
+    # 不改变原主策略胜率监控逻辑（步骤28检查6的熔断仍独立运行）。
+    gated_strategies = []  # 记录被门槛拦下的策略（用于报告）
+    skipped_by_gate = 0
     for strat, group in strategy_groups.items():
         if len(group) >= 2:
             w = [c for c in group if c.get('_pk_winner')]
@@ -5166,18 +5229,33 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
             for c in w:
                 c['_pk_winner'] = True
                 c['_pk_score'] = 0
+        # 方案一门槛: 该策略历史胜率低于 crown_min_strategy_winrate(%) 且样本>=crown_min_strategy_trades
+        if (_min_trades > 0) and strategy_winrates and strat in strategy_winrates:
+            _sw = strategy_winrates[strat]
+            _st = _sw.get('total', 0)
+            _wr = _sw.get('win_rate', None)
+            if _st >= _min_trades and _wr is not None and _wr < _min_wr:
+                _nm = _STRATEGY_NAMES.get(strat, strat)
+                gated_strategies.append(f"{strat}({_nm})({_wr:.1f}%)")
+                skipped_by_gate += len(w)
+                for _wc in w:
+                    _wc['_pk_champion'] = False  # 明确不进跨策略冠军PK
+                continue  # 该策略不进入冠军候选池
         all_winners.extend(w)
+    if gated_strategies:
+        print(f"  ⚠️ [方案一] 策略胜率门槛: 剔除{skipped_by_gate}个低胜率策略获胜者出冠军PK: {', '.join(gated_strategies)}")
     
     champion = None
     if len(all_winners) >= 2:
         for c in all_winners:
             c['_champion_score'] = 0
         
-        # 复用已有_pk_details，每个维度最高者+1分
         # @since v6.22.32: 扩展至12维度
-        dims = ['growth', 'profit', 'value', 'quality', 'cashflow', 'flow', 'heat',
+        disds = ['growth', 'profit', 'value', 'quality', 'cashflow', 'flow', 'heat',
                 'tech_momentum', 'inst_approval', 'trend_strength', 'mktcap_style', 'vol_price']
-        for dim_idx, dim_name in enumerate(dims):
+        # @since v6.22.33 方案二: 维度权重向短线动量倾斜——growht面低权重, 短线/量价/板块热点高权重
+        for dim_idx, dim_name in enumerate(disds):
+            _w = _cw.get(dim_name, 1.0) if isinstance(_cw, dict) else 1.0
             # @since v6.20.16: 过滤None值，仅在有≥2个有效数据时才评分
             raw_values = [(c, c['_pk_details'][dim_idx][1]) for c in all_winners]
             values = [(c, v) for c, v in raw_values if v is not None]
@@ -5188,13 +5266,15 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
                 continue
             tops = [c for c, v in values if v == max_val]
             if len(tops) == 1:
-                tops[0]['_champion_score'] += 1
+                tops[0]['_champion_score'] += _w
             else:
                 for t in tops:
-                    t['_champion_score'] += 0.5
+                    t['_champion_score'] += _w * 0.5
         
         # @since v6.22.30: 第8维度—历史回测盈利加成
         # 参考bt_lookup中该标的的历史回测表现，优先选历史盈利标的
+        # @since v6.22.33 方案三: 历史盈利加成整体施加衰减系数 crown_bt_bonus_decay;
+        #  并在此统计重复夺冠冷却，冷却在最终总分上做扣分(见下方 champion_score 归一)。
         for c in all_winners:
             code = c.get('code', '')
             bt = (bt_lookup or {}).get(code, {})
@@ -5208,6 +5288,7 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
                 bonus += 0.5  # 历史胜率>=30%
             if bt_avg_ret > 0:
                 bonus += 0.5  # 历史平均收益为正
+            bonus *= _bt_decay  # @since v6.22.33 方案三: 历史加成衰减
             if bonus > 0:
                 c['_champion_score'] += bonus
                 c['_bt_bonus'] = round(bonus, 1)
@@ -5247,9 +5328,24 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
         except Exception:
             pass  # 文件缺失或格式错误不加分
         if flow_bonus > 0:
+            flow_bonus *= _sec_decay  # @since v6.22.33 方案三: 板块历史加成衰减
+        if flow_bonus > 0:
             c['_champion_score'] += flow_bonus
             c['_sector_bonus'] = round(flow_bonus, 1)
-        
+
+        # @since v6.22.33 方案三: 重复夺冠冷却——同标的在冷却窗口内多次夺冠则扣分
+        # 冷却判定: 历史夺冠次数>=2 才触发(首冠不罚), 每次多夺一次扣 crown_repeat_penalty
+        for c in all_winners:
+            code = c.get('code', '')
+            repeat = 0
+            if _cd_days > 0:
+                repeat = _champ_repeat_count(code, _cd_days)
+                if repeat >= 2:
+                    penalty = (repeat - 1) * _cd_penalty
+                    c['_champion_score'] -= penalty
+                    c['_crown_cooldown'] = round(penalty, 1)
+                    c['_crown_repeat'] = repeat
+
         max_champ = max(c['_champion_score'] for c in all_winners)
         top_champs = [c for c in all_winners if c['_champion_score'] == max_champ]
         if len(top_champs) == 1:
@@ -5257,16 +5353,38 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
         else:
             champion = max(top_champs, key=lambda x: x.get('score', 0))
         
+        # @since v6.22.33: 若方案一将全部获胜者剔除, 则空冠军候选——兜底: 从剔除池仍挑最强, 避免本轮无👑
+        if len(all_winners) == 0 and champion is None:
+            _fallback = []
+            for strat, group in strategy_groups.items():
+                for _gc in group:
+                    if _gc.get('_pk_winner'):
+                        _gc.setdefault('_champion_score', 0)
+                        _fallback.append(_gc)
+            if _fallback:
+                # 冷却扣分同样适用于兜底候选(不重复读历史夺冠, 直接按已有记录简单取最大score)
+                all_winners = _fallback
+                _mx = max(c.get('score', 0) for c in all_winners)
+                champion = max((c for c in all_winners if c.get('score', 0) == _mx), key=lambda x: x.get('code'))
+                for c in all_winners:
+                    c['_champion_score'] = c.get('score', 0)
+                print(f"  ⚠️ [方案一] 全部获胜者被门槛剔除, 兜底选择次优冠军 {champion.get('name')}({champion.get('code')})")
+            else:
+                champion = None
+
         for c in all_winners:
-            c['_pk_champion'] = (c is champion)
+            c['_pk_champion'] = (c is champion and champion is not None)
             if c is champion:
                 bt_bonus = c.get('_bt_bonus', 0)
                 sector_bonus = c.get('_sector_bonus', 0)
+                cooldown = c.get('_crown_cooldown', 0)
                 bonus_str = ''
                 if bt_bonus > 0:
                     bonus_str += f"+{bt_bonus}历史"
                 if sector_bonus > 0:
                     bonus_str += f"+{sector_bonus}板块"
+                if cooldown > 0:
+                    bonus_str += f"-{cooldown}冷却(x{c.get('_crown_repeat', 2)})"
                 if bonus_str:
                     champion_note = f"👑冠军(Champion:{c['_champion_score']}/12{bonus_str})"
                 else:
@@ -5277,15 +5395,18 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
                 else:
                     # 独苗夺冠
                     pass
-        pk_results['__champion__'] = {
-            'count': len(all_winners),
-            'winner_code': champion.get('code'),
-            'winner_name': champion.get('name'),
-            'winner_score': champion['_champion_score'],
-            'bt_bonus': champion.get('_bt_bonus', 0),  # @since v6.22.30: 历史回测盈利加成
-            'sector_bonus': champion.get('_sector_bonus', 0),  # @since v6.22.31: 历史板块参考加分
-            'losers': [(c.get('code'), c.get('name'), c['_champion_score']) for c in all_winners if c is not champion]
-        }
+        if champion is not None:
+            pk_results['__champion__'] = {
+                'count': len(all_winners),
+                'winner_code': champion.get('code'),
+                'winner_name': champion.get('name'),
+                'winner_score': champion['_champion_score'],
+                'bt_bonus': champion.get('_bt_bonus', 0),  # @since v6.22.30: 历史回测盈利加成
+                'sector_bonus': champion.get('_sector_bonus', 0),  # @since v6.22.31: 历史板块参考加分
+                'cooldown': champion.get('_crown_cooldown', 0),  # @since v6.22.33: 重复夺冠冷却扣分
+                'gated': gated_strategies,  # @since v6.22.33: 被方案一门槛剔除的策略
+                'losers': [(c.get('code'), c.get('name'), c['_champion_score']) for c in all_winners if c is not champion]
+            }
     else:
         for c in all_winners:
             c['_pk_champion'] = False
@@ -5479,10 +5600,15 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
             champion_info = pk_results.get('__champion__')
             if champion_info:
                 lines.append("\n## 跨策略冠军PK\n")
-                lines.append(f"- 👑 **最强标的**: **{champion_info['winner_name']}**({champion_info['winner_code']}) — 冠军得分 {champion_info['winner_score']}/12")
+                cooldown_note = ''
+                if champion_info.get('cooldown', 0) > 0:
+                    cooldown_note = f" (⚠️含重复夺冠冷却-{champion_info['cooldown']})"
+                lines.append(f"- 👑 **最强标的**: **{champion_info['winner_name']}**({champion_info['winner_code']}) — 冠军得分 {champion_info['winner_score']}/12{cooldown_note}")
+                if champion_info.get('gated'):
+                    lines.append(f"- ⛔ **策略胜率门槛剔除**: {', '.join(champion_info['gated'])}（@since v6.22.33 方案一）")
                 loser_names = ', '.join(f'{name}({code})' for code, name, score in champion_info['losers'])
                 lines.append(f"- 挑战者: {loser_names}")
-                lines.append("- **PK规则**：所有策略获胜者(含独苗)在12维度（成长性/盈利能力/估值水位/资产质量/现金流/筹码/板块热度/技术动能/机构认可/趋势强度/市值风格/量价匹配）对决，另加历史回测盈利加成（有盈利样本+0.5、胜率≥30%+0.5、均收正+0.5）和板块资金加成（所属板块资金净流入+0.5、板块历史胜率≥30%+0.5、≥40%+0.5），总分最高者加冕👑冠军")
+                lines.append("- **PK规则**：所有策略获胜者(含独苗)在12维度（成长性/盈利能力/估值水位/资产质量/现金流/筹码/板块热度/技术动能/机构认可/趋势强度/市值风格/量价匹配）对决——维度权重向短线动量倾斜(@since v6.22.33 方案二)，另加历史回测盈利加成（有盈利样本+0.5、胜率≥30%+0.5、均收正+0.5，均经衰减）和板块资金加成（净流入+0.5、板块胜率≥30%+0.5、≥40%+0.5，经衰减），冷窗口(5交易日)内重复夺冠≥2次扣分，低胜率策略获胜者被门槛剔除，总分最高者加冕👑冠军")
             if pk_strats:
                 lines.append("\n## 同策略PK\n")
                 lines.append("- **PK规则**：同策略标的在12维度对决，总分最高者获胜；全0时自动降级为技术面3维度(涨跌幅/量比/换手率)")
@@ -6973,7 +7099,15 @@ def main():
             log_alert("WARNING", "回测", "回测样本0笔有效")
             record_step_status("步骤25: 历史回测", "WARN", f"推荐历史{rec_total}条但0笔有效交易")
 
-    print("\n[步骤19B] 同策略PK..."); pk_results = step19b_strategy_pk(final, kline_data, bt_lookup, sector_limit_up, market_condition, index_data)
+    # @since v6.22.33: 从回测 strategy_metrics 构建策略胜率映射, 供方案一冠军候选门槛使用
+    _strat_wr_map = {}
+    if bt_result and isinstance(bt_result.get('strategy_metrics'), dict):
+        for _s, _sm in bt_result['strategy_metrics'].items():
+            _t = _sm.get('total', 0)
+            _wr = _sm.get('win_rate', None)
+            if _t > 0:
+                _strat_wr_map[_s] = {'total': _t, 'win_rate': _wr}
+    print("\n[步骤19B] 同策略PK..."); pk_results = step19b_strategy_pk(final, kline_data, bt_lookup, sector_limit_up, market_condition, index_data, strategy_winrates=_strat_wr_map)
     record_step_status("步骤19B: 同策略PK", "OK", f"{sum(1 for v in pk_results.values() if v['count']>=2)}组对决")
 
     print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup, pk_results, kline_data)
@@ -7255,6 +7389,86 @@ def _detect_strategy_circuit_breaker(bt_result, history, threshold, lookback, ma
 
 
 # ============================================================
+# @since v6.22.33: 独立冠军(皇冠)胜率监控 —— 与主策略胜率熔断(检查6)完全隔离
+# 不复用/_detect_strategy_circuit_breaker, 不写 strategy_win_rates/strategy_adjustments,
+# 使用独立字段 crown_win_rates/crown_adjustments, 避免绕过SSOT/污染主策略监控。
+# ============================================================
+def _load_crown_win_rate_history():
+    """从推荐历史加载历史冠军(皇冠)标的的真实收益, 返回按日期升序的 [(date, ret), ...]"""
+    records = []
+    for f in sorted(os.listdir('/workspace')):
+        if f.startswith('推荐历史_') and f.endswith('.json'):
+            d = safe_read_json(os.path.join('/workspace', f), [])
+            for r in d:
+                if (isinstance(r, dict) and r.get('type') == 'recommendation'
+                        and r.get('is_champion') and r.get('real_return_pct') is not None):
+                    records.append((r.get('date') or r.get('prediction_date') or '', r['real_return_pct']))
+    records.sort(key=lambda x: x[0])
+    return records
+
+
+def _record_crown_win_rates(records, data_date):
+    """将冠军胜率快照写入当天 strategy_check 的独立字段 crown_win_rates"""
+    if not records:
+        return
+    hist = [r for r in records if isinstance(r, tuple) and len(r) >= 2 and r[1] is not None]
+    if not hist:
+        return
+    wins = sum(1 for _, ret in hist if ret > 0)
+    wr = wins / len(hist) * 100
+    hf = f"/workspace/推荐历史_{data_date.replace('-', '')}.json"
+    existing = safe_read_json(hf, [])
+    updated = False
+    for r in existing:
+        if r.get('type') == 'strategy_check':
+            r['crown_win_rates'] = {
+                'total': len(hist),
+                'win_rate': round(wr, 1),
+                'wins': wins,
+                'losses': len(hist) - wins,
+            }
+            updated = True
+            break
+    if not updated:
+        existing.append({
+            "type": "strategy_check",
+            "date": data_date,
+            "crown_win_rates": {'total': len(hist), 'win_rate': round(wr, 1), 'wins': wins, 'losses': len(hist) - wins},
+        })
+    safe_write_json(hf, existing)
+
+
+def _detect_crown_winrate_breach(records, lookback, threshold, min_trades):
+    """独立冠军胜率阈值检测: 最近 lookback 个冠军真实收益的胜率低于 threshold 且样本>=min_trades
+    返回 (breach, wr, total) —— 触发时 breach=True。仅调整冠军门槛参数, 不改主策略监控。"""
+    if not records:
+        return False, None, 0
+    recent = [ret for _, ret in records if ret is not None][-lookback:]
+    if len(recent) < min_trades:
+        return False, None, len(recent)
+    wins = sum(1 for r in recent if r > 0)
+    wr = wins / len(recent) * 100
+    if wins < min_trades and len(recent) >= min_trades:
+        pass  # 胜率低于阈值即触发, 不要求胜场数
+    return wr < threshold, wr, len(recent)
+
+
+def _incr_crown_adj_count(data_date):
+    """在当天 strategy_check 记录中递增独立冠军调参计数"""
+    hf = f"/workspace/推荐历史_{data_date.replace('-', '')}.json"
+    existing = safe_read_json(hf, [])
+    for r in existing:
+        if r.get('type') == 'strategy_check':
+            cnt = r.get('crown_adjustments', 0) or 0
+            r['crown_adjustments'] = cnt + 1
+            safe_write_json(hf, existing)
+            return cnt + 1
+    existing.append({"type": "strategy_check", "date": data_date, "crown_adjustments": 1})
+    safe_write_json(hf, existing)
+    return 1
+
+
+# ============================================================
 # 步骤28：筛选后自动整改 (v6.21.4)
 # ============================================================
 def step28_self_rectify(final, fc, bt_result, sd, flow_data, total_raw, ae, asig, astr, amicro, aind, anew, er):
@@ -7377,7 +7591,44 @@ def step28_self_rectify(final, fc, bt_result, sd, flow_data, total_raw, ae, asig
             })
             # 递增调参计数（立即生效，防止下次运行重复触发）
             _incr_strategy_adj_count(s, data_date)
-    
+
+    # --- 检查6B: 独立冠军(皇冠)胜率阈值自动开关 @since v6.22.33 ---
+    # 与检查6主策略熔断完全隔离: 仅监控👑冠军标的真实收益, 触发时收紧冠军门槛参数,
+    # 不使用 strategy_* 字段, 不触碰主策略胜率监控, 从根上避免绕过SSOT造成版本冲突。
+    if params.get("crown_winrate_auto_enabled", True):
+        crown_records = _load_crown_win_rate_history()
+        _record_crown_win_rates(crown_records, data_date)
+        _lb = params.get("crown_winrate_lookback", 10)
+        _thr = params.get("crown_winrate_threshold", 30.0)
+        _mt = params.get("crown_winrate_min_trades", 5)
+        _brk, _cwr, _ctotal = _detect_crown_winrate_breach(crown_records, _lb, _thr, _mt)
+        if _brk:
+            # 读取当前门槛并上调（单次 +raise_step, 上限 ceiling）
+            _cur = params.get("crown_min_strategy_winrate", 30.0)
+            _step = params.get("crown_winrate_raise_step", 10.0)
+            _ceil = params.get("crown_winrate_ceiling", 50.0)
+            _new_cur = min(_ceil, _cur + _step)
+            issues.append(
+                f"独立冠军胜率偏低: 最近{_ctotal}个👑冠军胜率{_cwr:.1f}%低于阈值{_thr:.1f}%, "
+                f"自动收紧冠军门槛 {_cur}%→{_new_cur}%"
+            )
+            rectifications.append({
+                "type": "crown_winrate_breach",
+                "target": "crown_min_strategy_winrate",
+                "strategy": None,
+                "old": _cur,
+                "new": _new_cur,
+                "reason": (
+                    f"独立冠军胜率开关: 最近{_ctotal}个冠军胜率{_cwr:.1f}%<阈值{_thr:.1f}%, "
+                    f"冠军候选策略门槛{_cur}→{_new_cur}; 仅调整冠军门槛, 不动主策略胜率监控"
+                ),
+                "changes": [
+                    f"独立冠军胜率开关: 最近{_ctotal}期冠军胜率{_cwr:.1f}%<{_thr:.1f}%, "
+                    f"冠军候选策略胜率门槛{_cur}%→{_new_cur}%(上限{_ceil}%), 调参次数+1"
+                ]
+            })
+            _incr_crown_adj_count(data_date)
+
     # --- 输出分析结果 ---
     if not issues:
         print("  ✅ 未发现需要整改的问题")
@@ -7422,7 +7673,7 @@ def _apply_rectifications(rectifications, issues):
     param_changes = {}
     for r in rectifications:
         all_changes.extend(r['changes'])
-        if r['type'] == 'param':
+        if r['type'] == 'param' or r['type'] == 'crown_winrate_breach':
             param_changes[r['target']] = r['new']
     
     change_summary = "; ".join(all_changes)
@@ -7446,7 +7697,7 @@ def _apply_rectifications(rectifications, issues):
         
         # 逐项应用整改
         for r in rectifications:
-            if r['type'] == 'param':
+            if r['type'] == 'param' or r['type'] == 'crown_winrate_breach':
                 key = r['target']
                 new_val = r['new']
                 old_val = r['old']
@@ -7455,9 +7706,15 @@ def _apply_rectifications(rectifications, issues):
                 new_str = f'"{key}": {new_val}'
                 if old_str in code:
                     code = code.replace(old_str, new_str, 1)
-                    log_alert("INFO", "自动整改", f"参数 {key}: {old_val}→{new_val}")
+                    log_alert("INFO", "自动整改", f"参数 {key}: {old_val}→{new_val} ({r['type']})")
                 else:
-                    log_alert("WARNING", "自动整改", f"参数 {key} 未找到原文: {old_str}")
+                    # 尝试精确匹配(浮点格式可能不同, 如30.0 vs 30)
+                    _alt_old = old_str.replace('.0', '', 1) if isinstance(old_val, float) else old_str
+                    if _alt_old != old_str and _alt_old in code:
+                        code = code.replace(_alt_old, new_str, 1)
+                        log_alert("INFO", "自动整改", f"参数 {key}: {old_val}→{new_val} (备选匹配, {r['type']})")
+                    else:
+                        log_alert("WARNING", "自动整改", f"参数 {key} 未找到原文: {old_str} (type={r['type']})")
             
             elif r['type'] == 'proxy':
                 # 增强资金代理估算 - 在 _estimate_main_inflow 函数中查找并增强
@@ -7512,7 +7769,7 @@ def _apply_rectifications(rectifications, issues):
         #    此前用朴素全局替换 SKILL.md，既不调用 sync_version.py，又会污染版本历史、且常未推进到最终版本。
         new_params = {}
         for r in rectifications:
-            if r['type'] == 'param':
+            if r['type'] == 'param' or r['type'] == 'crown_winrate_breach':
                 new_params[r['target']] = r['new']
         sync_script = os.path.join(rd, "scripts", "sync_version.py")
         if os.path.exists(sync_script):
