@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.22.33
+A股每日盘前短线标的智能筛选 v6.22.34
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.22.33"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.22.34"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -442,6 +442,13 @@ DEFAULT_PARAMS = {
     "crown_winrate_min_trades": 5,             # 冠军胜率统计最小样本
     "crown_winrate_raise_step": 10.0,          # 每次收紧幅度(百分点)
     "crown_winrate_ceiling": 50.0,             # 门槛上调上限
+    # @since v6.22.34: 买入池期望≥0过滤 + 每日买入数量上限（独立步骤，不改主筛选/胜率监控）
+    # 依据: 回测报告(2026-08-10~09-07)各策略未来期望(avg_return)存在显著分化,
+    #   B/J/F/H 为正期望, D/C/G/A/I 为负期望; 缩紧=只把正期望策略标的写入推荐历史, 数量不足时不硬凑。
+    "buy_pool_enabled": True,                  # 是否启用买入池期望过滤(独立开关)
+    "buy_pool_expect_min": 0.0,                # 策略期望门槛(%): 仅当 avg_return>=该值才允许其标的进入买入池
+    "buy_pool_min_trades": 5,                  # 期望统计所需最小交易样本(不足则视为数据不足, 保守排除)
+    "buy_pool_max_count": 10,                  # 每日买入池数量上限(默认10, 达标标的不足时自然少买)
     # @since v6.22.1: 策略级胜率监控熔断活参数
     # @since v6.22.29: 阈值10→8, 观察期2→3周, 更早触发熔断
     "win_rate_drop_threshold": 8,   # 单策略胜率连续下降超过N个百分点触发熔断
@@ -6550,15 +6557,68 @@ def step21_final_verify(mp, fc):
     except FileNotFoundError:
         log_alert("ERROR", "数量校验", "MD文件不存在")
 
-def step22_write_history(candidates, champion_code=None):
+def _filter_buy_pool(candidates, strategy_metrics=None):
+    """@since v6.22.34: 独立买入池期望≥0过滤 + 数量上限（缩紧数量）。
+
+    背景: 回测显示各策略未来期望(avg_return)分化, 负期望策略(如D/C/G/A/I)长期拖累买入池
+    「期望」。缩紧的正确姿势不是拍脑袋把10只压成N只, 而是先按策略期望过滤, 只把期望≥门槛、
+    且样本充足的策略标的写入推荐历史; 达标标的不足 max_count 时自然少买(不硬凑)。
+
+    - 严格独立: 本函数只作用于『写入推荐历史的买入池』, 不改动主筛选结果 final,
+      不改动报告展示, 不改动主策略胜率监控/熔断逻辑, 不绕过 SSOT。
+    - 返回 (kept, dropped, reasons): kept=进入买入池的候选, dropped=被剔除的候选,
+      reasons=每条剔除原因的文本列表(供日志/step28 归因)。
+    """
+    if not params.get("buy_pool_enabled", True):
+        return candidates, [], []
+    sm = strategy_metrics or {}
+    exp_min = params.get("buy_pool_expect_min", 0.0)
+    min_trades = params.get("buy_pool_min_trades", 5)
+    max_count = params.get("buy_pool_max_count", 10)
+    kept = []; dropped = []; reasons = []
+    for c in candidates:
+        s = c.get('strategy', '?')
+        meta = sm.get(s)
+        total = (meta or {}).get('total', 0)
+        avg_ret = (meta or {}).get('avg_return', None)
+        if avg_ret is None or total < min_trades:
+            # 数据不足: 保守视为无可靠正期望证据, 剔除(避免把未经验证的标的放进买入池)
+            trailing = f"样本不足({total}/{min_trades})" if total < min_trades else "无期望数据"
+            dropped.append(c)
+            reasons.append(f"{c.get('code','?')}({s}) 期望过滤: {trailing}, 剔除")
+            continue
+        if avg_ret < exp_min:
+            dropped.append(c)
+            reasons.append(f"{c.get('code','?')}({s}) 期望过滤: 均收{avg_ret:+.2f}%<{exp_min:+.1f}%, 剔除")
+            continue
+        kept.append(c)
+    if len(kept) > max_count:
+        # 数量上限: 超额部分按进入顺序丢到队尾(保留相对稳定的靠前候选), 仅收缩不造作
+        excess = len(kept) - max_count
+        for c in kept[max_count:]:
+            dropped.append(c)
+            reasons.append(f"{c.get('code','?')}({c.get('strategy','?')}) 数量上限: 买入池{len(kept)}只>{max_count}只, 尾部剔除")
+        kept = kept[:max_count]
+    return kept, dropped, reasons
+
+
+def step22_write_history(candidates, champion_code=None, strategy_metrics=None):
     """@since v6.13.11: 去重写入——按(code,strategy,entry)去重，避免多次运行重复追加
-    @since v6.16.12: 新增champion_code参数，标记当日👑冠军标的"""
+    @since v6.16.12: 新增champion_code参数，标记当日👑冠军标的
+    @since v6.22.34: 写入前先经独立买入池期望过滤(_filter_buy_pool), 缩紧数量; 报告展示不受影响
+    @since v6.22.34: 新增strategy_metrics参数(可选), 供期望过滤使用; 不传则仅按数量截断"""
     hf = f"/workspace/推荐历史_{data_date.replace('-', '')}.json"
     existing = safe_read_json(hf)
     existing_keys = set()
     for r in existing:
         if r.get('type') == 'recommendation':
             existing_keys.add((r.get('code'), r.get('strategy'), round(r.get('entry', 0), 2)))
+    # @since v6.22.34: 写入前先经独立买入池期望过滤——只把期望≥门槛、数量≤上限的标的写入推荐历史
+    candidates, dropped, reasons = _filter_buy_pool(candidates, strategy_metrics)
+    if dropped:
+        for _rz in reasons:
+            log_alert("INFO", "买入池", _rz)
+        log_alert("INFO", "买入池", f"缩紧: 候选{len(candidates)+len(dropped)}只 → 买入池{len(candidates)}只 (剔除{len(dropped)}只)")
     written = 0
     for c in candidates:
         entry = calc_entry_price(c)
@@ -7120,7 +7180,7 @@ def main():
         print("\n[步骤22] 推荐历史... 周末跳过")
         record_step_status("步骤22: 推荐历史", "SKIP", "周末")
     else:
-        print("\n[步骤22] 推荐历史..."); champion_code = pk_results.get('__champion__', {}).get('winner_code', '') if pk_results else ''; step22_write_history(final, champion_code)
+        print("\n[步骤22] 推荐历史..."); champion_code = pk_results.get('__champion__', {}).get('winner_code', '') if pk_results else ''; step22_write_history(final, champion_code, strategy_metrics=(bt_result.get('strategy_metrics') if bt_result and isinstance(bt_result.get('strategy_metrics'), dict) else None))
         record_step_status("步骤22: 推荐历史", "OK", f"{fc}条")
     print("\n" + "=" * 60)
     print("📊 筛选概况")
