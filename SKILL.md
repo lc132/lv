@@ -1,10 +1,67 @@
 ---
 name: ashare-screener
-description: A股每日盘前短线标的智能筛选(v6.20.12)。基于前一日收盘数据，通过37步筛选流程，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合7维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
+description: A股每日盘前短线标的智能筛选(v6.22.35)。基于前一日收盘数据，通过37步筛选流程+自动整改+策略级胜率监控熔断，输出短线标的_YYYYMMDD.md和可视化HTML报告。同策略+跨策略冠军PK采用基本面+技术面融合12维度。回测报告新增👑皇冠回测板块+按日期均匀采样交易明细。
 ---
-# A股盘前短线标的筛选 v6.20.12
+# A股盘前短线标的筛选 v6.22.35
 
 ## 版本历史
+- **v6.22.35**: 取消数量上限截断+皇冠回测补全: 冠军标的取消截断剔除(保证回测可追踪); backtest.py冠军筛选边界修正(<today→<=today); generate_backtest_report新增皇冠回测MD章节(此前仅HTML有); 历史推荐补录09-09/09-10冠军记录
+
+- **v6.22.34**: 买入池期望≥0过滤+数量上限: 独立步骤(不改主筛选/不改胜率监控/不绕过SSOT), 只把期望≥门槛且样本≥5的策略标的写入推荐历史, 每日买入池上限10只(达标不足时不硬凑); B/J/F/H正期望被保留, D/C/G/A/I负期望被剔除
+
+- **v6.22.33**: 冠军胜率优化: 方案一(候选策略胜率门槛剔除)+方案二(12维度权重向短线动量倾斜v参数)+方案三(历史加成衰减+重复夺冠冷却)+step28独立冠军胜率阈值自动开关
+
+- **v6.22.32**: 冠军PK维度扩展至12维度: 新增技术动能(MACD柱+RSI+布林带宽)/机构认可度(龙虎榜机构席位+净买额+融资融券)/趋势强度(均线多头排列+涨停天数+60日位置)/市值风格(小市值优先+低PE)/量价匹配(放量上涨加分)
+
+- **v6.22.31**: 增加历史板块参考: 冠军PK新增第9维度—板块资金净流入+0.5/板块历史胜率>=30%+0.5/>=40%+0.5
+
+- **v6.22.30**: 皇冠标的评选增加历史回测盈利加成: 有盈利样本+0.5/胜率>=30%+0.5/均收正+0.5
+
+- **v6.22.29**: 全策略历史回测数据驱动调参: 放宽止损止盈区间提胜率; 策略E阈值1500万→1000万; 熔断阈值10→8/观察期2→3周
+
+- **v6.22.28**: 回测列改用图标序列：每个样本对应一个图标，不再使用数字表示
+
+- **v6.22.27**: 修复 real_return_pct 全空: step0C 由单日严格窗口(prediction_date==today)改为回溯补采
+
+- **v6.22.26**: 修复: 最近交易明细采样上限过低(30→200条,15→50条/日)
+
+- **v6.22.25**: 修复: 预测板块HTML区块占位符未替换(Python .format()优先级Bug)
+
+- **v6.22.24**: 新增预测板块HTML区块(基于历史资金流向预测下个交易日上涨板块并映射龙头标的)+行业资金历史.json跨天持久化(step0A回拉/step26推送)
+
+- **v6.22.23**: 新增 day-level 防重(步骤0D)：按 prediction_date 判定，MD+HTML 均已存在则 sys.exit(0) 跳过当日筛选，避免同一天多次运行互相污染(实时资金快照不同+推荐历史累加导致冠军易主)；支持 LV_FORCE_RERUN=1 强制重跑
+
+- **v6.22.22**: 验证并确认下个交易日板块上涨预测能力(三因子打分)已集成,同步MD/HTML输出;本轮版本号递增至v6.22.22
+
+- **v6.22.21**: 新增下个交易日板块上涨预测能力：基于板块近15日主力净流入的三因子打分(连续流入40%+近3日均35%+当日强度25%)预测上涨板块并映射龙头标的,支持输出MD/HTML报告
+
+- **v6.22.20**: 推荐历史新增次日真实收益字段(step0C);监控/统计切换真实口径(real_return_pct优先)
+
+- **v6.22.19**: 修复资金去向流出为-: step10C_fetch_industry_flow_rank 双方向拉取净流入(po=1)+净流出(po=0)合并去重, 流出列/资金流出TOP5正常展示
+
+- **v6.22.18**: 版本同步：由 sync_version.py 从 VERSION 写入
+
+- **v6.22.17**: 版本同步：由 sync_version.py 从 VERSION 写入
+
+- **v6.22.16**: K线数据源修复: web.ifzq.gtimg.cn → proxy.finance.qq.com/ifzqgtimg (沙箱内旧域名被L7拦截返回501, 修复后K线500只有效, 回测胜率恢复正常)
+
+- **v6.22.15**: 限价未成交不再次日开盘追入，直接标注no_entry并独立统计；no_entry排除出有效样本，胜率/均收/盈亏比/夏普/最大回撤均不含no_entry
+
+- **v6.22.13**: 策略A震荡市上限收紧: strategy_a_shock_market_limit 1→1, 震荡市策略A回测胜率仅23.1%需进一步控制敞口
+
+- **v6.22.12**: v6.22.12 版本治理: 修复自动整改路径未触发SSOT同步(sync_version.py); 新增SKILL.md版本历史同步+quality-gate自检拦截(未同步则中止推送)
+
+- **v6.22.11**: v6.22.11 自动整改(1项): 策略C震荡市上限收紧: strategy_c_shock_market_limit 3→2, 震荡市策略C回测胜率仅20.8%需进一步控制敞口
+
+- **v6.22.9**: 皇冠回测交易明细显示不全修复——(1)冠军标的完整历史补全: cutoff过滤后将冠军标的的所有历史记录(含超出28天窗口的)纳入回测，确保皇冠回测交易明细不受窗口限制; (2)主交易明细表强制包含冠军: HTML/Markdown报告均匀采样后追加遗漏的冠军交易行; (3)新增日志打印补全条数
+
+- **v6.22.7**: 行业资金排名数据源修复——东方财富API域名从push2.eastmoney.com迁移至push2delay.eastmoney.com(原域名返回Empty reply), 涉及三处URL: (1)step10C_fetch_industry_flow_rank板块级行业主力净流入排名; (2)step10C_flow_fetch_main_inflow个股主力净流入; (3)step10C_lhb_fetch龙虎榜备用源
+
+- **v6.22.2**: 策略级胜率监控熔断重建——(1)win_rate_drop_threshold/consecutive_weeks/max_adjust_params以活参数恢复回DEFAULT_PARAMS; (2)步骤28新增检查6——策略级胜率监控熔断，记录每日各策略回测胜率，检测到单策略连续N期胜率下降超阈值时自动触发熔断(收紧止损0.5%); (3)新增_recorcd_strategy_win_rates/_detect_strategy_circuit_breaker/_incr_strategy_adj_count等辅助函数; (4)调参计数受max_adjust_params限制，超限跳过防无限调整
+
+- **v6.22.0**: 新闻源全网替换——(1)移除Bing网页搜索(反爬/超时/不稳定), 替换为东方财富个股新闻(AKShare直连, 覆盖全市场财经新闻); (2)新增财联社个股新闻(csw API直连, 电报快讯级实时新闻); (3)正面新闻搜索同步改为东方财富, 过滤负面标题; (4)5源并行: 巨潮资讯网+麦蕊智数(公告+跌停)+东方财富+财联社, 可用源从4→5
+
+- **v6.21.4**: 新增步骤28自动整改——筛选完成后自动分析问题(步骤警告/行业资金排名/策略A胜率/新闻源/回测整体), 发现问题自动生成整改方案、修改代码、更新版本、推送GitHub，每次筛选都是自我优化的闭环。
 
 > **版本号单一真相源(SSOT)**：`VERSION` 文件为唯一来源。`ashare_screener.py` / `pre-check-version.py` 运行时读取 `VERSION`；本文件与 `策略调整记录.json` 由 `scripts/sync_version.py` 在发版时同步，**禁止手工硬编码版本号**。
 >
@@ -13,7 +70,7 @@ description: A股每日盘前短线标的智能筛选(v6.20.12)。基于前一�
 > **版本回落修正说明（sunday_industry_pull.py，2026-08-08）**：commit `f399e69` / `fcec3aa` 在基线 `v6.20.6` 时将 `sunday_industry_pull.py` 的版本标记写为 `v6.13.38`，回落 7 个次版本且长期无留档。依 @since 约定（P2-1）该标记已改为引入版本语义 `@since v6.13.39`（记录该特性实际引入版本，非当前版本）；文件"当前版本"声明点（docstring 首行 L4 与 print 语句 L481）同步至 `v6.20.12`（SSOT 锚点，由 `sync_version.py` 保证与 `VERSION` 一致）。版本回落门禁现覆盖该文件：提交信息级 `commit_gate`（commit-msg 钩子 + CI commit-gate 步骤 + 脚本内自动提交前置校验）对**全部 .py 文件的提交**生效，含 sunday_industry_pull.py 的自动提交（P0 Task 1 已接入）；文件级「当前版本」声明点由 `sync_version.py` 锚点校验保证与 VERSION 一致（8 锚点含 sunday L4/L481）。历史 commit message 中的旧编号不再改写，以此说明为准。
 
 > **代码注释版本号约定（P2-1，@since 语义标记）**：为从根源消除"内联版本注释未随发版同步"的遗漏，**所有代码注释/docstring 中的版本号一律使用 `@since vX.Y.Z` 形式**，表示"引入版本"，**不随发版变动**、不参与同步。
-> - 仅 `scripts/sync_version.py` 的 **8 个锚点**（ashare_screener.py 模块 docstring 首行 + 兜底常量；pre-check-version.py 兜底常量；SKILL.md frontmatter + H1；lib/backtest.py 模块头 + 兜底常量；sunday_industry_pull.py docstring 首行）为"**当前版本**"声明点，发版时由 `sync_version.py` 同步。
+> - 仅 `scripts/sync_version.py` 的 **8 个锚点 + SKILL.md 版本历史** 为"**当前版本**"声明点，发版（含步骤28自动整改）时由 `sync_version.py` 强制同步：**SKILL.md frontmatter + H1 + `## 版本历史` 最新条目**、ashare_screener.py 模块 docstring 首行 + 兜底常量、pre-check-version.py 兜底常量、lib/backtest.py 模块头 + 兜底常量、sunday_industry_pull.py docstring 首行、_meta.json version 字段，以及 策略调整记录.json 头部。任一处未对齐，`sync_version.py --check` 即报错，**自动整改路径会据此中止推送（quality-gate 拦截）**。
 > - 其余内联版本标记（含本次 v6.20.12 的回测日期口径修复、行业白名单治理等）均为 `@since v6.20.12`，即使发版到 v6.20.13 也**保持不动**——它们记录"该特性引入于何版本"，而非"当前版本"。
 > - `策略调整记录.json` 的 `"version"` 字段是数据记录（每条记录描述"该版本引入了哪些变更"），同理不随发版改写，不采用 `@since` 前缀。
 
@@ -80,7 +137,7 @@ description: A股每日盘前短线标的智能筛选(v6.20.12)。基于前一�
 从 GitHub 同步 持仓跟踪.xlsx 和推荐历史JSON文件。
 
 ### 步骤0B: 行业缓存同步（v6.16.37 新增）
-筛选前校验 /workspace 下 `行业缓存.json` 与 `二级行业缓存.json` 是否存在且有效（非空 dict）。缺失/损坏时从 GitHub 仓库（lc132/lv）自动克隆同步；同步失败则发送飞书红色告警并**中止筛选**，不再静默降级到 L2 代码段映射，防止行业分类错误污染结果。
+筛选前校验 /workspace 下 `行业缓存.json` 与 `二级行业缓存.json` 是否存在且有效（非空 dict）。缺失/损坏时从数据仓（lc132/lv-data）自动克隆同步；同步失败则发送飞书红色告警并**中止筛选**，不再静默降级到 L2 代码段映射，防止行业分类错误污染结果。
 
 ### 步骤1-9C: 市场环境检查
 - 步骤1: 节假日检查
@@ -120,7 +177,7 @@ description: A股每日盘前短线标的智能筛选(v6.20.12)。基于前一�
   - **T 主力观察**: 底仓≥2分 + 起爆≥2分，仅观察不推荐
 - 步骤14: 评分（含MACD+K线技术指标加分，最多+8分）
 - 步骤15: 微观结构过滤（流动性+消息敏感度）
-- 步骤15A: 主力资金流向（东方财富flow API）
+- 步骤15A: 主力资金流向（东方财富push2主力净流入API）+ 龙虎榜机构席位（东财RPT_DAILYBILLBOARD_DETAILSNEW，单次覆盖全市场）+ 融资融券日变动（同花顺rzrqgg个股页HTML解析，限定final短名单）；接口不可达/限流时优雅降级，绝不阻塞主流程
 - 步骤15B: AI策略分析（市场全景+板块研判+个股深度研判，基于最终精选TOP10）
 - 步骤16: 综合评分+平局打破
 - 步骤17: 行业限制（行业集中度控制，弹性+5）
@@ -215,7 +272,7 @@ _pl_sorted = sorted(_pl_data, key=lambda x: (-x[2], -x[1]))
 |------|------|
 | 策略逻辑 | 为什么匹配该策略，市场背景支撑 |
 | 技术面 | 均线系统、MACD、KDJ、关键价位、量价配合 |
-| 资金面 | 主力净流入、成交额、换手率、Amihud流动性 |
+| 资金面 | 主力净流入、成交额、换手率、Amihud流动性、龙虎榜机构席位净买、融资融券余额日变动 |
 | 基本面速览 | ROE、净利润同比、质押比例、商誉风险 |
 | 风险提示 | 质押/商誉/涨幅过大/前高压力/振幅风险 |
 | 操作建议 | 进场区间、止损止盈、盈亏比、持仓周期 |
@@ -256,3 +313,91 @@ _pl_sorted = sorted(_pl_data, key=lambda x: (-x[2], -x[1]))
 - 主力净流入: >1亿
 - 评分维度: 封板质量(0-3) + 空间潜力(0-3) + 板块强度(0-3) + 资金强度(0-3)
 - 输出: /workspace/overnight_result.json
+
+## 仓库结构治理 (P1-1, v6.20.12)
+
+生成物与源码物理分离（main 体积下降约 55%，code diff 信噪比显著提升）：
+- **main**：仅源码 + 配置（83 文件 / ~2.4MB），禁止承载制品。
+- **gh-pages**：承载全部制品——`ashare-screening-*/`、`*.html`、`短线标的*.md`、`回测报告*`、`推荐历史_*.json`、`持仓跟踪.xlsx`，由 GitHub Pages 托管，报告对外 URL 不变。
+- step26_github_sync 已改为推送 `gh-pages`（克隆 `gh-pages` 分支、`git push origin gh-pages`）；`.gitignore` 已忽略上述制品，杜绝 main 再次膨胀。
+- lib/sync.py 的 `git add -A` 收紧为仅暂存实际写入的 `SKILL.md` / `策略调整记录.json`。
+- 运维：每日运行产出的新报告写入 gh-pages；GitHub Pages 发布源须在仓库 Settings → Pages 设为 **gh-pages** 分支（根目录）。
+
+## 提交信息门禁 (P1-3, v6.20.12)
+
+提交信息须过 `scripts/commit_gate.py` 门禁（SSOT），规则：`^(type)(\(.+\))?:\s.+`，type 含标准 Conventional Commits（fix/feat/data/docs/chore/refactor/test/build）与治理/周末/中文批次（P0整改/P1-1~P1-4/PO-1~PO-3/周日清理/修复/清理/筛选…）；并拦截双 v(vv) 与版本回退。
+
+- **本地钩子**：`hooks/commit-msg` 在 `git commit` 阶段即时拦截，委托 `commit_gate.py` 校验；合并/变基提交自动跳过。
+- **启用（克隆仓库执行一次）**：`git config core.hooksPath hooks`。紧急跳过用 `git commit --no-verify`（仍会被 CI `quality-gate` 拦截）。
+- **CI 硬门禁（⚠️ 当前未启用分支保护，仅运行级拦截）**：`.github/workflows/quality-gate.yml` 的 `quality-gate` 任务在 push/PR 到 main 时运行，对每条提交经 `commit_gate` 校验，不合规即标红。但**截至 v6.20.12 仍未开启 main 分支保护**，故本门禁可被一行 `git push origin main` 直接绕过（PR #1「代码变更走 PR」未合并即关闭，是 v6.20.2 以来全部门禁的系统性漏洞）。**待办（P0-2）：为 main 开启分支保护，将「质量门禁 (Quality Gate)」设为必需状态检查，对 `*.py`/`SKILL.md`/`VERSION` 强制走 PR**。
+- 历史登记在 `data:` 等的自定义 type 已正式写入白名单，合规率由 17.2% 提升至 90%+。
+
+## CI 诊断纪律 (P0-1, v6.20.12)
+
+> **背景**：截至 2026-08-09，quality-gate 共 83 次运行、41 次失败（失败率 ~49%），其中 38 次为直推 `main` 触发、另有 `probe-1785948422` / `tmp-push-probe-60251` 两条临时分支的失败记录——均属**用生产分支/临时分支做诊断探针**导致的虚假红灯。仓库长期处红灯态，门禁结论不可信。**禁止把生产分支当调试场**。
+
+- **禁止用生产分支做诊断探针**：不得向 `main` 推送任何 `_qg_diag*.txt` / 探针脚本 / 临时测试提交来排查 CI；此类操作污染失败率统计并制造假红灯。
+- **诊断的正确姿势**：
+  1. **本地**：用 [`act`](https://github.com/nektos/act) 在本地跑 workflow（`act -W .github/workflows/quality-gate.yml`）；
+  2. **远端**：开**临时分支**（如 `diag/xxx`）推送触发，验证完即删，绝不进 `main`。
+- **清理钩子**：`_qg_diag_*.txt` 已纳入 `.gitignore`；若不慎推上 `main`，须立即从 main 删除并 `git fetch -p` 清远端引用。
+
+## 提交者身份治理 (P0-1, v6.20.12)
+
+提交者身份严格收敛为**两个**、且均关联 GitHub 账户（杜绝 `author=null`）：
+
+| 身份 | name | email（GitHub noreply，关联 lc132 账户） |
+|------|------|------------------------------------------|
+| 人类维护者 | `lc132` | `72593777+lc132@users.noreply.github.com` |
+| 机器人 | `ashare-screener` | `72593777+ashare-screener@users.noreply.github.com` |
+
+- **机器人邮箱统一为 GitHub noreply 格式**：原 `ashare-bot@github.com` 无法关联账户（API 返回 `author=null`），v6.20.2 身份统一后仍产生 2 次 IDE（Trae Bot `<bot@trae.ai>`）泄漏提交、累计 28 条 `author=null`（21.5%），均已废弃。代码常量 `BOT_AUTHOR_EMAIL` / `user.email`（`ashare_screener.py` / `sunday_industry_pull.py` / `lib/sync.py`）统一改为 noreply 格式。
+- **本地钩子 `hooks/pre-commit`**：硬校验 `git config user.name/user.email` 必须属于上表白名单，不匹配（含 `Trae Bot <bot@trae.ai>`、IDE 默认身份、旧 `ashare-bot@github.com`）**直接拒绝提交**。合并/变基提交（`MERGE_HEAD`/`REBASE_HEAD`）自动跳过。
+- **CI 兜底**：`scripts/pre_push_check.py::check_author_email_whitelist` 扫描 `baseline..HEAD` 作者邮箱，仅放行两个 noreply 邮箱 + 历史遗留 `ashare-bot@github.com`（兼容 v6.20.x tag 之前的 legacy 提交，不重写历史）。
+- **验收口径**：新提交 `author=null = 0`；提交者身份种类 ≤ 2（历史遗留 null 提交不重写，避免破坏 v6.20.x tag）。
+
+## 策略自动检查机制 (strategy_check, v6.20.12)
+
+`strategy_check` 是一套**以仓位（`position_pct`）为执行杠杆**的自动风控闭环：触发信号写入「推荐历史」（`推荐历史_YYYYMMDD.json`）的 `type=strategy_check` 记录，供次日 / T+1 判定。
+
+### 触发条件与判定周期
+
+| 机制 | 函数 | 触发条件 | 判定周期 | 调整动作 |
+|------|------|----------|----------|----------|
+| 回撤断路器 | `step9B_circuit_breaker` | 任一持仓当日亏损 > `circuit_breaker_threshold_pct`（默认 3.0%） | 当日触发 + 昨日（`data_date-1`）是否已触发 → **连续 2 日** | 连续 2 日 → `position_pct = 30`；首日 → `max(20, position_pct * 0.5)` |
+| T+1 兑现率闭环 | `step9C_conversion_rate` | 近 `conversion_rate_window_days`（默认 10）天兑现率 < `conversion_rate_threshold`（默认 0.3） | T+1（当日推荐 vs 次日收盘），窗口内样本 ≥ 5 才评估 | 低于阈值 → `position_pct = max(20, position_pct - 10)`；≥ `conversion_rate_restore`（默认 0.6）→ `position_pct = min(75, position_pct + 5)` |
+| 版本/参数快照 | `step6_file_init` | 每次运行首发版检查 | 运行日 | 向推荐历史追加 `strategy_check{version, params, date}`（当版本首次出现） |
+
+### 数据落点
+
+- 触发记录：`/workspace/推荐历史_*.json` 中 `{"type":"strategy_check","date":...,"checks":{"circuit_breaker_triggered":bool}}`（step9B）与 `{"type":"strategy_check","version":...,"params":...,"date":...}`（step6）。
+- step9B 读昨日 `strategy_check` 记录的 `checks.circuit_breaker_triggered` 判断是否「连续 2 日」。
+
+### ✅ 失效 / 死参数（已清理 v6.20.13 与 v6.20.14，仅余 1 项遗留）
+
+以下参数历史上为死参数（定义即死，零活动引用）。经 P0-3(v6.20.13) 与 v6.20.14 治理，绝大多数已物理删除：
+
+| 参数 | 默认值 | 现状 |
+|------|--------|------|
+| `win_rate_drop_threshold` | 10 | 🔄 **已恢复（v6.22.2）**——活参数，接步骤28策略级胜率监控熔断 |
+| `consecutive_weeks` | 2 | 🔄 **已恢复（v6.22.2）**——活参数，连续观察期数 |
+| `max_adjust_params` | 3 | 🔄 **已恢复（v6.22.2）**——活参数，单策略最大自动调参次数 |
+| `northbound_threshold` | 3000 | ✅ 已删除（v6.20.14，全仓库 0 引用；原「北向资金」策略名实不符，策略F已正名为「主力资金」） |
+| `conversion_rate_consecutive_days` | 3 | ⚠️ **唯一遗留**：`ashare_screener.py:1122` 读取但 `step9C` 未使用（读而未用）；`lib/pipeline.py` 有引用但该模块未被 import。待接线或删除（P2 遗留） |
+
+> 注：`search_budget`（默认 25）是**活参数**（step2 区域动态调整 `+5`），**不属于**死参数。
+> 其余 P0-3 删除项（`data_tier_*` / `recovery_monitor_enabled` / `mairui_licence_configured` / `date_validation_enabled` / `news_sources` / `capital_flow_source` / `sector_heat_source` / `limit_down_threshold`）同理已从 `DEFAULT_PARAMS` 与 `策略调整记录.json` 清除。
+
+### 验收口径
+
+- 连续 2 日回撤触发 → 次日 `position_pct = 30`（可在推荐历史 `strategy_check` 记录追溯）。
+- T+1 兑现率闭环按窗口动态调整仓位，日志含「兑现率 X/Y = Z%」与仓位变动。
+
+## 行业缓存迁出主仓 (P2-2, v6.20.12)
+
+行业缓存（一级 / 二级）+ 白名单复核记录从主仓 `lc132/lv` 迁至独立数据仓 `lc132/lv-data`（LFS 不支持，故独立仓），主仓体积与周提交噪声显著下降（此前每周全量重写产生 ~9,845 行变更）。
+
+- **数据仓 `lc132/lv-data`**：私有，承载 `行业缓存.json` / `二级行业缓存.json` / `行业白名单复核记录.json`，由 `sunday_industry_pull.py` 每周日全量重建并直推（不经 main 分支保护）。
+- **主仓清理**：`.gitignore` 已忽略上述三文件，避免重新进入主仓；`step0B` 恢复源改为 `lv-data`（`INDUSTRY_CACHE_REPO`）。
+- **读取路径不变**：筛选运行时仍读 `/workspace/行业缓存.json`（磁盘），仅来源仓变更。
+- **验收口径**：主仓 `git ls-files` 不再含两个行业缓存；`sunday_industry_pull.py` 周提交落到 `lv-data`，主仓周变更 ≈ 0。
