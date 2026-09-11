@@ -5933,7 +5933,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         strat_bars = '<div style="color:#94a3b8">无匹配</div>'
     
     alerts_html = ""
-    _alert_lines = []
+    _key_alerts = []
     try:
         _today_tag = prediction_date[:10]
         with open('/workspace/系统告警.log', 'r', encoding='utf-8') as _af:
@@ -5944,11 +5944,25 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             _lns = _ln.strip()
             _level = _lns.split(']')[1].strip(' [') if ']' in _lns else 'INFO'
             if _level in ('DEBUG',): continue
-            _alert_lines.append((_level, _lns))
+            # @since v6.22.35: 告警区块只显示当天(WARNING/ERROR/CRITICAL) + 关键流程INFO
+            if _level in ('WARNING', 'ERROR', 'CRITICAL'):
+                if _lns not in [x[1] for x in _key_alerts]:
+                    _key_alerts.append((_level, _lns))
+            elif _level == 'INFO':
+                _msg = _lns.split(']', 2)[-1].strip() if ']' in _lns else ''
+                _info_keywords = ('开盘识别', '兑现率', '仓位调整', '极端行情', '大跌', '硬排除',
+                                  '行情采集', '信号过滤', '策略A限制', '买入池.*缩紧',
+                                  '新闻筛查', '深度分析', 'Markdown', 'HTML报告.', '最终验证',
+                                  '大盘环境', '市场全景', '冠军', '回测', '飞书推送.', 'GitHub同步.',
+                                  '告警修复', 'SSOT修复', '真实收益')
+                 # 买入池仅保留汇总行(缩紧), 跳过26只个股逐条记录
+                 if '买入池' in _msg and '缩紧' not in _msg: continue
+                if any(k in _msg for k in _info_keywords):
+                    _key_alerts.append((_level, _lns))
     except Exception:
         pass
-    if _alert_lines:
-        for _level, _lns in _alert_lines[-80:]:
+    if _key_alerts:
+        for _level, _lns in _key_alerts:
             _cls = 'warning' if _level in ('WARNING', 'ERROR', 'CRITICAL') else 'info'
             alerts_html += f'<div class="alert-item"><span class="alert-level {_cls}">{_level}</span><span class="alert-msg">{html.escape(_lns)}</span></div>'
     elif crisis_alerts:
