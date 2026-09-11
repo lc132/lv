@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.22.35
+A股每日盘前短线标的智能筛选 v6.22.36
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.22.35"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.22.36"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -813,18 +813,14 @@ def _industry_sync_failed(msg):
 
 def step0B_sync_industry_cache():
     """@since v6.16.37: 筛选前确保 /workspace 行业缓存文件存在且有效。
-    @since P2-2: 缺失/损坏时从数据仓(lc132/lv-data)自动同步；同步失败则硬性告警并中止筛选，
-    防止行业分类错误(回退到L2代码段映射)污染筛选结果。"""
+    @since v6.22.36: 强制从数据仓(lc132/lv-data)拉取，确保缓存与仓库一致。
+    同步失败则硬性告警并中止筛选，防止行业分类错误(回退到L2代码段映射)污染筛选结果。"""
     cache_files = [INDUSTRY_CACHE_FILE, SUB_INDUSTRY_CACHE_FILE]
-    need_sync = False
     for cf in cache_files:
         if _is_valid_cache_file(cf):
-            log_alert("INFO", "行业缓存", f"{os.path.basename(cf)} 已存在且有效，跳过同步")
+            log_alert("INFO", "行业缓存", f"{os.path.basename(cf)} 本机有效，将从仓库强制刷新")
         else:
-            need_sync = True
             log_alert("WARNING", "行业缓存", f"{os.path.basename(cf)} 缺失/无效，需从仓库同步")
-    if not need_sync:
-        return
     repo_dir = "/tmp/lv_industry_pull"
     if os.path.exists(repo_dir):
         shutil.rmtree(repo_dir, ignore_errors=True)
