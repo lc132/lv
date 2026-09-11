@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.22.35
+A股每日盘前短线标的智能筛选 v6.22.36
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.22.35"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.22.36"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -417,7 +417,7 @@ DEFAULT_PARAMS = {
     "strategy_concentration_pct": 25,
     "data_retention_days": 30,
     "strategy_a_weak_market": "closed",
-    "strategy_a_shock_market_limit": 1,
+    "strategy_a_shock_market_limit": 0,  # @since v6.22.36: 1→0, 策略A近4周胜率仅25%/-1.75%, 震荡市完全关闭
     "strategy_e_expand_threshold": 1000,  # @since v6.22.29: 1500万→1000万, E策略30.8%胜率, 扩大候选池
     # @since v6.22.33: 冠军(皇冠)胜率优化 — 方案一: 冠军候选池策略胜率门槛
     # 低于该胜率的策略, 其组获胜者不进入跨策略冠军PK（止血: 低胜率策略不再长期霸占👑）
@@ -460,7 +460,7 @@ DEFAULT_PARAMS = {
 _STRATEGY_ORDER = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16, 'R': 17, 'S': 18, 'T': 19, 'U': 20}
 _STRATEGY_NAMES = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '主力资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破', 'R': '主力共振(强)', 'S': '主力共振(弱)', 'T': '主力观察', 'U': '涨停追击'}
 _STRATEGY_COLORS = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4', 'G': '#10b981', 'H': '#f97316', 'I': '#14b8a6', 'J': '#ef4444', 'K': '#a855f7', 'L': '#eab308', 'M': '#f472b6', 'N': '#84cc16', 'O': '#38bdf8', 'P': '#fb923c', 'Q': '#22d3ee', 'R': '#dc2626', 'S': '#f97316', 'T': '#94a3b8', 'U': '#ff3b3b'}
-_STRATEGY_STOP_LOSS = {'A': 0.94, 'B': 0.93, 'C': 0.94, 'D': 0.94, 'E': 0.96, 'F': 0.95, 'G': 0.93, 'H': 0.94, 'I': 0.93, 'J': 0.94, 'K': 0.94, 'L': 0.94, 'M': 0.945, 'N': 0.94, 'O': 0.95, 'P': 0.945, 'Q': 0.95, 'R': 0.95, 'S': 0.95, 'T': 0.94, 'U': 0.93}
+_STRATEGY_STOP_LOSS = {'A': 0.94, 'B': 0.93, 'C': 0.93, 'D': 0.94, 'E': 0.96, 'F': 0.95, 'G': 0.93, 'H': 0.94, 'I': 0.92, 'J': 0.94, 'K': 0.94, 'L': 0.935, 'M': 0.945, 'N': 0.94, 'O': 0.95, 'P': 0.945, 'Q': 0.95, 'R': 0.95, 'S': 0.95, 'T': 0.94, 'U': 0.93}
 _STRATEGY_TAKE_PROFIT = {'A': 1.06, 'B': 1.07, 'C': 1.06, 'D': 1.06, 'E': 1.05, 'F': 1.05, 'G': 1.06, 'H': 1.06, 'I': 1.06, 'J': 1.06, 'K': 1.06, 'L': 1.06, 'M': 1.05, 'N': 1.06, 'O': 1.05, 'P': 1.05, 'Q': 1.05, 'R': 1.05, 'S': 1.04, 'T': 1.04, 'U': 1.06}
 
 def _tie_key(c):
