@@ -5933,7 +5933,25 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         strat_bars = '<div style="color:#94a3b8">无匹配</div>'
     
     alerts_html = ""
-    if crisis_alerts:
+    _alert_lines = []
+    try:
+        _today_tag = prediction_date[:10]
+        with open('/workspace/系统告警.log', 'r', encoding='utf-8') as _af:
+            _all = _af.readlines()
+        for _ln in _all:
+            if not _ln.startswith('['): continue
+            if _today_tag not in _ln: continue
+            _lns = _ln.strip()
+            _level = _lns.split(']')[1].strip(' [') if ']' in _lns else 'INFO'
+            if _level in ('DEBUG',): continue
+            _alert_lines.append((_level, _lns))
+    except Exception:
+        pass
+    if _alert_lines:
+        for _level, _lns in _alert_lines[-80:]:
+            _cls = 'warning' if _level in ('WARNING', 'ERROR', 'CRITICAL') else 'info'
+            alerts_html += f'<div class="alert-item"><span class="alert-level {_cls}">{_level}</span><span class="alert-msg">{html.escape(_lns)}</span></div>'
+    elif crisis_alerts:
         for a in crisis_alerts:
             alerts_html += f'<div class="alert-item"><span class="alert-level warning">WARNING</span><span class="alert-msg">{a}</span></div>'
     else:
