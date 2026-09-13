@@ -5278,10 +5278,10 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
                 for t in tops:
                     t['_champion_score'] += _w * 0.5
         
-        # @since v6.22.30: 第8维度—历史回测盈利加成
-        # 参考bt_lookup中该标的的历史回测表现，优先选历史盈利标的
-        # @since v6.22.33 方案三: 历史盈利加成整体施加衰减系数 crown_bt_bonus_decay;
-        #  并在此统计重复夺冠冷却，冷却在最终总分上做扣分(见下方 champion_score 归一)。
+        # @since v6.23.0: 第8维度—历史回测盈利加成(连续化评分)
+        # 替代v6.22.33三档离散加分: 胜率连续加成+均收精细化+置信度加权
+        # 同时修正 banker's rounding 显示不一致问题(见建议A)
+        # 样本门槛从≥2降为≥1, 低样本由置信度天然压制(建议C)
         for c in all_winners:
             code = c.get('code', '')
             bt = (bt_lookup or {}).get(code, {})
@@ -5289,16 +5289,20 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
             bt_total = bt.get('total', 0)
             bt_avg_ret = bt.get('avg_return', 0) or 0
             bonus = 0.0
-            if bt_wins > 0 and bt_total >= 2:
-                bonus += 0.5  # 历史有盈利样本
-            if bt_total >= 2 and bt_wins / bt_total >= 0.3:
-                bonus += 0.5  # 历史胜率>=30%
-            if bt_avg_ret > 0:
-                bonus += 0.5  # 历史平均收益为正
-            bonus *= _bt_decay  # @since v6.22.33 方案三: 历史加成衰减
+            if bt_total >= 1:
+                win_rate = bt_wins / max(bt_total, 1)
+                conf = min(1.0, bt_total / 5)  # 置信度: 5笔=满置信
+                # 胜率连续加成(0~0.7), 胜率越接近1越趋近0.7
+                wr_part = win_rate * 0.7
+                # 均收精细化(0~0.3), +0.01%→+0.001, +3%→+0.3封顶
+                ret_part = min(0.3, max(0, bt_avg_ret / 10.0))
+                # 合计: 0~1.0
+                bonus = (wr_part + ret_part) * conf * _bt_decay
             if bonus > 0:
-                c['_champion_score'] += bonus
-                c['_bt_bonus'] = round(bonus, 1)
+                # school rounding 替代 banker's rounding, 加分与显示对齐
+                _bonus_good = round(bonus * 10 + 1e-9) / 10
+                c['_champion_score'] += _bonus_good
+                c['_bt_bonus'] = _bonus_good
         
         # @since v6.22.31: 第9维度—历史板块参考加分
         # 参考行业资金历史，若该标的所属板块最近为资金净流入且历史胜率较高，给予加分
@@ -5337,8 +5341,10 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
         if flow_bonus > 0:
             flow_bonus *= _sec_decay  # @since v6.22.33 方案三: 板块历史加成衰减
         if flow_bonus > 0:
-            c['_champion_score'] += flow_bonus
-            c['_sector_bonus'] = round(flow_bonus, 1)
+            # @since v6.23.0: school rounding对齐
+            _flow_good = round(flow_bonus * 10 + 1e-9) / 10
+            c['_champion_score'] += _flow_good
+            c['_sector_bonus'] = _flow_good
 
         # @since v6.22.33 方案三: 重复夺冠冷却——同标的在冷却窗口内多次夺冠则扣分
         # 冷却判定: 历史夺冠次数>=2 才触发(首冠不罚), 每次多夺一次扣 crown_repeat_penalty
@@ -5955,8 +5961,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
                                   '新闻筛查', '深度分析', 'Markdown', 'HTML报告.', '最终验证',
                                   '大盘环境', '市场全景', '冠军', '回测', '飞书推送.', 'GitHub同步.',
                                   '告警修复', 'SSOT修复', '真实收益')
-                 # 买入池仅保留汇总行(缩紧), 跳过26只个股逐条记录
-                 if '买入池' in _msg and '缩紧' not in _msg: continue
+                # 买入池仅保留汇总行(缩紧), 跳过26只个股逐条记录
+                if '买入池' in _msg and '缩紧' not in _msg: continue
                 if any(k in _msg for k in _info_keywords):
                     _key_alerts.append((_level, _lns))
     except Exception:
