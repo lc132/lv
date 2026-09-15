@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.24.0
+A股每日盘前短线标的智能筛选 v6.24.1
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.24.0"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.24.1"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -6580,9 +6580,11 @@ def step21_final_verify(mp, fc):
     except FileNotFoundError:
         log_alert("ERROR", "数量校验", "MD文件不存在")
 
-def _filter_buy_pool(candidates, strategy_metrics=None):
+def _filter_buy_pool(candidates, strategy_metrics=None, champion_code=None):
     """@since v6.22.34: 独立买入池期望≥0过滤。
     @since v6.22.35: 取消数量上限截断——冠军标的不被截断剔除, 保证回测可追踪。
+    @since v6.24.1: 期望过滤同样豁免冠军标的——负期望策略的当日👉冠军不再被『期望<0』剔除,
+      保证皇冠标的始终写入推荐历史, 回测(皇冠回测)可完整追踪冠军标的真实表现。
 
     背景: 回测显示各策略未来期望(avg_return)分化, 负期望策略(如D/C/G/A/I)长期拖累买入池
     「期望」。缩紧的正确姿势是按策略期望过滤, 只把期望≥门槛、且样本充足的策略标的写入推荐历史;
@@ -6601,6 +6603,11 @@ def _filter_buy_pool(candidates, strategy_metrics=None):
     kept = []; dropped = []; reasons = []
     for c in candidates:
         s = c.get('strategy', '?')
+        # @since v6.24.1: 👑皇冠标的豁免期望过滤(与v6.22.35数量截断豁免同理)——保证回测可追踪冠军
+        if champion_code and c.get('code') == champion_code:
+            kept.append(c)
+            reasons.append(f"{c.get('code','?')}({s}) 期望过滤豁免: 当日冠军, 强制保留")
+            continue
         meta = sm.get(s)
         total = (meta or {}).get('total', 0)
         avg_ret = (meta or {}).get('avg_return', None)
@@ -6630,7 +6637,8 @@ def step22_write_history(candidates, champion_code=None, strategy_metrics=None):
         if r.get('type') == 'recommendation':
             existing_keys.add((r.get('code'), r.get('strategy'), round(r.get('entry', 0), 2)))
     # @since v6.22.34: 写入前先经独立买入池期望过滤——只把期望≥门槛、数量≤上限的标的写入推荐历史
-    candidates, dropped, reasons = _filter_buy_pool(candidates, strategy_metrics)
+    # @since v6.24.1: 传入 champion_code, 冠军标的豁免期望过滤, 防止负期望策略皇冠标的漏写历史
+    candidates, dropped, reasons = _filter_buy_pool(candidates, strategy_metrics, champion_code=champion_code)
     if dropped:
         for _rz in reasons:
             log_alert("INFO", "买入池", _rz)
