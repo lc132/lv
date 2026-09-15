@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.23.1
+A股每日盘前短线标的智能筛选 v6.24.0
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.23.1"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.24.0"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -416,8 +416,9 @@ DEFAULT_PARAMS = {
     "confidence_position_enabled": True,
     "strategy_concentration_pct": 25,
     "data_retention_days": 30,
-    "strategy_a_weak_market": "closed",
-    "strategy_a_shock_market_limit": 0,  # @since v6.22.36: 1→0, 策略A近4周胜率仅25%/-1.75%, 震荡市完全关闭
+    "strategy_a_weak_market": "open",   # @since v6.24.0: closed→open, 弱市不再关闭策略A筛选; 低胜率策略仅由皇冠胜率门槛拦截
+    # @since v6.24.0: 取消震荡市策略A数量上限 — 不再用数量限流控制策略A敞口, 回测胜率低仅不参与皇冠评选(crown_min_strategy_winrate); 参数保留为"不限制"哨兵值(9999=不启用)
+    "strategy_a_shock_market_limit": 9999,
     "strategy_e_expand_threshold": 1000,  # @since v6.22.29: 1500万→1000万, E策略30.8%胜率, 扩大候选池
     # @since v6.22.33: 冠军(皇冠)胜率优化 — 方案一: 冠军候选池策略胜率门槛
     # 低于该胜率的策略, 其组获胜者不进入跨策略冠军PK（止血: 低胜率策略不再长期霸占👑）
@@ -3878,11 +3879,11 @@ def step13_strategy_match(candidates, kline_data=None):
         high = c.get('high', 0); low = c.get('low', 0)
         s = None; reason = ""; score = 0
         # ── A 动量延续 (@since v6.8.8: 极端上涨市关闭+读取strategy_a_weak_market参数) ──
-        a_weak_closed = params.get('strategy_a_weak_market', 'closed') == 'closed'
+        # @since v6.24.0: 取消策略A筛选限制 — 不再因弱市/胜率关闭策略A; 回测胜率低的策略不拦截(仅皇冠评选按 crown_min_strategy_winrate 门槛拦截)
         a_extreme = market_condition == "强市(极端上涨/降仓防追高)"
         # @since v6.16.24: 用"弱市" in market_condition替代精确比较，覆盖弱市子类型
         # @since v6.16.24: A上限从7%降至5%，避免与U(涨停追击)在5-7%区间重叠——有涨停基因的标的应由U捕捉
-        if (not a_weak_closed or "弱市" not in market_condition) and not a_extreme and 3 <= chg <= 5:
+        if not a_extreme and 3 <= chg <= 5:
             if vr is not None and 1.5 <= vr <= 5.0:
                 s = "A"; reason = f"动量延续:涨{chg:.1f}%+量比{vr:.1f}"; score = 10
                 # @since v6.6.38: 假突破过滤 — 上影线:下影线>2:1 → 降置信减3分
@@ -4105,24 +4106,7 @@ def step13_strategy_match(candidates, kline_data=None):
             elif res_strategy == 'T':
                 s = "T"; reason = f"主力观察:底仓{pos_score}分+起爆{break_score}分"; score = 5
         if s: c['strategy'] = s; c['score'] = score; matched.append(c)
-    # @since v6.16.34: 震荡市策略A数量上限 — 策略A在震荡市回测胜率仅20%，限制最多N只
-    # @since v6.23.1: 修复守卫条件 sa_limit >= 0（原 > 0 导致 sa_limit=0 时整个限流块被跳过, 0被误当作"不限"而非"完全关闭", 与步骤28"上限已达最低0"冲突）
-    sa_limit = params.get("strategy_a_shock_market_limit", 3)
-    if "震荡" in market_condition and sa_limit >= 0:
-        a_matched = [c for c in matched if c.get("strategy") == "A"]
-        if len(a_matched) > sa_limit:
-            a_matched.sort(key=lambda c: -(c.get("score", 0)))
-            a_codes_to_remove = {c.get("code") for c in a_matched[sa_limit:]}
-            removed_count = 0
-            new_matched = []
-            for c in matched:
-                if c.get("strategy") == "A" and c.get("code") in a_codes_to_remove:
-                    removed_count += 1
-                else:
-                    new_matched.append(c)
-            matched = new_matched
-            log_alert("INFO", "策略A限制", f"震荡市策略A上限{sa_limit}只, 已剔除{removed_count}只")
-
+    # @since v6.24.0: 取消震荡市策略A数量上限 — 策略A不再受数量限流; 回测胜率低的策略不予筛选阶段拦截, 仅由皇冠评选的胜率门槛(crown_min_strategy_winrate)在冠军PK前剔降
     log_alert("INFO", "策略匹配", f"匹配{len(matched)}只")
     return matched
 
@@ -7603,7 +7587,7 @@ def step28_self_rectify(final, fc, bt_result, sd, flow_data, total_raw, ae, asig
             ]
         })
     
-    # --- 检查4: 回测策略A胜率偏低 ---
+    # --- 检查4: 回测策略A胜率偏低 (步骤28自动整改 @since v6.24.0: 取消筛选阶段限流, 低胜率仅不参与皇冠评选) ---
     if bt_result and bt_result.get('all_trades'):
         all_trades = bt_result['all_trades']
         a_trades = [t for t in all_trades if t.get('strategy') == 'A']
@@ -7611,23 +7595,10 @@ def step28_self_rectify(final, fc, bt_result, sd, flow_data, total_raw, ae, asig
             a_wins = sum(1 for t in a_trades if t.get('return_pct', -999) > 0)
             a_win_rate = a_wins / len(a_trades) * 100
             if a_win_rate < 25:
-                cur_limit = DEFAULT_PARAMS.get("strategy_a_shock_market_limit", 3)
-                if cur_limit <= 1:
-                    print(f"  ⚠️ 策略A震荡市胜率{a_win_rate:.1f}%偏低, 但上限已为{cur_limit}(最低), 不再收紧")
-                    issues.append(f"策略A震荡市胜率偏低({a_win_rate:.1f}%, {len(a_trades)}笔), 当前上限已达最低{cur_limit}")
-                else:
-                    new_limit = max(1, cur_limit - 1)
-                    issues.append(f"策略A震荡市胜率偏低({a_win_rate:.1f}%, {len(a_trades)}笔), 当前上限{cur_limit}")
-                    rectifications.append({
-                        "type": "param",
-                        "target": "strategy_a_shock_market_limit",
-                        "old": cur_limit,
-                        "new": new_limit,
-                        "reason": f"策略A胜率{a_win_rate:.1f}%偏低, 上限从{cur_limit}收紧至{new_limit}",
-                        "changes": [
-                            f"策略A震荡市上限收紧: strategy_a_shock_market_limit {cur_limit}→{new_limit}, 震荡市策略A回测胜率仅{a_win_rate:.1f}%需进一步控制敞口"
-                        ]
-                    })
+                # @since v6.24.0: 策略A不再做筛选阶段数量限流(震荡市上限/弱市关闭已取消)。
+                # 回测胜率低的策略只是不参与皇冠评选——由冠军PK阶段的 crown_min_strategy_winrate 胜率门槛处置, 此处仅记录提示, 不再自动收紧参数(避免SSOT重复发版)
+                print(f"  ℹ️ 策略A回测胜率{a_win_rate:.1f}%偏低({len(a_trades)}笔), 筛选阶段不再限流, 由皇冠评选胜率门槛(crown_min_strategy_winrate)拦截其争夺👑")
+                issues.append(f"策略A回测胜率偏低({a_win_rate:.1f}%, {len(a_trades)}笔), 低胜率策略不参与皇冠评选(仅提示, 不再自动整改限流)")
     
     # --- 检查5: 回测整体表现 ---
     if bt_result and bt_result.get('all_trades'):
