@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.24.1
+# A股短线筛选 — 历史回测模块 v6.25.0
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # @since v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
@@ -37,7 +37,7 @@ def _load_version():
                     return _v
         except OSError:
             continue
-    return "v6.24.1"  # 兜底版本（由 sync_version.py 锚定同步）
+    return "v6.25.0"  # 兜底版本（由 sync_version.py 锚定同步）
 
 
 BUILTIN_VERSION = _load_version()
@@ -46,13 +46,17 @@ BUILTIN_VERSION = _load_version()
 _BT_SSL_CTX = ssl._create_unverified_context()
 
 # 策略止损/止盈比例（与主脚本 _STRATEGY_STOP_LOSS / _STRATEGY_TAKE_PROFIT 一致）@since v6.13.10: 同步主脚本
+# @since v6.25.0: 止损全线收窄至3.5%-4%（与主脚本同源同步）。归因量化：止损宽≤4%胜率50% vs >4%仅30%
 _STRATEGY_STOP_LOSS = {
-    'A': 0.95, 'B': 0.93, 'C': 0.95, 'D': 0.95, 'E': 0.965,
-    'F': 0.965, 'G': 0.95, 'H': 0.94, 'I': 0.95, 'J': 0.94,
-    'K': 0.955, 'L': 0.94, 'M': 0.945, 'N': 0.95, 'O': 0.95,
-    'P': 0.945, 'Q': 0.95, 'R': 0.95, 'S': 0.95, 'T': 0.94,
-    'U': 0.93,  # @since P0-1: 补齐U(涨停追击)，此前缺失导致U策略回落到默认0.96，回测风控价位与主脚本不符
+    'A': 0.96, 'B': 0.965, 'C': 0.96, 'D': 0.965, 'E': 0.96,
+    'F': 0.96, 'G': 0.962, 'H': 0.962, 'I': 0.96, 'J': 0.96,
+    'K': 0.96, 'L': 0.96, 'M': 0.965, 'N': 0.96, 'O': 0.96,
+    'P': 0.96, 'Q': 0.96, 'R': 0.96, 'S': 0.96, 'T': 0.96,
+    'U': 0.96,
 }
+# @since v6.25.0: 行业负面清单——回测胜率<40%的弱势行业，回测模拟时跳过其历史推荐，保持一致。
+# 与主脚本 ashare_screener.py 的 _WEAK_INDUSTRIES 同步。
+_WEAK_INDUSTRIES = frozenset({'传媒', '商贸零售', '基础化工', '有色金属', '机械设备', '汽车', '非银金融', '食品饮料'})
 _STRATEGY_TAKE_PROFIT = {
     'A': 1.05, 'B': 1.07, 'C': 1.05, 'D': 1.05, 'E': 1.04,
     'F': 1.04, 'G': 1.05, 'H': 1.06, 'I': 1.05, 'J': 1.06,
@@ -479,6 +483,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         print(f"  K线获取: {len(code_kline_cache)} 只有效 (含{reused_count}只跨日期复用)")
 
     trades = []
+    excluded_weak = 0  # @since v6.25.0: 行业负面清单跳过的历史推荐计数
     for h in history:
         code = h.get('code', '')
         strategy = h.get('strategy', '?')
@@ -488,6 +493,10 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         pred_date = h.get('prediction_date', '')
         # @since v6.20.12: 包含已按 date 过滤，故以 date 判空(缺运行日则跳过)，pred_date 缺失时仅标记无数据
         if not code or not entry or not date:
+            continue
+        # @since v6.25.0: 行业负面清单——弱势行业历史推荐跳过，回测口径与主脚本筛选器一致
+        if h.get('industry', '') in _WEAK_INDUSTRIES:
+            excluded_weak += 1
             continue
 
         sl = round(entry * _STRATEGY_STOP_LOSS.get(strategy, 0.96), 2)

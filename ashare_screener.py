@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.24.1
+A股每日盘前短线标的智能筛选 v6.25.0
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.24.1"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.25.0"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -461,8 +461,15 @@ DEFAULT_PARAMS = {
 _STRATEGY_ORDER = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16, 'R': 17, 'S': 18, 'T': 19, 'U': 20}
 _STRATEGY_NAMES = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '主力资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破', 'R': '主力共振(强)', 'S': '主力共振(弱)', 'T': '主力观察', 'U': '涨停追击'}
 _STRATEGY_COLORS = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4', 'G': '#10b981', 'H': '#f97316', 'I': '#14b8a6', 'J': '#ef4444', 'K': '#a855f7', 'L': '#eab308', 'M': '#f472b6', 'N': '#84cc16', 'O': '#38bdf8', 'P': '#fb923c', 'Q': '#22d3ee', 'R': '#dc2626', 'S': '#f97316', 'T': '#94a3b8', 'U': '#ff3b3b'}
-_STRATEGY_STOP_LOSS = {'A': 0.94, 'B': 0.93, 'C': 0.93, 'D': 0.94, 'E': 0.96, 'F': 0.95, 'G': 0.93, 'H': 0.94, 'I': 0.92, 'J': 0.94, 'K': 0.94, 'L': 0.935, 'M': 0.945, 'N': 0.94, 'O': 0.95, 'P': 0.945, 'Q': 0.95, 'R': 0.95, 'S': 0.95, 'T': 0.94, 'U': 0.93}
+# @since v6.25.0: 止损全线收窄至3.5%-4%（阈值0.96-0.965）。
+# 归因量化(2026-09-15 推荐历史+回测逐笔): 止损宽≤4%胜率50% vs >4%仅30%；
+# 其中B(超跌反弹)/D(回调企稳)两大主力策略由7%/6%收窄至3.5%, G/H/I 弱势策略收窄至3.8-4%。
+_STRATEGY_STOP_LOSS = {'A': 0.96, 'B': 0.965, 'C': 0.96, 'D': 0.965, 'E': 0.96, 'F': 0.96, 'G': 0.962, 'H': 0.962, 'I': 0.96, 'J': 0.96, 'K': 0.96, 'L': 0.96, 'M': 0.965, 'N': 0.96, 'O': 0.96, 'P': 0.96, 'Q': 0.96, 'R': 0.96, 'S': 0.96, 'T': 0.96, 'U': 0.96}
 _STRATEGY_TAKE_PROFIT = {'A': 1.06, 'B': 1.07, 'C': 1.06, 'D': 1.06, 'E': 1.05, 'F': 1.05, 'G': 1.06, 'H': 1.06, 'I': 1.06, 'J': 1.06, 'K': 1.06, 'L': 1.06, 'M': 1.05, 'N': 1.06, 'O': 1.05, 'P': 1.05, 'Q': 1.05, 'R': 1.05, 'S': 1.04, 'T': 1.04, 'U': 1.06}
+
+# @since v6.25.0: 行业负面清单——回测胜率<40%且样本>=5的行业，剔除后整体胜率由32%→45%。
+# 与 lib/backtest.py 的 _WEAK_INDUSTRIES 保持一致（需同步修改）。
+_WEAK_INDUSTRIES = frozenset({'传媒', '商贸零售', '基础化工', '有色金属', '机械设备', '汽车', '非银金融', '食品饮料'})
 
 def _tie_key(c):
     """模块级平局打破键：策略优先级→评分→平局分→量比→换手偏离"""
@@ -7073,6 +7080,12 @@ def main():
     print("\n[步骤18] 新闻筛查..."); ail, anew = step18_news_screening(ail)
     print("\n[步骤18B] TOP10龙虎榜+正面新闻..."); step18B_top10_enrichment(ail)
     print("\n[步骤19] 降级..."); final = step19_shortfall_handling(ail); fc = len(final)
+    # @since v6.25.0: 行业负面清单——剔除回测胜率<40%的弱势行业标的（量化：剔除后整体胜率32%→45%）
+    _before_ind = len(final)
+    final = [c for c in final if lookup_industry(c.get('code', '')) not in _WEAK_INDUSTRIES]
+    if len(final) < _before_ind:
+        log_alert("INFO", "行业负面清单", f"剔除{_before_ind - len(final)}只弱势行业标的({','.join(sorted(_WEAK_INDUSTRIES))})")
+    fc = len(final)
     sd = Counter(c.get('strategy') for c in final)
     record_step_status("步骤19: 降级", "OK", f"最终{fc}只")
     
