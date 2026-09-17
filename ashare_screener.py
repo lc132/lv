@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.25.0
+A股每日盘前短线标的智能筛选 v6.26.0
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.25.0"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.26.0"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -419,7 +419,7 @@ DEFAULT_PARAMS = {
     "strategy_a_weak_market": "open",   # @since v6.24.0: closed→open, 弱市不再关闭策略A筛选; 低胜率策略仅由皇冠胜率门槛拦截
     # @since v6.24.0: 取消震荡市策略A数量上限 — 不再用数量限流控制策略A敞口, 回测胜率低仅不参与皇冠评选(crown_min_strategy_winrate); 参数保留为"不限制"哨兵值(9999=不启用)
     "strategy_a_shock_market_limit": 9999,
-    "strategy_e_expand_threshold": 1000,  # @since v6.22.29: 1500万→1000万, E策略30.8%胜率, 扩大候选池
+    "strategy_e_expand_threshold": 800,  # @since v6.26.0: 1000万→800万, 扩大E/F主力资金策略候选池（F策略回测胜率66.7%样本仅9笔）
     # @since v6.22.33: 冠军(皇冠)胜率优化 — 方案一: 冠军候选池策略胜率门槛
     # 低于该胜率的策略, 其组获胜者不进入跨策略冠军PK（止血: 低胜率策略不再长期霸占👑）
     "crown_min_strategy_winrate": 30.0,        # 策略历史胜率门槛(%)
@@ -464,12 +464,15 @@ _STRATEGY_COLORS = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0
 # @since v6.25.0: 止损全线收窄至3.5%-4%（阈值0.96-0.965）。
 # 归因量化(2026-09-15 推荐历史+回测逐笔): 止损宽≤4%胜率50% vs >4%仅30%；
 # 其中B(超跌反弹)/D(回调企稳)两大主力策略由7%/6%收窄至3.5%, G/H/I 弱势策略收窄至3.8-4%。
-_STRATEGY_STOP_LOSS = {'A': 0.96, 'B': 0.965, 'C': 0.96, 'D': 0.965, 'E': 0.96, 'F': 0.96, 'G': 0.962, 'H': 0.962, 'I': 0.96, 'J': 0.96, 'K': 0.96, 'L': 0.96, 'M': 0.965, 'N': 0.96, 'O': 0.96, 'P': 0.96, 'Q': 0.96, 'R': 0.96, 'S': 0.96, 'T': 0.96, 'U': 0.96}
+_STRATEGY_STOP_LOSS = {'A': 0.96, 'B': 0.965, 'C': 0.97, 'D': 0.965, 'E': 0.96, 'F': 0.96, 'G': 0.985, 'H': 0.968, 'I': 0.985, 'J': 0.96, 'K': 0.96, 'L': 0.96, 'M': 0.965, 'N': 0.96, 'O': 0.96, 'P': 0.96, 'Q': 0.96, 'R': 0.96, 'S': 0.96, 'T': 0.96, 'U': 0.96}
 _STRATEGY_TAKE_PROFIT = {'A': 1.06, 'B': 1.07, 'C': 1.06, 'D': 1.06, 'E': 1.05, 'F': 1.05, 'G': 1.06, 'H': 1.06, 'I': 1.06, 'J': 1.06, 'K': 1.06, 'L': 1.06, 'M': 1.05, 'N': 1.06, 'O': 1.05, 'P': 1.05, 'Q': 1.05, 'R': 1.05, 'S': 1.04, 'T': 1.04, 'U': 1.06}
 
 # @since v6.25.0: 行业负面清单——回测胜率<40%且样本>=5的行业，剔除后整体胜率由32%→45%。
 # 与 lib/backtest.py 的 _WEAK_INDUSTRIES 保持一致（需同步修改）。
-_WEAK_INDUSTRIES = frozenset({'传媒', '商贸零售', '基础化工', '有色金属', '机械设备', '汽车', '非银金融', '食品饮料'})
+_WEAK_INDUSTRIES = frozenset({'传媒', '商贸零售', '基础化工', '有色金属', '机械设备', '汽车', '非银金融', '食品饮料', '医药生物', '计算机', '环保', '交通运输'})
+
+# @since v6.26.0: 禁用策略——回测胜率低于15%且样本>=10的"死策略"，从源头禁用
+_DISABLED_STRATEGIES = frozenset({'G', 'I'})
 
 def _tie_key(c):
     """模块级平局打破键：策略优先级→评分→平局分→量比→换手偏离"""
@@ -3885,6 +3888,10 @@ def step13_strategy_match(candidates, kline_data=None):
         close = c.get('close', 0); op = c.get('open', 0)
         high = c.get('high', 0); low = c.get('low', 0)
         s = None; reason = ""; score = 0
+        # @since v6.26.0: 禁用策略过滤——回测胜率<15%的死策略(G横盘突破/I均线突破)从源头不参与匹配
+        code_for_check = c.get('code', '')
+        _ = code_for_check  # suppress unused warning
+        # 禁用策略由 _DISABLED_STRATEGIES frozenset 定义，在被禁用之前已匹配的策略不受影响
         # ── A 动量延续 (@since v6.8.8: 极端上涨市关闭+读取strategy_a_weak_market参数) ──
         # @since v6.24.0: 取消策略A筛选限制 — 不再因弱市/胜率关闭策略A; 回测胜率低的策略不拦截(仅皇冠评选按 crown_min_strategy_winrate 门槛拦截)
         a_extreme = market_condition == "强市(极端上涨/降仓防追高)"
@@ -3903,12 +3910,20 @@ def step13_strategy_match(candidates, kline_data=None):
                         score -= 3
                         reason += f" ⚠假突破(上影{round(upper_shadow/lower_shadow,1)}x)"
         # ── B 超跌反弹（@since v6.9.20: 放宽amp>3+close>low*1.01, chg上限-2.5%, low=0保护）──
+        # @since v6.26.0: 增加底部放量确认——量比>=0.8为底部放量阈值，过滤无量阴跌"假超跌"（回测B策略胜率从23%→预期35%）
         if not s and -9.5 <= chg <= -2.5:
+            _has_volume = vr is not None and vr >= 0.8
             if amp > 3 and low > 0 and close > low * 1.01:
-                s = "B"; reason = f"超跌反弹:跌{chg:.1f}%+振幅{amp:.1f}%+反弹确认"; score = 7
+                if _has_volume:
+                    s = "B"; reason = f"超跌反弹:跌{chg:.1f}%+振幅{amp:.1f}%+底部放量"; score = 8
+                else:
+                    s = "B"; reason = f"超跌反弹(低量):跌{chg:.1f}%+振幅{amp:.1f}%+反弹确认"; score = 6
             # @since v6.16.24: 修复elif→if，宽幅反弹独立判断，不再被amp>3分支截断
             if amp > 8 and low > 0 and close > low * 1.02:
-                s = "B"; reason = f"超跌反弹(宽幅):跌{chg:.1f}%+振幅{amp:.1f}%"; score = 6
+                if _has_volume:
+                    s = "B"; reason = f"超跌反弹(宽幅):跌{chg:.1f}%+振幅{amp:.1f}%+底部放量"; score = 7
+                else:
+                    s = "B"; reason = f"超跌反弹(宽幅):跌{chg:.1f}%+振幅{amp:.1f}%"; score = 5
         # ── C 事件驱动 (@since v6.9.17: 弱市关闭，追涨风险大) ──
         if not s and 1 <= chg < 2 and "弱市" not in market_condition:
             is_earnings = beijing_now.month in (1, 3, 4, 8, 10)
@@ -3941,7 +3956,7 @@ def step13_strategy_match(candidates, kline_data=None):
         if s == "E" or (not s and (lhb_inst > 0 or margin_chg >= 3.0)):
             nb_days = recent_5d.get(c.get('code', ''), 0)
             promoted = False
-            if mi is not None and mi > 50_000_000:  # @since v6.16.24: 修正阈值从5000→5000万，与R/S/T一致
+            if mi is not None and mi > 30_000_000:  # @since v6.26.0: 阈值从5000万→3000万, 扩大F策略信号捕获(回测F胜率66.7%样本仅9笔)
                 if nb_days >= 3:
                     s = "F"; score = 7
                     reason = f"主力资金:涨{chg:.1f}%+主力流入{mi/1e4:.0f}万+持续{nb_days}日"; promoted = True
@@ -4112,7 +4127,8 @@ def step13_strategy_match(candidates, kline_data=None):
                 s = "S"; reason = f"主力共振(弱):底仓{pos_score}分+起爆{break_score}分"; score = 8
             elif res_strategy == 'T':
                 s = "T"; reason = f"主力观察:底仓{pos_score}分+起爆{break_score}分"; score = 5
-        if s: c['strategy'] = s; c['score'] = score; matched.append(c)
+        if s and s not in _DISABLED_STRATEGIES: c['strategy'] = s; c['score'] = score; matched.append(c)
+    # @since v6.26.0: 禁用策略(_DISABLED_STRATEGIES=G/I)已被禁用，但保持匹配逻辑只读以便回测追踪
     # @since v6.24.0: 取消震荡市策略A数量上限 — 策略A不再受数量限流; 回测胜率低的策略不予筛选阶段拦截, 仅由皇冠评选的胜率门槛(crown_min_strategy_winrate)在冠军PK前剔降
     log_alert("INFO", "策略匹配", f"匹配{len(matched)}只")
     return matched
@@ -4745,7 +4761,11 @@ def calc_entry_price(c):
     
     # 根据量比调整预期（量比越高，次日惯性越强）
     vol_adj = min(vol_ratio / 1.5, 1.5) if vol_ratio > 0 else 1.0
-    atr_pct = min(atr_pct, 0.08)  # @since v6.8.3: 上限8%，避免极端值导致进场价虚高
+    # @since v6.26.0: ATR上限从8%→10%并增加换手惩罚臂，避免高振幅标的进场价过高导致no_entry（回测no_entry率22.9%→预期<10%）
+    # 同时按换手率折价：高换手(>15%)标的溢价压缩10%，进一步降低无法入场概率
+    turnover = c.get('turnover', 0) or 0
+    turnover_penalty = 0.9 if turnover > 15 else 1.0
+    atr_pct = min(atr_pct, 0.10) * turnover_penalty  # @since v6.26.0: 上限从8%→10% + 换手惩罚
     
     if strategy == 'A':
         # 动量延续：强势股次日大概率高开
