@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.28.0
+A股每日盘前短线标的智能筛选 v6.29.0
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.28.0"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.29.0"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -455,6 +455,9 @@ DEFAULT_PARAMS = {
     "win_rate_drop_threshold": 8,   # 单策略胜率连续下降超过N个百分点触发熔断
     "consecutive_weeks": 3,          # 连续观察周数
     "max_adjust_params": 3,          # 单策略最大自动调参次数
+    # @since v6.29.0: 影子策略自动解禁阈值——禁用策略影子样本回测胜率达标即解禁, 恢复正常参与
+    "shadow_release_winrate": 50.0,  # 影子回测胜率>=该值(%)才触发解禁
+    "shadow_release_min_trades": 5,  # 解禁所需最小影子样本数(样本不足则观望)
 }
 
 # 模块级策略映射表（DRY：避免函数内重复定义）
@@ -474,7 +477,38 @@ _STRATEGY_TAKE_PROFIT = {'A': 1.06, 'B': 1.07, 'C': 1.06, 'D': 1.06, 'E': 1.05, 
 _WEAK_INDUSTRIES = frozenset({'传媒', '商贸零售', '基础化工', '有色金属', '机械设备', '汽车', '非银金融', '食品饮料', '医药生物', '计算机', '环保', '交通运输'})
 
 # @since v6.26.0: 禁用策略——回测胜率低于15%且样本>=10的"死策略"，从源头禁用
-_DISABLED_STRATEGIES = frozenset({'G', 'I'})
+# @since v6.29.0: 禁用状态动态化——代码默认仍含 G/I, 但运行期以 策略禁启用状态.json 持久化;
+#   影子回测胜率>=shadow_release_winrate(50%)且样本>=shadow_release_min_trades 的禁用策略,
+#   由 step28 检查7 自动解禁, 下一次运行起以正常策略参与 匹配/推荐/买入/皇冠评选。文件缺失回退代码默认。
+_DISABLED_DEFAULT = frozenset({'G', 'I'})
+_DISABLED_STATE_FILE = os.path.join(DATA_DIR, '策略禁启用状态.json')
+
+def _load_disabled_strategies():
+    """读取当前禁用集合(持久化优先, 缺失/损坏回退代码默认 {G,I})。"""
+    st = _safe_read_json(_DISABLED_STATE_FILE, {})
+    dis = st.get('disabled')
+    if isinstance(dis, list) and dis:
+        return set(dis)
+    return set(_DISABLED_DEFAULT)
+
+def _persist_disabled_state(disabled_set, released=None):
+    """持久化禁用集合 + 追加解禁事件日志(保留最近30条), 供下次运行与追踪。"""
+    st = _safe_read_json(_DISABLED_STATE_FILE, {})
+    events = st.get('events') if isinstance(st.get('events'), list) else []
+    old = set(st['disabled']) if isinstance(st.get('disabled'), list) else set(_DISABLED_DEFAULT)
+    new = sorted(disabled_set)
+    if released:
+        events.append({
+            'strategy': released.get('strategy'), 'name': released.get('name'),
+            'date': beijing_date, 'win_rate': released.get('win_rate'),
+            'trades': released.get('trades'), 'reason': released.get('reason', ''),
+            'old_disabled': sorted(old), 'new_disabled': new,
+        })
+    safe_write_json(_DISABLED_STATE_FILE, {
+        'version': BUILTIN_VERSION, 'disabled': new,
+        'events': events[-30:], 'updated': beijing_date,
+    })
+    return sorted(disabled_set)
 # @since v6.28.0: 影子追踪池——记录被禁用策略(G/I等未来新增)匹配到的标的, 单独落盘供回测重算胜率,
 #   不进入正式推荐与买入池; step13 填充, step22B 落盘为 影子追踪_YYYYMMDD.json
 _shadow_pool = []
@@ -3886,6 +3920,8 @@ def step13_strategy_match(candidates, kline_data=None):
                     rc = r.get('code', '')
                     recent_5d[rc] = recent_5d.get(rc, 0) + 1
     matched = []
+    # @since v6.29.0: 每run加载一次动态禁用集合(持久化优先), 匹配分支据此分流影子/正式
+    disabled_now = _load_disabled_strategies()
     for c in candidates:
         chg = c.get('change_pct', 0); amp = c.get('amplitude', 0)
         vr = c.get('volume_ratio', 0)  # @since v6.13.20: 添加默认值防止NoneType比较
@@ -3896,7 +3932,7 @@ def step13_strategy_match(candidates, kline_data=None):
         # @since v6.26.0: 禁用策略过滤——回测胜率<15%的死策略(G横盘突破/I均线突破)从源头不参与匹配
         code_for_check = c.get('code', '')
         _ = code_for_check  # suppress unused warning
-        # 禁用策略由 _DISABLED_STRATEGIES frozenset 定义，在被禁用之前已匹配的策略不受影响
+        # 禁用策略由动态禁用集合(持久化策略禁启用状态.json, 代码默认G/I)定义，在被禁用之前已匹配的策略不受影响
         # ── A 动量延续 (@since v6.8.8: 极端上涨市关闭+读取strategy_a_weak_market参数) ──
         # @since v6.24.0: 取消策略A筛选限制 — 不再因弱市/胜率关闭策略A; 回测胜率低的策略不拦截(仅皇冠评选按 crown_min_strategy_winrate 门槛拦截)
         a_extreme = market_condition == "强市(极端上涨/降仓防追高)"
@@ -4158,12 +4194,13 @@ def step13_strategy_match(candidates, kline_data=None):
             _x_flow_ok = _x_rank < 10 and _x_rank >= 0  # 行业资金排名前10
             if _x_flow_ok and 0 <= chg <= 2 and vr is not None and vr >= 1.2 and close > op and "弱市" not in market_condition:
                 s = "X"; reason = f"板块共振跟随:{_x_ind}净流入前{_x_rank+1}名+放量{vr:.1f}+涨{chg:.1f}%"; score = 7
-        if s and s in _DISABLED_STRATEGIES:
+        if s and s in disabled_now:
             c['strategy'] = s; c['score'] = score; c['is_shadow'] = True; c['_shadow_reason'] = reason
             _shadow_pool.append(c)
-        elif s and s not in _DISABLED_STRATEGIES: c['strategy'] = s; c['score'] = score; matched.append(c)
-    # @since v6.26.0: 禁用策略(_DISABLED_STRATEGIES=G/I)已被禁用，但保持匹配逻辑只读以便回测追踪
+        elif s and s not in disabled_now: c['strategy'] = s; c['score'] = score; matched.append(c)
+    # @since v6.26.0: 禁用策略(当前动态集合, 代码默认G/I)已被禁用，但保持匹配逻辑只读以便回测追踪
     # @since v6.28.0: 影子追踪落地——匹配到禁用策略的标的不再丢弃, 写入 _shadow_pool 供回测统计
+    # @since v6.29.0: 禁用集合由 _load_disabled_strategies() 动态加载, 影子胜率达标自动解禁后下一run正常参与
     log_alert("INFO", "策略匹配", f"匹配{len(matched)}只(正式)+{len(_shadow_pool)}只(影子禁用策略)")
     return matched
 
@@ -7812,6 +7849,49 @@ def step28_self_rectify(final, fc, bt_result, sd, flow_data, total_raw, ae, asig
                 ]
             })
             _incr_crown_adj_count(data_date)
+
+    # --- 检查7: 影子策略自动解禁 @since v6.29.0 ---
+    # 影子追踪池(禁用策略G/I等的影子样本)历史回测胜率达标(shadow_release_winrate=50%)且样本足够,
+    # 即把该策略从禁用集合移除并持久化, 下一次运行起以正常策略参与 匹配/推荐/买入/皇冠评选。
+    # 样本不足观测中不处理; 即使解禁, 后续若回测胜率再度恶化, 由既有熔断/禁用逻辑兜底。
+    if bt_result and bt_result.get('all_trades'):
+        _release_thr = params.get("shadow_release_winrate", 50.0)
+        _release_min = params.get("shadow_release_min_trades", 5)
+        _shadow_only = [t for t in bt_result['all_trades'] if t.get('_shadow_src')]
+        if _shadow_only:
+            _shadow_by_s = defaultdict(list)
+            for t in _shadow_only:
+                _shadow_by_s[t.get('strategy')].append(t)
+            _cur_disabled = _load_disabled_strategies()
+            for _s_code, _ts in _shadow_by_s.items():
+                if _s_code not in _cur_disabled:
+                    continue
+                _eff = [t for t in _ts if t.get('result') in ('win', 'loss')]  # @since v6.13.38: no_entry/no_data不计胜负
+                if len(_eff) < _release_min:
+                    print(f"  ⏳ 影子策略{_s_code}({_STRATEGY_NAMES.get(_s_code,'?')}): 胜率观望中, 有效样本{len(_eff)}<{_release_min}")
+                    continue
+                _wins = sum(1 for t in _eff if t.get('return_pct', -999) > 0)
+                _s_wr = _wins / len(_eff) * 100
+                if _s_wr >= _release_thr:
+                    _new_disabled = set(_cur_disabled); _new_disabled.discard(_s_code)
+                    _persist_disabled_state(_new_disabled, released={
+                        'strategy': _s_code, 'name': _STRATEGY_NAMES.get(_s_code, '?'),
+                        'win_rate': round(_s_wr, 1), 'trades': len(_ts),
+                        'reason': f"影子回测胜率{_s_wr:.1f}%>=阈值{_release_thr:.0f}%, 自动解禁恢复正常参与",
+                    })
+                    issues.append(
+                        f"影子策略{_s_code}({_STRATEGY_NAMES.get(_s_code,'?')})解禁: "
+                        f"影子回测胜率{_s_wr:.1f}%(影子{len(_ts)}笔)>=阈值{_release_thr:.0f}%, 已移出禁用集合, 下次运行正常参与"
+                    )
+                    rectifications.append({
+                        "type": "shadow_release", "strategy": _s_code,
+                        "target": _s_code, "old": "disabled", "new": "enabled",
+                        "reason": f"禁用策略{_s_code}({_STRATEGY_NAMES.get(_s_code,'?')})影子回测胜率{_s_wr:.1f}%达标, 自动解禁",
+                        "changes": [f"策略{_s_code}({_STRATEGY_NAMES.get(_s_code,'?')})解禁: 影子胜率{_s_wr:.1f}%>={_release_thr:.0f}%, 恢复正常参与"],
+                    })
+                    print(f"  ✅ 影子策略{_s_code}({_STRATEGY_NAMES.get(_s_code,'?')})自动解禁: 影子胜率{_s_wr:.1f}%(影子{len(_ts)}笔), 下次运行正常参与")
+                else:
+                    print(f"  ⏳ 影子策略{_s_code}({_STRATEGY_NAMES.get(_s_code,'?')}): 影子胜率{_s_wr:.1f}%<阈值{_release_thr:.0f}%, 维持禁用")
 
     # --- 输出分析结果 ---
     if not issues:

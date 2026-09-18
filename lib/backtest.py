@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.28.0
+# A股短线筛选 — 历史回测模块 v6.29.0
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # @since v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
@@ -37,7 +37,7 @@ def _load_version():
                     return _v
         except OSError:
             continue
-    return "v6.28.0"  # 兜底版本（由 sync_version.py 锚定同步）
+    return "v6.29.0"  # 兜底版本（由 sync_version.py 锚定同步）
 
 
 BUILTIN_VERSION = _load_version()
@@ -683,9 +683,12 @@ def generate_backtest_report(bt_result, output_path=None):
     shadow_trades = [t for t in all_trades if t.get('_shadow_src')]
     if shadow_trades:
         shadow_m = _compute_metrics(shadow_trades)
+        # @since v6.29.0: 读取当前禁用集合(代码默认G/I), 展示解禁规则
+        _dis_st = _safe_read_json(os.path.join(DATA_DIR, '策略禁启用状态.json'), {})
+        _cur_dis = (','.join(sorted(_dis_st['disabled'])) if isinstance(_dis_st.get('disabled'), list) and _dis_st['disabled'] else 'G,I')
         lines.extend([
             "", "## 二-B、禁用策略影子回测（@since v6.28.0）", "",
-            "> 以下策略已被 `_DISABLED_STRATEGIES` 禁用（回测胜率<15%），但其历史信号持续影子追踪并重算胜率，用于评估是否具备解禁条件。该板块仅作研究参考，不构成正式推荐。",
+            f"> 当前禁用策略: `{_cur_dis}`。以下策略的历史信号持续影子追踪并重算胜率，用于评估是否具备解禁条件。解禁规则(@since v6.29.0)：影子回测胜率≥50%且样本≥5即自动移出禁用集合，下一次运行恢复正常参与。该板块仅作研究参考，不构成正式推荐。",
             "",
             "| 策略 | 影子笔数 | 胜率 | 均收 | 盈亏比 | 夏普 |",
             "|------|------|------|------|--------|------|",
