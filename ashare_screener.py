@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.27.0
+A股每日盘前短线标的智能筛选 v6.28.0
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.27.0"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.28.0"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -475,6 +475,9 @@ _WEAK_INDUSTRIES = frozenset({'传媒', '商贸零售', '基础化工', '有色�
 
 # @since v6.26.0: 禁用策略——回测胜率低于15%且样本>=10的"死策略"，从源头禁用
 _DISABLED_STRATEGIES = frozenset({'G', 'I'})
+# @since v6.28.0: 影子追踪池——记录被禁用策略(G/I等未来新增)匹配到的标的, 单独落盘供回测重算胜率,
+#   不进入正式推荐与买入池; step13 填充, step22B 落盘为 影子追踪_YYYYMMDD.json
+_shadow_pool = []
 
 def _tie_key(c):
     """模块级平局打破键：策略优先级→评分→平局分→量比→换手偏离"""
@@ -4155,10 +4158,13 @@ def step13_strategy_match(candidates, kline_data=None):
             _x_flow_ok = _x_rank < 10 and _x_rank >= 0  # 行业资金排名前10
             if _x_flow_ok and 0 <= chg <= 2 and vr is not None and vr >= 1.2 and close > op and "弱市" not in market_condition:
                 s = "X"; reason = f"板块共振跟随:{_x_ind}净流入前{_x_rank+1}名+放量{vr:.1f}+涨{chg:.1f}%"; score = 7
-        if s and s not in _DISABLED_STRATEGIES: c['strategy'] = s; c['score'] = score; matched.append(c)
+        if s and s in _DISABLED_STRATEGIES:
+            c['strategy'] = s; c['score'] = score; c['is_shadow'] = True; c['_shadow_reason'] = reason
+            _shadow_pool.append(c)
+        elif s and s not in _DISABLED_STRATEGIES: c['strategy'] = s; c['score'] = score; matched.append(c)
     # @since v6.26.0: 禁用策略(_DISABLED_STRATEGIES=G/I)已被禁用，但保持匹配逻辑只读以便回测追踪
-    # @since v6.24.0: 取消震荡市策略A数量上限 — 策略A不再受数量限流; 回测胜率低的策略不予筛选阶段拦截, 仅由皇冠评选的胜率门槛(crown_min_strategy_winrate)在冠军PK前剔降
-    log_alert("INFO", "策略匹配", f"匹配{len(matched)}只")
+    # @since v6.28.0: 影子追踪落地——匹配到禁用策略的标的不再丢弃, 写入 _shadow_pool 供回测统计
+    log_alert("INFO", "策略匹配", f"匹配{len(matched)}只(正式)+{len(_shadow_pool)}只(影子禁用策略)")
     return matched
 
 # ============================================================
@@ -6746,6 +6752,46 @@ def step22_write_history(candidates, champion_code=None, strategy_metrics=None):
     log_alert("INFO", "推荐历史", f"已追加{written}条(跳过{len(candidates)-written}条重复)")
 
 # ============================================================
+# 步骤22B：影子追踪历史落盘（@since v6.28.0）
+# 将禁用策略(G/I等)匹配到的标的写入独立 影子追踪_YYYYMMDD.json，
+# 供回测(步骤25)单独重算禁用策略胜率，为解禁评估提供数据；不进入正式买入池。
+# ============================================================
+def step22B_write_shadow_history():
+    global _shadow_pool
+    if not _shadow_pool:
+        log_alert("INFO", "影子追踪", "无禁用策略候选, 跳过")
+        return 0
+    hf = f"/workspace/影子追踪_{data_date.replace('-', '')}.json"
+    existing = safe_read_json(hf)
+    existing_keys = set()
+    for r in existing:
+        if r.get('type') == 'shadow':
+            existing_keys.add((r.get('code'), r.get('strategy'), round(r.get('entry', 0) or 0, 2)))
+    written = 0
+    for c in _shadow_pool:
+        entry = calc_entry_price(c)
+        _s = c.get('strategy', '?')
+        key = (c.get('code'), _s, round(entry, 2) if entry else 0)
+        if key in existing_keys:
+            continue
+        existing_keys.add(key)
+        rec = {
+            "type": "shadow", "code": c.get('code'), "name": c.get('name'),
+            "strategy": _s, "industry": _industry_str(c), "business": c.get('business', ''),
+            "score": c.get('score'), "confidence": c.get('confidence'),
+            "entry": entry, "change_pct": c.get('change_pct'),
+            "stop_loss": round(entry * _STRATEGY_STOP_LOSS.get(_s, 0.96), 2) if entry else None,
+            "take_profit": round(entry * _STRATEGY_TAKE_PROFIT.get(_s, 1.05), 2) if entry else None,
+            "date": data_date, "prediction_date": prediction_date, "run_date": beijing_date,
+            "is_shadow": True, "shadow_reason": c.get('_shadow_reason', ''),
+        }
+        safe_append_json(hf, rec)
+        written += 1
+    log_alert("INFO", "影子追踪", f"影子历史已追加{written}条(跳过{len(_shadow_pool)-written}条重复)")
+    _shadow_pool = []  # 落盘后清空，避免重复
+    return written
+
+# ============================================================
 # 步骤26：GitHub同步
 # ============================================================
 def step26_github_sync(mp, hd, candidates):
@@ -6769,7 +6815,7 @@ def step26_github_sync(mp, hd, candidates):
         # 窗口边缘的样本会在仍需参与回测时被提前删除。留 7 天余量确保清理期严格宽于回测期。
         c_hist = (datetime.strptime(prediction_date, '%Y-%m-%d') - timedelta(days=params.get('data_retention_days', 30) + 7)).strftime('%Y-%m-%d').replace('-', '')
         for f in list(os.listdir(rd)):
-            for prefix in ['短线标的_', '推荐历史_']:
+            for prefix in ['短线标的_', '推荐历史_', '影子追踪_']:
                 if f.startswith(prefix):
                     d = f.replace(prefix, '').replace('.md', '').replace('.json', '')
                     _cut = c_hist if prefix == '推荐历史_' else c15
@@ -6790,7 +6836,7 @@ def step26_github_sync(mp, hd, candidates):
         if os.path.exists("/workspace/持仓跟踪.xlsx"):
             shutil.copy("/workspace/持仓跟踪.xlsx", os.path.join(rd, "持仓跟踪.xlsx"))
         for f in os.listdir('/workspace'):
-            if f.startswith('推荐历史_') and f.endswith('.json'):
+            if (f.startswith('推荐历史_') or f.startswith('影子追踪_')) and f.endswith('.json'):
                 shutil.copy(os.path.join('/workspace', f), os.path.join(rd, f))
         # @since v6.22.24: 同步行业资金历史，供预测板块跨天积累（回拉侧见 step0A）
         if os.path.exists("/workspace/行业资金历史.json"):
@@ -7270,7 +7316,9 @@ def main():
         record_step_status("步骤22: 推荐历史", "SKIP", "周末")
     else:
         print("\n[步骤22] 推荐历史..."); champion_code = pk_results.get('__champion__', {}).get('winner_code', '') if pk_results else ''; step22_write_history(final, champion_code, strategy_metrics=(bt_result.get('strategy_metrics') if bt_result and isinstance(bt_result.get('strategy_metrics'), dict) else None))
-        record_step_status("步骤22: 推荐历史", "OK", f"{fc}条")
+        # @since v6.28.0: 步骤22B 影子追踪——把禁用策略(G/I)匹配标的落盘, 供回测重算胜率
+        print("\n[步骤22B] 影子追踪..."); _shadow_written = step22B_write_shadow_history()
+        record_step_status("步骤22: 推荐历史", "OK", f"{fc}条(影子{_shadow_written}条)")
     print("\n" + "=" * 60)
     print("📊 筛选概况")
     print("=" * 60)

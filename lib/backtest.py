@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.27.0
+# A股短线筛选 — 历史回测模块 v6.28.0
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # @since v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
@@ -37,7 +37,7 @@ def _load_version():
                     return _v
         except OSError:
             continue
-    return "v6.27.0"  # 兜底版本（由 sync_version.py 锚定同步）
+    return "v6.28.0"  # 兜底版本（由 sync_version.py 锚定同步）
 
 
 BUILTIN_VERSION = _load_version()
@@ -360,12 +360,30 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     print("\n[步骤25] 历史回测...")
 
     history = []
-    for f in sorted(os.listdir(DATA_DIR)):
-        if f.startswith("推荐历史_") and f.endswith(".json"):
-            records = _safe_read_json(os.path.join(DATA_DIR, f))
-            for r in records:
-                if r.get('type') == 'recommendation':
-                    history.append(r)
+    shadow_record = 0
+    # @since v6.28.0: 影子追踪——禁用策略(G/I等)匹配标的承载于 影子追踪_*.json, 一并纳入回测
+    #   重算禁用策略胜率(供解禁评估); 用 _shadow_src 标记来源便于报告区分
+    _src_prefix = ('推荐历史_', '影子追踪_')
+    for _any_f in os.listdir(DATA_DIR):
+        if not (_any_f.startswith('推荐历史_') or _any_f.startswith('影子追踪_')) or not _any_f.endswith('.json'):
+            continue
+        _records = _safe_read_json(os.path.join(DATA_DIR, _any_f))
+        for r in _records:
+            _t = r.get('type')
+            if _t == 'recommendation':
+                r['_shadow_src'] = False
+                history.append(r)
+            elif _t == 'shadow':
+                r['_shadow_src'] = True
+                r['type'] = 'recommendation'  # 复用下游撮合/统计口径, 重算其未来收益
+                history.append(r)
+                shadow_record += 1
+    if shadow_record and not any(x.get('_shadow_src') for x in history):
+        print(f"  影子追踪: 纳入 {shadow_record} 条禁用策略样本")
+    elif shadow_record:
+        print(f"  影子追踪: 纳入 {shadow_record} 条禁用策略(G/I)样本")
+    else:
+        print("  影子追踪: 本期无禁用策略样本")
 
     if not history:
         print("  无推荐历史记录，跳过回测")
@@ -523,6 +541,9 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         trade['prediction_date'] = pred_date  # 买入日，仅供K线起点与参考
         trade['score'] = h.get('score', 0)
         trade['is_champion'] = (code in all_champion_codes)  # @since v6.22.14: 标记所有历史冠军标的
+        # @since v6.28.0: 传递影子来源标记——禁用策略影子样本(G/I)在报告单独展示
+        if h.get('_shadow_src'):
+            trade['_shadow_src'] = True
         # @since v6.20.12: 买入日尚未收盘(prediction_date>=today) → 仅展示、不计入胜负(避免盘中噪声污染胜率)
         # @since v6.21.2: 修复8月10日回测无数据——买入日当天若有K线数据(市场已收盘)则正常模拟，不标记no_data
         if pred_date and pred_date >= today_str:
@@ -657,6 +678,24 @@ def generate_backtest_report(bt_result, output_path=None):
         sm = strategy_metrics[s]
         sname = _STRATEGY_NAMES.get(s, s)
         lines.append(f"| {s} {sname} | {sm['total']} | {sm['win_rate']}% | {sm['avg_return']}% | {sm['profit_factor']} | {sm['sharpe']} |")
+    # @since v6.28.0: 影子追踪——禁用策略(G/I)回测板块, 单列展示重算胜率供解禁评估
+    shadow_metrics = strategy_metrics.get('disabled_shadow')
+    shadow_trades = [t for t in all_trades if t.get('_shadow_src')]
+    if shadow_trades:
+        shadow_m = _compute_metrics(shadow_trades)
+        lines.extend([
+            "", "## 二-B、禁用策略影子回测（@since v6.28.0）", "",
+            "> 以下策略已被 `_DISABLED_STRATEGIES` 禁用（回测胜率<15%），但其历史信号持续影子追踪并重算胜率，用于评估是否具备解禁条件。该板块仅作研究参考，不构成正式推荐。",
+            "",
+            "| 策略 | 影子笔数 | 胜率 | 均收 | 盈亏比 | 夏普 |",
+            "|------|------|------|------|--------|------|",
+        ])
+        for s in sorted({t.get('strategy') for t in shadow_trades}):
+            ts = [t for t in shadow_trades if t.get('strategy') == s]
+            sm = _compute_metrics(ts)
+            sname = _STRATEGY_NAMES.get(s, s)
+            lines.append(f"| {s} {sname}⚠️禁用 | {sm['total']} | {sm['win_rate']}% | {sm['avg_return']}% | {sm['profit_factor']} | {sm['sharpe']} |")
+        lines.append("")
 
     lines.extend([
         "", "## 三、行业维度", "",
