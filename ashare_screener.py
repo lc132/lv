@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.26.0
+A股每日盘前短线标的智能筛选 v6.27.0
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.26.0"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.27.0"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -458,14 +458,16 @@ DEFAULT_PARAMS = {
 }
 
 # 模块级策略映射表（DRY：避免函数内重复定义）
-_STRATEGY_ORDER = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16, 'R': 17, 'S': 18, 'T': 19, 'U': 20}
-_STRATEGY_NAMES = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '主力资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破', 'R': '主力共振(强)', 'S': '主力共振(弱)', 'T': '主力观察', 'U': '涨停追击'}
-_STRATEGY_COLORS = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4', 'G': '#10b981', 'H': '#f97316', 'I': '#14b8a6', 'J': '#ef4444', 'K': '#a855f7', 'L': '#eab308', 'M': '#f472b6', 'N': '#84cc16', 'O': '#38bdf8', 'P': '#fb923c', 'Q': '#22d3ee', 'R': '#dc2626', 'S': '#f97316', 'T': '#94a3b8', 'U': '#ff3b3b'}
+# @since v6.27.0: 新增3策略 V(业绩预告跳空)/W(龙虎榜承接)/X(板块共振跟随)
+_STRATEGY_ORDER = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6, 'H': 7, 'I': 8, 'J': 9, 'K': 10, 'L': 11, 'M': 12, 'N': 13, 'O': 14, 'P': 15, 'Q': 16, 'R': 17, 'S': 18, 'T': 19, 'U': 20, 'V': 21, 'W': 22, 'X': 23}
+_STRATEGY_NAMES = {'A': '动量延续', 'B': '超跌反弹', 'C': '事件驱动', 'D': '回调企稳', 'E': '资金埋伏', 'F': '主力资金', 'G': '横盘突破', 'H': '地量见底', 'I': '均线突破', 'J': '龙回头', 'K': '缺口回补', 'L': '黄金坑', 'M': '涨停回调', 'N': '新高突破', 'O': '回踩均线', 'P': '地量反弹', 'Q': 'W底突破', 'R': '主力共振(强)', 'S': '主力共振(弱)', 'T': '主力观察', 'U': '涨停追击', 'V': '业绩预告跳空', 'W': '龙虎榜承接', 'X': '板块共振跟随'}
+_STRATEGY_COLORS = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0b', 'E': '#ec4899', 'F': '#06b6d4', 'G': '#10b981', 'H': '#f97316', 'I': '#14b8a6', 'J': '#ef4444', 'K': '#a855f7', 'L': '#eab308', 'M': '#f472b6', 'N': '#84cc16', 'O': '#38bdf8', 'P': '#fb923c', 'Q': '#22d3ee', 'R': '#dc2626', 'S': '#f97316', 'T': '#94a3b8', 'U': '#ff3b3b', 'V': '#e11d48', 'W': '#7c3aed', 'X': '#0d9488'}
 # @since v6.25.0: 止损全线收窄至3.5%-4%（阈值0.96-0.965）。
 # 归因量化(2026-09-15 推荐历史+回测逐笔): 止损宽≤4%胜率50% vs >4%仅30%；
 # 其中B(超跌反弹)/D(回调企稳)两大主力策略由7%/6%收窄至3.5%, G/H/I 弱势策略收窄至3.8-4%。
-_STRATEGY_STOP_LOSS = {'A': 0.96, 'B': 0.965, 'C': 0.97, 'D': 0.965, 'E': 0.96, 'F': 0.96, 'G': 0.985, 'H': 0.968, 'I': 0.985, 'J': 0.96, 'K': 0.96, 'L': 0.96, 'M': 0.965, 'N': 0.96, 'O': 0.96, 'P': 0.96, 'Q': 0.96, 'R': 0.96, 'S': 0.96, 'T': 0.96, 'U': 0.96}
-_STRATEGY_TAKE_PROFIT = {'A': 1.06, 'B': 1.07, 'C': 1.06, 'D': 1.06, 'E': 1.05, 'F': 1.05, 'G': 1.06, 'H': 1.06, 'I': 1.06, 'J': 1.06, 'K': 1.06, 'L': 1.06, 'M': 1.05, 'N': 1.06, 'O': 1.05, 'P': 1.05, 'Q': 1.05, 'R': 1.05, 'S': 1.04, 'T': 1.04, 'U': 1.06}
+# @since v6.27.0: 新增V/W/X止损线（沿用短线常规收窄口径: V=0.962业绩跳空波动大略宽松, W=0.96龙虎榜承接, X=0.962板块共振）
+_STRATEGY_STOP_LOSS = {'A': 0.96, 'B': 0.965, 'C': 0.97, 'D': 0.965, 'E': 0.96, 'F': 0.96, 'G': 0.985, 'H': 0.968, 'I': 0.985, 'J': 0.96, 'K': 0.96, 'L': 0.96, 'M': 0.965, 'N': 0.96, 'O': 0.96, 'P': 0.96, 'Q': 0.96, 'R': 0.96, 'S': 0.96, 'T': 0.96, 'U': 0.96, 'V': 0.962, 'W': 0.96, 'X': 0.962}
+_STRATEGY_TAKE_PROFIT = {'A': 1.06, 'B': 1.07, 'C': 1.06, 'D': 1.06, 'E': 1.05, 'F': 1.05, 'G': 1.06, 'H': 1.06, 'I': 1.06, 'J': 1.06, 'K': 1.06, 'L': 1.06, 'M': 1.05, 'N': 1.06, 'O': 1.05, 'P': 1.05, 'Q': 1.05, 'R': 1.05, 'S': 1.04, 'T': 1.04, 'U': 1.06, 'V': 1.06, 'W': 1.05, 'X': 1.06}
 
 # @since v6.25.0: 行业负面清单——回测胜率<40%且样本>=5的行业，剔除后整体胜率由32%→45%。
 # 与 lib/backtest.py 的 _WEAK_INDUSTRIES 保持一致（需同步修改）。
@@ -4127,6 +4129,32 @@ def step13_strategy_match(candidates, kline_data=None):
                 s = "S"; reason = f"主力共振(弱):底仓{pos_score}分+起爆{break_score}分"; score = 8
             elif res_strategy == 'T':
                 s = "T"; reason = f"主力观察:底仓{pos_score}分+起爆{break_score}分"; score = 5
+        # ── V 业绩预告跳空（@since v6.27.0: 补齐C事件驱动的单薄，财报季专用）──
+        # 财报季(1/3/4/8/10月)内，业绩预喜预期下的温和放量上攻；与C(涨1-2%弱信号)区隔，V取中等涨幅+明确放量
+        if not s:
+            v_earnings = (beijing_now.month % 2 == 1) or beijing_now.month in (3, 4, 8, 10)
+            # 财报季月份: 1/3/4/8/9/10/11（业绩预告密集期）
+            _v_quarter = beijing_now.month in (1, 3, 4, 8, 10)
+            _v_profit_ok = (c.get('pe_ttm') is None or c.get('pe_ttm', 0) > 0)  # 非亏损
+            if _v_quarter and 2 <= chg <= 7 and vr is not None and vr >= 1.2 and close > op and _v_profit_ok and "弱市" not in market_condition:
+                s = "V"; reason = f"业绩预告跳空(财报季):涨{chg:.1f}%+量比{vr:.1f}+{c.get('name','')}"; score = 8
+        # ── W 龙虎榜承接（@since v6.27.0: 龙虎榜机构净买回调低吸，与M涨停回调形成7日/龙虎榜双口径）──
+        if not s:
+            _lhb_inst = c.get('lhb_inst') or 0
+            _lhb_net = c.get('lhb_net') or 0
+            if _lhb_inst > 0 and _lhb_net > 0 and -3 <= chg <= 1 and close > 0:
+                if (vr is None or vr < 1.0) and close >= op * 0.98:  # 缩量企稳回踩
+                    s = "W"; reason = f"龙虎榜承接:机构{_lhb_inst}家净买{_lhb_net/1e4:.0f}万+回调{chg:.1f}%+阳线"; score = 7
+        # ── X 板块共振跟随（@since v6.27.0: 板块主力净流入前列+个股未启动放量，低位补涨）──
+        if not s:
+            _x_ind = _industry_str(c)
+            _x_rank = 999
+            for _ri, _r in enumerate(G_INDUSTRY_FLOW_RANK):
+                if _r.get('name') == _x_ind:
+                    _x_rank = _ri; break
+            _x_flow_ok = _x_rank < 10 and _x_rank >= 0  # 行业资金排名前10
+            if _x_flow_ok and 0 <= chg <= 2 and vr is not None and vr >= 1.2 and close > op and "弱市" not in market_condition:
+                s = "X"; reason = f"板块共振跟随:{_x_ind}净流入前{_x_rank+1}名+放量{vr:.1f}+涨{chg:.1f}%"; score = 7
         if s and s not in _DISABLED_STRATEGIES: c['strategy'] = s; c['score'] = score; matched.append(c)
     # @since v6.26.0: 禁用策略(_DISABLED_STRATEGIES=G/I)已被禁用，但保持匹配逻辑只读以便回测追踪
     # @since v6.24.0: 取消震荡市策略A数量上限 — 策略A不再受数量限流; 回测胜率低的策略不予筛选阶段拦截, 仅由皇冠评选的胜率门槛(crown_min_strategy_winrate)在冠军PK前剔降
@@ -4142,7 +4170,7 @@ def step14_scoring(candidates, kline_data=None):
     so = _STRATEGY_ORDER
     sector_ad = defaultdict(list)
     for c in candidates:
-        if c.get('strategy') in ('A', 'D', 'G', 'I', 'K', 'N'):
+        if c.get('strategy') in ('A', 'D', 'G', 'I', 'K', 'N', 'X'):  # @since v6.27.0: X板块共振纳入行业加分分组
             sector_ad[_industry_str(c)].append(c)
     sector_bonus = {}
     for ind, clist in sector_ad.items():
@@ -4178,11 +4206,15 @@ def step14_scoring(candidates, kline_data=None):
         elif s == 'P': cs = max(0, 1.0 - abs(chg - 3) / 4.0)
         elif s == 'Q': cs = max(0, 1.0 - abs(chg - 3) / 3.0)
         elif s == 'U': cs = max(0, 1.0 - abs(chg - 5) / 5.0)  # @since v6.16.5: 涨停追击，最优涨幅5%
+        # @since v6.27.0: 新增V/W/X中心度
+        elif s == 'V': cs = max(0, 1.0 - abs(chg - 4) / 3.0)   # V业绩预告跳空最优4%
+        elif s == 'W': cs = max(0, 1.0 - abs(chg + 1) / 2.0)   # W龙虎榜承接最优-1%
+        elif s == 'X': cs = max(0, 1.0 - abs(chg - 1) / 1.5)   # X板块共振跟随最优1%
         else: cs = 0.5
         amp = c.get('amplitude', 0) or 0
         ma_bonus = 0.05 if amp < 3 and vr > 1.2 else 0
         code = c.get('code', '')
-        c['_tie_score'] = max(0, vs * (0.25 if s == 'D' else 0.30) + ts * (0.35 if s == 'D' else 0.30) + cs * 0.30 + (1.0 - so.get(s, 99) / 20.0) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
+        c['_tie_score'] = max(0, vs * (0.25 if s == 'D' else 0.30) + ts * (0.35 if s == 'D' else 0.30) + cs * 0.30 + (1.0 - so.get(s, 99) / max(1.0, float(len(so)))) * 0.10 + sector_bonus.get(code, 0) + ma_bonus)
         # 融入最终score
         sc = c.get('score', 0) * 2
         sc += round(c['_tie_score'] * 8)  # @since v6.9.18: _tie_score 0~1 → 0~8分浮动，扩大区分度
