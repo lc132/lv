@@ -485,7 +485,7 @@ _DISABLED_STATE_FILE = os.path.join(DATA_DIR, '策略禁启用状态.json')
 
 def _load_disabled_strategies():
     """读取当前禁用集合(持久化优先, 缺失/损坏回退代码默认 {G,I})。"""
-    st = _safe_read_json(_DISABLED_STATE_FILE, {})
+    st = safe_read_json(_DISABLED_STATE_FILE, {})
     dis = st.get('disabled')
     if isinstance(dis, list) and dis:
         return set(dis)
@@ -493,7 +493,7 @@ def _load_disabled_strategies():
 
 def _persist_disabled_state(disabled_set, released=None):
     """持久化禁用集合 + 追加解禁事件日志(保留最近30条), 供下次运行与追踪。"""
-    st = _safe_read_json(_DISABLED_STATE_FILE, {})
+    st = safe_read_json(_DISABLED_STATE_FILE, {})
     events = st.get('events') if isinstance(st.get('events'), list) else []
     old = set(st['disabled']) if isinstance(st.get('disabled'), list) else set(_DISABLED_DEFAULT)
     new = sorted(disabled_set)

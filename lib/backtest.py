@@ -680,7 +680,7 @@ def generate_backtest_report(bt_result, output_path=None):
         lines.append(f"| {s} {sname} | {sm['total']} | {sm['win_rate']}% | {sm['avg_return']}% | {sm['profit_factor']} | {sm['sharpe']} |")
     # @since v6.28.0: 影子追踪——禁用策略(G/I)回测板块, 单列展示重算胜率供解禁评估
     shadow_metrics = strategy_metrics.get('disabled_shadow')
-    shadow_trades = [t for t in all_trades if t.get('_shadow_src')]
+    shadow_trades = [t for t in trades if t.get('_shadow_src')]
     if shadow_trades:
         shadow_m = _compute_metrics(shadow_trades)
         # @since v6.29.0: 读取当前禁用集合(代码默认G/I), 展示解禁规则
