@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.29.7
+# A股短线筛选 — 历史回测模块 v6.29.5
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # @since v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
@@ -557,45 +557,6 @@ def run_backtest(hold_days=10, max_days_lookback=90):
                 trade['is_holding'] = True
         trades.append(trade)
 
-    # @since v6.29.7: 回测冠军独立计算——按运行日由实际收益率确定最佳标的，
-    #   不再继承预测阶段 is_champion 标记，确保回测皇冠反映真实表现而非算法预判。
-    backtest_champion_codes = set()
-    _bt_date_best = {}
-    for t in trades:
-        if t.get('result') in ('win', 'loss'):
-            _d = t.get('date', '')
-            _ret = t.get('return_pct') or -999
-            if _d and (_d not in _bt_date_best or _ret > _bt_date_best[_d][0]):
-                _bt_date_best[_d] = (_ret, t['code'])
-    for _d, (_ret, _code) in _bt_date_best.items():
-        backtest_champion_codes.add(_code)
-    for t in trades:
-        if t['code'] in backtest_champion_codes:
-            t['backtest_champion'] = True
-    # 写回推荐历史文件（持久化 backtest_champion 字段）
-    if backtest_champion_codes:
-        _today_str_be = (datetime.now() + timedelta(hours=8)).strftime('%Y-%m-%d')
-        for _hf in os.listdir(DATA_DIR):
-            if _hf.startswith("推荐历史_") and _hf.endswith(".json"):
-                _fp = os.path.join(DATA_DIR, _hf)
-                try:
-                    _recs = _safe_read_json(_fp)
-                    _changed = False
-                    if isinstance(_recs, list):
-                        for _r in _recs:
-                            if isinstance(_r, dict) and _r.get('type') == 'recommendation':
-                                _rc = str(_r.get('code', ''))
-                                _rp = str(_r.get('prediction_date', ''))
-                                if _rc in backtest_champion_codes and _rp < _today_str_be:
-                                    if not _r.get('backtest_champion'):
-                                        _r['backtest_champion'] = True
-                                        _changed = True
-                    if _changed:
-                        with open(_fp, 'w', encoding='utf-8') as _fw:
-                            json.dump(_recs, _fw, ensure_ascii=False, indent=2)
-                except (OSError, json.JSONDecodeError):
-                    continue
-
     metrics = _compute_metrics(trades)
 
     strategy_trades = defaultdict(list)
@@ -608,8 +569,8 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         industry_trades[t['industry']].append(t)
     industry_metrics = {i: _compute_metrics(ts) for i, ts in industry_trades.items()}
 
-    # @since v6.29.7: 皇冠回测改用回测冠军(backtest_champion_codes)，不再使用预测冠军(is_champion)
-    champion_trades = [t for t in trades if backtest_champion_codes and t['code'] in backtest_champion_codes]
+    # @since v6.22.14: 皇冠回测——统计所有历史冠军标的的交易
+    champion_trades = [t for t in trades if all_champion_codes and t['code'] in all_champion_codes]
     # @since v6.22.17: 皇冠回测去重——皇冠权责基准：一个运行日仅保留一个标的，杜绝"重复日期"。
     #   先按(运行日,标的)剔除同标的同日多策略，再按运行日合并多标的为当日唯一代表标的，跨日完整历史仍全保留。
     # @since v6.22.18: 按"一个日期一个标的"收敛——同一运行日的所有冠军标的仅保留一个代表标的。
@@ -617,7 +578,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     if champion_trades:
         def _rep_rank(_x):
             _res_ok = 0 if _x.get('result') in ('win', 'loss') else 1
-            return (_res_ok, -float(_x.get('return_pct') or 0))
+            return (_res_ok, -float(_x.get('score') or 0))
         # 第一层：同一(运行日,标的)去重（剔除同名标的同日多策略）
         _champ_by_date_code = {}
         for _t in champion_trades:
@@ -642,7 +603,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
     champion_metrics = _compute_metrics(champion_trades) if champion_trades else None
     if champion_trades:
         print(f"  皇冠回测: {champion_metrics['total']}笔 | 胜率{champion_metrics['win_rate']}% | "
-              f"均收{champion_metrics['avg_return']}% | 预测冠军{len(all_champion_codes)}只/回测冠军{len(backtest_champion_codes)}只")
+              f"均收{champion_metrics['avg_return']}% | {len(all_champion_codes)}只冠军标的")
 
     print(f"  回测结果: {metrics['total']}笔 | 胜率{metrics['win_rate']}% | "
           f"均收{metrics['avg_return']}% | 盈亏比{metrics['profit_factor']} | 夏普{metrics['sharpe']}"
@@ -652,8 +613,7 @@ def run_backtest(hold_days=10, max_days_lookback=90):
         'all_trades': trades, 'metrics': metrics,
         'strategy_metrics': strategy_metrics, 'industry_metrics': industry_metrics,
         'champion_trades': champion_trades, 'champion_metrics': champion_metrics,  # @since v6.16.12
-        'all_champion_codes': all_champion_codes,  # @since v6.22.14: 预测冠军标的代码集合
-        'backtest_champion_codes': backtest_champion_codes,  # @since v6.29.7: 回测冠军标的代码集合
+        'all_champion_codes': all_champion_codes,  # @since v6.22.14: 所有冠军标的代码集合
     }
 
 
@@ -766,7 +726,7 @@ def generate_backtest_report(bt_result, output_path=None):
     # @since v6.22.8: 确保冠军交易始终出现在Markdown交易明细表中
     _recent_keys_md = set((t['code'], t['date'], t['strategy']) for t in recent)
     for t in trades:
-        if (t.get('is_champion') or t.get('backtest_champion')) and (t['code'], t['date'], t['strategy']) not in _recent_keys_md:
+        if t.get('is_champion') and (t['code'], t['date'], t['strategy']) not in _recent_keys_md:
             recent.append(t)
             _recent_keys_md.add((t['code'], t['date'], t['strategy']))
     for t in recent:
@@ -1007,7 +967,7 @@ def generate_backtest_html(bt_result, output_path=None):
     # @since v6.22.8: 确保冠军交易始终出现在主交易明细表中，不被均匀采样截断
     _recent_keys = set((t['code'], t['date'], t['strategy']) for t in recent)
     for t in trades:
-        if (t.get('is_champion') or t.get('backtest_champion')) and (t['code'], t['date'], t['strategy']) not in _recent_keys:
+        if t.get('is_champion') and (t['code'], t['date'], t['strategy']) not in _recent_keys:
             recent.append(t)
             _recent_keys.add((t['code'], t['date'], t['strategy']))
     for t in recent:
@@ -1086,8 +1046,8 @@ tr:hover td{{background:rgba(56,189,248,0.05)}}
 </div>
 
 <div class="section">
-<h2>👑 皇冠回测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">回测冠军(按实际收益率)独立统计</span></h2>{
-_champion_html(champion_trades, champion_metrics, bt_result.get('backtest_champion_codes'))
+<h2>👑 皇冠回测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">全部历史冠军标的独立统计</span></h2>{
+_champion_html(champion_trades, champion_metrics, bt_result.get('all_champion_codes'))
 }
 </div>
 
