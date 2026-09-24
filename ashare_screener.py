@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.29.3
+A股每日盘前短线标的智能筛选 v6.29.4
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.29.3"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.29.4"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -7702,6 +7702,39 @@ def _incr_crown_adj_count(data_date):
     return 1
 
 
+
+def _is_rectify_already_applied(rect_type, target, changes, max_lookback=14):
+    """检查相同整改是否已在近期记录中应用过。
+    @since v6.29.4: 读取 策略调整记录.json 的前 max_lookback 条，
+    若存在同 changes 文本完全匹配的记录，返回 True。
+    避免每天重复触发相同整改（如 API 不可达类问题）浪费版本号。"""
+    try:
+        adj_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "策略调整记录.json")
+        if not os.path.exists(adj_path):
+            adj_path = "/workspace/策略调整记录.json"
+        if not os.path.exists(adj_path):
+            return False
+        with open(adj_path, 'r', encoding='utf-8') as f:
+            records = json.load(f)
+        if not isinstance(records, list):
+            return False
+        target_changes = set(changes) if isinstance(changes, list) else {str(changes)}
+        for rec in records[:max_lookback]:
+            if not isinstance(rec, dict):
+                continue
+            rec_changes = rec.get('changes', [])
+            if isinstance(rec_changes, list):
+                rec_set = set(rec_changes)
+            else:
+                rec_set = {str(rec_changes)}
+            if target_changes == rec_set and len(target_changes) > 0:
+                return True
+        return False
+    except Exception as e:
+        log_alert("DEBUG", "自动整改", f"_is_rectify_already_applied: {str(e)[:60]}")
+        return False
+
+
 # ============================================================
 # 步骤28：筛选后自动整改 (v6.21.4)
 # ============================================================
@@ -7722,15 +7755,23 @@ def step28_self_rectify(final, fc, bt_result, sd, flow_data, total_raw, ae, asig
     
     # --- 检查2: 行业资金排名 ---
     if not G_INDUSTRY_FLOW_RANK:
-        issues.append("行业资金排名为空（板块级主力净流入排名API持续不可达）")
-        rectifications.append({
-            "type": "proxy",
-            "target": "industry_flow",
-            "reason": "板块级主力净流入排名API持续不可达，需增强代理估算精度",
-            "changes": [
-                "主力资金代理估算增强: 新增换手率+振幅辅助因子加权估算"
-            ]
-        })
+        # @since v6.29.4: 去重守卫——同样的整改已在近期应用过则跳过，连 issue 也不加，
+        # 避免走到「无自动整改方案」告警路径；仅 INFO 打印
+        if _is_rectify_already_applied(
+            "proxy", "industry_flow",
+            ["主力资金代理估算增强: 新增换手率+振幅辅助因子加权估算"]
+        ):
+            print("  ℹ️ [自动整改] 行业资金排名API不可达 — 已应用过相同整改，跳过本次")
+        else:
+            issues.append("行业资金排名为空（板块级主力净流入排名API持续不可达）")
+            rectifications.append({
+                "type": "proxy",
+                "target": "industry_flow",
+                "reason": "板块级主力净流入排名API持续不可达，需增强代理估算精度",
+                "changes": [
+                    "主力资金代理估算增强: 新增换手率+振幅辅助因子加权估算"
+                ]
+            })
     
     # --- 检查3: 新闻源超时 ---
     news_warn = any('新闻' in s['step'] and s['status'] != 'OK' for s in _step_status)
