@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.29.4
+A股每日盘前短线标的智能筛选 v6.29.5
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.29.4"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.29.5"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -5614,7 +5614,7 @@ def _generate_market_overview(all_stocks, index_data, output_dir):
     return chart_path
 
 # ============================================================
-def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report=None, bt_lookup=None, pk_results=None, kline_data=None):
+def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report=None, bt_lookup=None, pk_results=None, kline_data=None, strategy_metrics=None):
     mp = f"/workspace/短线标的_{prediction_date}.md"
     lines = [
         f"# A股短线标的筛选报告 — {prediction_date}", "",
@@ -5636,11 +5636,21 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
     ]
     if candidates:
         _top10_codes = _compute_pl_ratios(candidates)
+        # @since v6.29.5: 买入池过滤——只展示进入买入池的标的，隐藏最终推荐中未通过期望过滤的候选
+        _champ_code = pk_results.get('__champion__', {}).get('winner_code', '') if pk_results else ''
+        buy_pool, _dropped_pool, _ = _filter_buy_pool(candidates, strategy_metrics, champion_code=_champ_code)
+        _display_list = buy_pool
+
+        # 买入池说明行
+        if _dropped_pool:
+            lines.append(f"> 📋 **买入池**: {len(candidates)}只→**{len(buy_pool)}只** ({len(_dropped_pool)}只因期望过滤剔除)\n")
+        else:
+            lines.append(f"> 📋 **买入池**: {len(candidates)}只→**{len(buy_pool)}只** (全部达标)\n")
 
         lines.append("## 推荐标的\n")
         lines.append("| # | TOP10 | PK | 策略 | 标的 | 代码 | 行业 | 二级行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 60日高 | 60日低 | 档位 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 | 盈亏比 | 回测 |\n")
         lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
-        for idx, c in enumerate(candidates, 1):
+        for idx, c in enumerate(_display_list, 1):
             code = c.get('code', ''); name = c.get('name', '')
             s = c.get('strategy', '?'); ind = _industry_str(c); biz = c.get('business', '')
             chg = c.get('change_pct', 0); op = c.get('open', 0) or 0
@@ -5742,7 +5752,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                     inflow_str = "—"
                     outflow_str = f"{abs(net_yi):.2f}"
                 sw1 = _map_em_sector_to_sw1(r['name'])
-                reps = [c for c in candidates if _industry_str(c) == sw1][:4]
+                reps = [c for c in _display_list if _industry_str(c) == sw1][:4]
                 rep_str = '、'.join(c.get('name', '') for c in reps) if reps else "—"
                 chg = f"{r['chg']:+.2f}" if isinstance(r['chg'], (int, float)) else "—"
                 lines.append(f"| {r['name']} | {inflow_str} | {outflow_str} | {chg} | {rep_str} |")
@@ -5759,7 +5769,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         else:
             ind_flow = {}
             has_flow_data = False
-            for c in candidates:
+            for c in _display_list:
                 ind = _industry_str(c)
                 mi = c.get('main_inflow')
                 if mi is not None: has_flow_data = True
@@ -5780,7 +5790,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                     lines.append(f"| {ind} | {direction}{abs_flow:.2f} | {stock_str} |")
             else:
                 lines.append("> ⚠️ 主力资金数据不可得（API通道受限），无法展示行业资金流向。建议结合盘口观察或龙虎榜数据辅助判断。\n")
-    sd = Counter(c.get('strategy') for c in candidates)
+    sd = Counter(c.get('strategy') for c in _display_list)
     # @since v6.22.14: 预测板块——基于历史资金流向预测下个交易日流入最多板块
     predictions = _predict_sector_inflow()
     if predictions:
@@ -7342,7 +7352,7 @@ def main():
     print("\n[步骤19B] 同策略PK..."); pk_results = step19b_strategy_pk(final, kline_data, bt_lookup, sector_limit_up, market_condition, index_data, strategy_winrates=_strat_wr_map)
     record_step_status("步骤19B: 同策略PK", "OK", f"{sum(1 for v in pk_results.values() if v['count']>=2)}组对决")
 
-    print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup, pk_results, kline_data)
+    print("\n[步骤20] Markdown..."); mp = step20_output_markdown(final, total_raw, ae, asig, astr, amicro, aind, anew, er, ai_report, bt_lookup, pk_results, kline_data, strategy_metrics=(bt_result.get("strategy_metrics") if bt_result and isinstance(bt_result.get("strategy_metrics"), dict) else None))
     record_step_status("步骤20: Markdown", "OK", mp)
     print("\n[步骤20B] HTML..."); hp = step20B_generate_html(final, total_raw, ae, asig, astr, amicro, aind, anew, er, crisis_alerts, ai_report, bt_lookup, kline_data, bt_result, pk_results, all_stocks); hd = os.path.dirname(hp)
     record_step_status("步骤20B: HTML报告", "OK", hp)
