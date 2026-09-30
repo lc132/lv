@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.29.6
+A股每日盘前短线标的智能筛选 v6.29.7
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.29.6"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.29.7"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -5628,7 +5628,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
         f"| ①原始标的池 | {total_raw} | - | 全市场活跃TOP500 |",
         f"| ②硬排除 | {ae} | {total_raw - ae} | 13项(持仓/科创/北交/低价/高价/ST/涨幅/停牌/市值/成交额/上市天数/质押商誉解禁已废弃) |",
         f"| ③信号过滤 | {asig} | {ae - asig} | 27项(假动量/诱多/缩量涨停/振幅/跌停异动/缩量下跌/高换手低涨幅/首阴/均线空头/MACD顶背离/RSI超买/缩量反弹/KDJ死叉/涨停次日高开低走/布林突破失败/20日涨幅>45%/放量不涨/放量滞跌/长上影线/连续缩量/净利润亏损/冲击成本/限售解禁/可转债/业绩预告/机构减持/融资过热) |",
-        f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKLMNOPQRSTU二十一策略 |",
+        f"| ④策略匹配 | {astr} | {asig - astr} | ABCDEFGHIJKLMNOPQRSTUVWX二十四策略 |",
         f"| ⑤微观结构过滤 | {amicro} | {astr - amicro} | 流动性(换手率/Amihud)+消息敏感度(波动性) |",
         f"| ⑥行业+同策略限制 | {aind} | {amicro - aind} | 同行业≤4只(弱市)/3只(强/震荡)+同策略≤30% |",
         f"| ⑦新闻筛查 | {aind - anew} | {anew} | 东方财富/Bing/巨潮资讯网/财联社四源并行利空检测 |",
@@ -6018,7 +6018,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         bar_html += f'<div class="bar-row"><div class="bar-label">{r}</div><div class="bar-track"><div class="bar-fill" style="width:{bp}%">{cnt}</div></div></div>'
     
     stages = [("原始标的池", total_raw), ("硬排除(13项)", ae), ("信号过滤(27项)", asig),
-              ("策略匹配(21策略)", astr), ("微观结构过滤", amicro), ("行业+同策略限制", aind), ("新闻筛查", aind - anew), ("最终推荐", fc)]
+              ("策略匹配(24策略)", astr), ("微观结构过滤", amicro), ("行业+同策略限制", aind), ("新闻筛查", aind - anew), ("最终推荐", fc)]
     max_f = max(s[1] for s in stages)
     funnel_html = ""
     for i, (name, count) in enumerate(stages):
@@ -6395,9 +6395,9 @@ tbody tr:nth-child(even){{background:rgba(255,255,255,.01)}}
 /* badges */
 .badge{{padding:2px 9px;border-radius:4px;font-size:.68rem;font-weight:700;letter-spacing:.03em}}
 .strat_a{{background:#14532d;color:#22c55e}}.strat_b{{background:#1e3a5f;color:#3b82f6}}.strat_c{{background:#3b1f6e;color:#8b5cf6}}
-.strat_d{{background:#5c3d0e;color:#f59e0b}}.strat_e{{background:#5c1648;color:#ec4899}}.strat_f{{background:#0f4c5c;color:#06b6d4}}.strat_g{{background:#0e4c3d;color:#10b981}}.strat_h{{background:#4c1d0e;color:#f97316}}.strat_i{{background:#0e3d3d;color:#14b8a6}}.strat_j{{background:#5c1515;color:#ef4444}}.strat_k{{background:#3b1f3b;color:#a855f7}}.strat_l{{background:#4c3d0e;color:#eab308}}.strat_m{{background:#4c1d3b;color:#f472b6}}.strat_n{{background:#1e3d0e;color:#84cc16}}.strat_o{{background:#0e2e4c;color:#38bdf8}}.strat_p{{background:#4c2e0e;color:#fb923c}}.strat_q{{background:#0e3e4c;color:#22d3ee}}.strat_r{{background:#4c1515;color:#dc2626}}.strat_s{{background:#4c2e0e;color:#f97316}}.strat_t{{background:#334155;color:#94a3b8}}.strat_u{{background:#5c1010;color:#ff3b3b}}
+.strat_d{{background:#5c3d0e;color:#f59e0b}}.strat_e{{background:#5c1648;color:#ec4899}}.strat_f{{background:#0f4c5c;color:#06b6d4}}.strat_g{{background:#0e4c3d;color:#10b981}}.strat_h{{background:#4c1d0e;color:#f97316}}.strat_i{{background:#0e3d3d;color:#14b8a6}}.strat_j{{background:#5c1515;color:#ef4444}}.strat_k{{background:#3b1f3b;color:#a855f7}}.strat_l{{background:#4c3d0e;color:#eab308}}.strat_m{{background:#4c1d3b;color:#f472b6}}.strat_n{{background:#1e3d0e;color:#84cc16}}.strat_o{{background:#0e2e4c;color:#38bdf8}}.strat_p{{background:#4c2e0e;color:#fb923c}}.strat_q{{background:#0e3e4c;color:#22d3ee}}.strat_r{{background:#4c1515;color:#dc2626}}.strat_s{{background:#4c2e0e;color:#f97316}}.strat_t{{background:#334155;color:#94a3b8}}.strat_u{{background:#5c1010;color:#ff3b3b}}.strat_v{{background:#2e3a0e;color:#a3e635}}.strat_w{{background:#0e4c0e;color:#4ade80}}.strat_x{{background:#1e3a5f;color:#60a5fa}}
 tr.strat_a{{background:rgba(34,197,94,0.05)}}tr.strat_b{{background:rgba(59,130,246,0.05)}}tr.strat_c{{background:rgba(139,92,246,0.05)}}
-tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72,153,0.05)}}tr.strat_f{{background:rgba(6,182,212,0.05)}}tr.strat_g{{background:rgba(16,185,129,0.05)}}tr.strat_h{{background:rgba(249,115,22,0.05)}}tr.strat_i{{background:rgba(20,184,166,0.05)}}tr.strat_j{{background:rgba(239,68,68,0.05)}}tr.strat_k{{background:rgba(168,85,247,0.05)}}tr.strat_l{{background:rgba(234,179,8,0.05)}}tr.strat_m{{background:rgba(244,114,182,0.05)}}tr.strat_n{{background:rgba(132,204,22,0.05)}}tr.strat_o{{background:rgba(56,189,248,0.05)}}tr.strat_p{{background:rgba(251,146,60,0.05)}}tr.strat_q{{background:rgba(34,211,238,0.05)}}tr.strat_r{{background:rgba(220,38,38,0.05)}}tr.strat_s{{background:rgba(249,115,22,0.05)}}tr.strat_t{{background:rgba(148,163,184,0.06)}}tr.strat_u{{background:rgba(255,59,59,0.05)}}
+tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72,153,0.05)}}tr.strat_f{{background:rgba(6,182,212,0.05)}}tr.strat_g{{background:rgba(16,185,129,0.05)}}tr.strat_h{{background:rgba(249,115,22,0.05)}}tr.strat_i{{background:rgba(20,184,166,0.05)}}tr.strat_j{{background:rgba(239,68,68,0.05)}}tr.strat_k{{background:rgba(168,85,247,0.05)}}tr.strat_l{{background:rgba(234,179,8,0.05)}}tr.strat_m{{background:rgba(244,114,182,0.05)}}tr.strat_n{{background:rgba(132,204,22,0.05)}}tr.strat_o{{background:rgba(56,189,248,0.05)}}tr.strat_p{{background:rgba(251,146,60,0.05)}}tr.strat_q{{background:rgba(34,211,238,0.05)}}tr.strat_r{{background:rgba(220,38,38,0.05)}}tr.strat_s{{background:rgba(249,115,22,0.05)}}tr.strat_t{{background:rgba(148,163,184,0.06)}}tr.strat_u{{background:rgba(255,59,59,0.05)}}tr.strat_v{{background:rgba(163,230,53,0.05)}}tr.strat_w{{background:rgba(74,222,128,0.05)}}tr.strat_x{{background:rgba(96,165,250,0.05)}}
 /* conf / entry */
 .conf{{font-weight:700}}.conf.high{{color:#22c55e}}.conf.mid{{color:#f59e0b}}.conf.low{{color:#ef4444}}
 .entry{{color:#38bdf8;font-weight:700}}
@@ -6632,7 +6632,6 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 <div style="margin-top:.5rem;color:#64748b;font-size:.7rem">模拟口径：90天推荐历史，按进场/止损/止盈模拟，单笔最大持仓10交易日，T+1规则，未计入滑点/手续费/涨跌停无法成交。</div>
 </div></section>
 <section><h2>策略说明</h2><table>
-{'' if not pk_results else _build_pk_html(pk_results)}
 <thead><tr><th style="width:18%">策略</th><th style="width:48%">条件</th><th style="width:16%">仓位(震荡)</th><th style="width:18%">仓位(弱市)</th></tr></thead>
 <tbody>
 <tr><td><span class="badge strat_a">A动量延续</span></td><td style="white-space:normal;word-break:break-all">涨3-7%+量比1.5-3.0+弱市/极端上涨关闭</td><td>12-17%</td><td>0%(关闭)</td></tr>
@@ -6656,7 +6655,11 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 <tr><td><span class="badge strat_s">S 主力共振(弱)</span></td><td style="white-space:normal;word-break:break-all">底仓≥2分+起爆≥3分双重共振+弱市降仓位</td><td>5-8%</td><td>3-5%</td></tr>
 <tr><td><span class="badge strat_t">T 主力观察</span></td><td style="white-space:normal;word-break:break-all">底仓≥2分+起爆≥2分预共振+待确认信号+弱市不推荐</td><td>3-5%</td><td>0%(关闭)</td></tr>
 <tr><td><span class="badge strat_u">U 涨停追击</span></td><td style="white-space:normal;word-break:break-all">涨3-9%+量比≥1.5+换手≥3%+小盘<100亿+涨停基因+振幅>3%+收阳</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_v">V 业绩预告跳空</span></td><td style="white-space:normal;word-break:break-all">涨2-7%+量比≥1.2+收阳+财报季(1/3/4/8/10月)+非亏损+弱市关闭</td><td>5-8%</td><td>0%(关闭)</td></tr>
+<tr><td><span class="badge strat_w">W 龙虎榜承接</span></td><td style="white-space:normal;word-break:break-all">龙虎榜机构净买&gt;0+回调-3~1%+缩量vr&lt;1.0企稳收阳(close≥open×0.98)</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_x">X 板块共振跟随</span></td><td style="white-space:normal;word-break:break-all">行业资金净流入前10+涨0-2%+量比≥1.2+收阳+弱市关闭</td><td>5-8%</td><td>0%(关闭)</td></tr>
 </tbody></table></section>
+{'' if not pk_results else _build_pk_html(pk_results)}
 <section><h2>资金去向（行业主力净流入排名）</h2>
 <div class="capital-flow">{capital_flow_html if capital_flow_html else '<div style="color:#94a3b8;padding:1rem">暂无资金流向数据</div>'}</div></section>
 <section><h2>🔮 预测上涨板块（下一交易日）</h2>
