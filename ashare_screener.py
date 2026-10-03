@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.29.7
+A股每日盘前短线标的智能筛选 v6.30.0
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.29.7"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.30.0"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -419,7 +419,7 @@ DEFAULT_PARAMS = {
     "strategy_a_weak_market": "open",   # @since v6.24.0: closed→open, 弱市不再关闭策略A筛选; 低胜率策略仅由皇冠胜率门槛拦截
     # @since v6.24.0: 取消震荡市策略A数量上限 — 不再用数量限流控制策略A敞口, 回测胜率低仅不参与皇冠评选(crown_min_strategy_winrate); 参数保留为"不限制"哨兵值(9999=不启用)
     "strategy_a_shock_market_limit": 9999,
-    "strategy_e_expand_threshold": 800,  # @since v6.26.0: 1000万→800万, 扩大E/F主力资金策略候选池（F策略回测胜率66.7%样本仅9笔）
+    "strategy_e_expand_threshold": 1200,  # @since v6.30.0: 800万→1200万回调, 剔除扩池引入的低质标的（近两周E胜率16.7%/均收-2.64%触失效信号）
     # @since v6.22.33: 冠军(皇冠)胜率优化 — 方案一: 冠军候选池策略胜率门槛
     # 低于该胜率的策略, 其组获胜者不进入跨策略冠军PK（止血: 低胜率策略不再长期霸占👑）
     "crown_min_strategy_winrate": 30.0,        # 策略历史胜率门槛(%)
@@ -469,7 +469,7 @@ _STRATEGY_COLORS = {'A': '#22c55e', 'B': '#3b82f6', 'C': '#8b5cf6', 'D': '#f59e0
 # 归因量化(2026-09-15 推荐历史+回测逐笔): 止损宽≤4%胜率50% vs >4%仅30%；
 # 其中B(超跌反弹)/D(回调企稳)两大主力策略由7%/6%收窄至3.5%, G/H/I 弱势策略收窄至3.8-4%。
 # @since v6.27.0: 新增V/W/X止损线（沿用短线常规收窄口径: V=0.962业绩跳空波动大略宽松, W=0.96龙虎榜承接, X=0.962板块共振）
-_STRATEGY_STOP_LOSS = {'A': 0.96, 'B': 0.965, 'C': 0.97, 'D': 0.965, 'E': 0.96, 'F': 0.96, 'G': 0.985, 'H': 0.968, 'I': 0.985, 'J': 0.96, 'K': 0.96, 'L': 0.96, 'M': 0.965, 'N': 0.96, 'O': 0.96, 'P': 0.96, 'Q': 0.96, 'R': 0.96, 'S': 0.96, 'T': 0.96, 'U': 0.96, 'V': 0.962, 'W': 0.96, 'X': 0.962}
+_STRATEGY_STOP_LOSS = {'A': 0.96, 'B': 0.965, 'C': 0.972, 'D': 0.965, 'E': 0.968, 'F': 0.96, 'G': 0.985, 'H': 0.968, 'I': 0.985, 'J': 0.96, 'K': 0.96, 'L': 0.96, 'M': 0.965, 'N': 0.96, 'O': 0.96, 'P': 0.96, 'Q': 0.96, 'R': 0.96, 'S': 0.96, 'T': 0.96, 'U': 0.96, 'V': 0.962, 'W': 0.96, 'X': 0.962}  # @since v6.30.0: C/E止损收紧(C→2.8%,E→3.2%)
 _STRATEGY_TAKE_PROFIT = {'A': 1.06, 'B': 1.07, 'C': 1.06, 'D': 1.06, 'E': 1.05, 'F': 1.05, 'G': 1.06, 'H': 1.06, 'I': 1.06, 'J': 1.06, 'K': 1.06, 'L': 1.06, 'M': 1.05, 'N': 1.06, 'O': 1.05, 'P': 1.05, 'Q': 1.05, 'R': 1.05, 'S': 1.04, 'T': 1.04, 'U': 1.06, 'V': 1.06, 'W': 1.05, 'X': 1.06}
 
 # @since v6.25.0: 行业负面清单——回测胜率<40%且样本>=5的行业，剔除后整体胜率由32%→45%。
@@ -480,7 +480,7 @@ _WEAK_INDUSTRIES = frozenset({'传媒', '商贸零售', '基础化工', '有色�
 # @since v6.29.0: 禁用状态动态化——代码默认仍含 G/I, 但运行期以 策略禁启用状态.json 持久化;
 #   影子回测胜率>=shadow_release_winrate(50%)且样本>=shadow_release_min_trades 的禁用策略,
 #   由 step28 检查7 自动解禁, 下一次运行起以正常策略参与 匹配/推荐/买入/皇冠评选。文件缺失回退代码默认。
-_DISABLED_DEFAULT = frozenset({'G', 'I'})
+_DISABLED_DEFAULT = frozenset({'G', 'I', 'C'})  # @since v6.30.0: C事件驱动近两周25.0%胜率/-2.65%均收, 并入影子池自动追踪
 _DISABLED_STATE_FILE = os.path.join(DATA_DIR, '策略禁启用状态.json')
 
 def _load_disabled_strategies():
@@ -3966,7 +3966,7 @@ def step13_strategy_match(candidates, kline_data=None):
                 else:
                     s = "B"; reason = f"超跌反弹(宽幅):跌{chg:.1f}%+振幅{amp:.1f}%"; score = 5
         # ── C 事件驱动 (@since v6.9.17: 弱市关闭，追涨风险大) ──
-        if not s and 1 <= chg < 2 and "弱市" not in market_condition:
+        if not s and 1 <= chg < 2 and chg <= 5 and "弱市" not in market_condition:  # @since v6.30.0: 高开/涨幅过大>5%追高剔除守卫
             is_earnings = beijing_now.month in (1, 3, 4, 8, 10)
             if is_earnings:
                 s = "C"; reason = f"事件驱动(财报季):涨{chg:.1f}%"; score = 8
