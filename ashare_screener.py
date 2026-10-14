@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.30.1
+A股每日盘前短线标的智能筛选 v6.31.0
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.30.1"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.31.0"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -443,6 +443,15 @@ DEFAULT_PARAMS = {
     "crown_winrate_min_trades": 5,             # 冠军胜率统计最小样本
     "crown_winrate_raise_step": 10.0,          # 每次收紧幅度(百分点)
     "crown_winrate_ceiling": 50.0,             # 门槛上调上限
+    # @since v6.31.0: 次日盈利导向皇冠准入——10日回测口径(avg_return)与"次日盈利"错配,
+    #   现以推荐历史真实次日收益(real_return_pct)聚合来选皇冠。
+    #   依据(2026-09-11~10-13): B超跌反弹68.3%/+2.37%>, D回调企稳67.3%/+1.20%,
+    #   E资金埋伏58.8%/+0.67% 次日为正; A动量延续33.3%/-8.06%, C事件驱动25%/-2.65%,
+    #   H地量见底50%/-1.21%, L黄金坑40%/-0.47% 次日为负(皇冠爆亏元凶, 光华/传艺均为A)。
+    "crown_nextday_enabled": True,             # 是否启用次日盈利准入
+    "crown_nextday_min_samples": 3,            # 次日画像最小样本(不足则回退原10日门槛, 不误杀新策略/少样本策略)
+    "crown_nextday_avg_floor": 0.0,            # 次日均收>=该值(%)才允许该策略获胜者参与皇冠PK(否决制)
+    "crown_nextday_bonus": 0.3,                # 次日均收偏好加分上限(冠军评分, 0=关闭)
     # @since v6.22.34: 买入池期望≥0过滤 + 每日买入数量上限（独立步骤，不改主筛选/胜率监控）
     # 依据: 回测报告(2026-08-10~09-07)各策略未来期望(avg_return)存在显著分化,
     #   B/J/F/H 为正期望, D/C/G/A/I 为负期望; 缩紧=只把正期望策略标的写入推荐历史, 数量不足时不硬凑。
@@ -5172,6 +5181,38 @@ def _safe_float(val):
     try: return float(val)
     except (ValueError, TypeError): return None
 
+def _strategy_nextday_profile():
+    """@since v6.31.0: 聚合推荐历史真实次日收益(real_return_pct) => {strat: {samples, win_rate, avg_return}}。
+    仅统计已结算样本(real_return_pct 非None)，返回空dict表示无可用数据(调用方回退原逻辑)。"""
+    acc = {}
+    try:
+        for f in sorted(os.listdir(DATA_DIR)):
+            if f.startswith('推荐历史_') and f.endswith('.json'):
+                try:
+                    with open(os.path.join(DATA_DIR, f), 'r', encoding='utf-8') as fh:
+                        for r in json.load(fh):
+                            if not (isinstance(r, dict) and r.get('type') == 'recommendation'):
+                                continue
+                            rr = r.get('real_return_pct')
+                            if rr is None:
+                                continue
+                            s = r.get('strategy', '?')
+                            d = acc.setdefault(s, {'samples': 0, 'wins': 0, 'sum': 0.0})
+                            d['samples'] += 1
+                            if rr > 0:
+                                d['wins'] += 1
+                            d['sum'] += rr
+                except (OSError, ValueError):
+                    continue
+    except Exception:
+        return {}
+    out = {}
+    for s, d in acc.items():
+        n = d['samples']
+        out[s] = {'samples': n, 'win_rate': d['wins'] / n, 'avg_return': d['sum'] / n}
+    return out
+
+
 def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None, market_condition=None, index_data=None, strategy_winrates=None):
     """@since v6.13.33: 同策略PK + 跨策略冠军PK
     第一阶段: 同策略标的12维度对决，标记组内获胜者(@since v6.22.32: 7→12维度)
@@ -5191,6 +5232,12 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
     _sec_decay = params.get('crown_sector_bonus_decay', 0.5)
     _cd_days = params.get('crown_repeat_cooldown_days', 5)
     _cd_penalty = params.get('crown_repeat_penalty', 1.0)
+    # @since v6.31.0: 次日盈利画像参数与数据
+    _nxt_enabled = params.get('crown_nextday_enabled', True)
+    _nxt_min = params.get('crown_nextday_min_samples', 2)
+    _nxt_floor = params.get('crown_nextday_avg_floor', 0.0)
+    _nxt_bonus = params.get('crown_nextday_bonus', 0.3)
+    _nextday_profile = _strategy_nextday_profile() if _nxt_enabled else {}
 
     # 方案3: 重复夺冠冷却——统计每个 code 近 _cd_days 交易日内的历史夺冠次数
     def _champ_repeat_count(code, cd_days):
@@ -5335,6 +5382,15 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
                 for _wc in w:
                     _wc['_pk_champion'] = False  # 明确不进跨策略冠军PK
                 continue  # 该策略不进入冠军候选池
+        # @since v6.31.0 次日准入: 次日均收<avg_floor 且样本充足 -> 负次日策略获胜者禁入皇冠PK(治本: 防A动量延续式爆亏)
+        _np = _nextday_profile.get(strat)
+        if _np and _np.get('samples', 0) >= _nxt_min and _np.get('avg_return', 0) < _nxt_floor:
+            _nm = _STRATEGY_NAMES.get(strat, strat)
+            gated_strategies.append(f"{strat}({_nm})(次日{_np.get('avg_return', 0):+.1f}%)")
+            skipped_by_gate += len(w)
+            for _wc in w:
+                _wc['_pk_champion'] = False  # 负次日策略不进跨策略冠军PK
+            continue
         all_winners.extend(w)
     if gated_strategies:
         print(f"  ⚠️ [方案一] 策略胜率门槛: 剔除{skipped_by_gate}个低胜率策略获胜者出冠军PK: {', '.join(gated_strategies)}")
@@ -5446,6 +5502,12 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
                     c['_crown_cooldown'] = round(penalty, 1)
                     c['_crown_repeat'] = repeat
 
+        # @since v6.31.0: 次日偏好加权——次日正均收且样本足策略的获胜者, 冠军评分加成(上限=crown_nextday_bonus)
+        for c in all_winners:
+            _np = _nextday_profile.get(c.get('strategy', ''))
+            if _np and _np.get('samples', 0) >= _nxt_min and _np.get('avg_return', 0) > 0:
+                _nb = round(min(_nxt_bonus, _np.get('avg_return', 0) / 10.0) * 10 + 1e-9) / 10
+                c['_champion_score'] += _nb
         max_champ = max(c['_champion_score'] for c in all_winners)
         top_champs = [c for c in all_winners if c['_champion_score'] == max_champ]
         if len(top_champs) == 1:
