@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.30.0
+A股每日盘前短线标的智能筛选 v6.30.1
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.30.0"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.30.1"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -6690,8 +6690,13 @@ def step21_final_verify(mp, fc):
                 main_section = content.split(marker)[0]
                 break
         tr = sum(1 for l in main_section.split('\n') if l.strip().startswith('| ') and l.split('|')[1].strip().isdigit())
-        if tr != fc: log_alert("ERROR", "数量校验", f"概况{fc}≠MD表格{tr}")
-        else: log_alert("INFO", "最终验证", f"通过（{fc}只）")
+        # @since v6.30.1: v6.29.5 买入池展示优化后，MD 推荐表仅展示经期望过滤的买入池标的，
+        # 校验目标由全量候选 fc 改为「买入池摘要数」(📋 买入池: 候选N只→M只 的 M)，消除口径错位噪音。
+        expected = fc
+        bm = re.search(r'📋\s*买入池:\s*\d+只[^\d]*(\d+)只', main_section)
+        if bm: expected = int(bm.group(1))
+        if tr != expected: log_alert("ERROR", "数量校验", f"概况{expected}≠MD表格{tr}")
+        else: log_alert("INFO", "最终验证", f"通过（{expected}只）")
     except FileNotFoundError:
         log_alert("ERROR", "数量校验", "MD文件不存在")
 
@@ -7816,8 +7821,11 @@ def step28_self_rectify(final, fc, bt_result, sd, flow_data, total_raw, ae, asig
     if bt_result and bt_result.get('all_trades'):
         total_trades = len(bt_result['all_trades'])
         if total_trades >= 10:
-            win_rate_raw = bt_result.get('win_rate', 0)
-            avg_return_raw = bt_result.get('avg_return', 0)
+            # @since v6.30.1: 修复字段读取缺陷——win_rate/avg_return 嵌套在 metrics 内，
+            # 此前读顶层恒为 0 导致「回测整体表现不佳」检测永久失效(漏报)。
+            _btm = bt_result.get('metrics') or {}
+            win_rate_raw = _btm.get('win_rate', 0) or 0
+            avg_return_raw = _btm.get('avg_return', 0) or 0
             win_rate = win_rate_raw * 100 if win_rate_raw < 1 else win_rate_raw
             avg_return = avg_return_raw * 100 if abs(avg_return_raw) < 1 else avg_return_raw
             if win_rate < 30 and avg_return < 0:
