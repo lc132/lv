@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.32.0
+A股每日盘前短线标的智能筛选 v6.33.0
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.32.0"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.33.0"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -2953,6 +2953,62 @@ def _map_em_sector_to_sw1(name):
             return v
     return name
 
+def _fetch_industry_flow_rank_ths():
+    """@since v6.33.0: 行业资金排名备选源——同花顺数据中心(data.10jqka.com.cn/funds/hyzjl/)。
+    东财 push2 clist 在沙箱/受限网络下持续 RemoteDisconnected 时降级到此源，
+    使"资金去向(行业主力净流入排序)"仍能拿到真实板块级数据，避免 G_INDUSTRY_FLOW_RANK 恒为空。
+    数据来源: 页面内嵌 JS_DATA=(行业名+净额, 按净额降序, 含负值) + 表格行(涨跌幅)。
+    返回: [{name, net(元), chg(%), pct(None)}] 按 net 降序; 失败返回 []"""
+    rank = []
+    try:
+        url = "https://data.10jqka.com.cn/funds/hyzjl/"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) 10jqka/6.8",
+            "Referer": "https://data.10jqka.com.cn/"})
+        with _http_retry(req, timeout=10) as resp:
+            html = resp.read().decode("utf-8", "ignore")
+        # 1) JS_DATA: 行业名 -> 净额(亿)，净额降序，含负值，是权威排序来源
+        m = re.search(r"JS_DATA\s*=\s*(\[.*?\]);", html, re.S)
+        if not m:
+            return []
+        js_data = json.loads(m.group(1))
+        # 2) 表格行: code(/code/881xxx/) -> 涨跌幅(%)，用于补齐 chg 字段
+        chg_map = {}
+        for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S):
+            tds = re.findall(r"<td[^>]*>(.*?)</td>", tr, re.S)
+            if len(tds) < 7:
+                continue
+            cm = re.search(r"/code/(\d+)/", tds[1])
+            if not cm:
+                continue
+            _chg_raw = re.sub(r"<[^>]+>", "", tds[3]).replace("%", "").strip()
+            try:
+                chg_map[cm.group(1)] = float(_chg_raw)
+            except ValueError:
+                pass
+        # 3) 以 JS_DATA 为主体，用 code 补 chg
+        for it in js_data:
+            name = it.get("name") or ""
+            amount = it.get("amount")
+            if not name or not isinstance(amount, (int, float)):
+                continue
+            _code = ""
+            _addr = it.get("addr") or ""
+            _cm = re.search(r"/code/(\d+)/", _addr)
+            if _cm:
+                _code = _cm.group(1)
+            rank.append({
+                "name": name,
+                "net": float(amount) * 1e8,  # 亿元 -> 元
+                "chg": chg_map.get(_code),
+                "pct": None,
+            })
+        rank.sort(key=lambda x: -x["net"])
+        return rank
+    except Exception:
+        return []
+
+
 def step10C_fetch_industry_flow_rank():
     """@since v6.22.19: 双方向拉取修复"资金去向流出为-"——原实现仅按净流入降序(po=1)取前80，
     全部为 net>=0 行业，导致 Markdown"主力净流出(亿)"列恒为"—"、资金流出TOP5恒为空。
@@ -3000,6 +3056,10 @@ def step10C_fetch_industry_flow_rank():
         if r["name"] not in seen:
             seen.add(r["name"])
             dedup.append(r)
+    # @since v6.33.0: 东财 push2 clist 在沙箱/受限网络不可达时返回空，
+    # 降级到同花顺备选源，保证"资金去向"仍拿到真实板块级净流入排名。
+    if not dedup:
+        dedup = _fetch_industry_flow_rank_ths()
     return dedup
 
 # ============================================================
