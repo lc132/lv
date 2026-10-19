@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.31.0
+A股每日盘前短线标的智能筛选 v6.32.0
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.31.0"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.32.0"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -422,7 +422,7 @@ DEFAULT_PARAMS = {
     "strategy_e_expand_threshold": 1200,  # @since v6.30.0: 800万→1200万回调, 剔除扩池引入的低质标的（近两周E胜率16.7%/均收-2.64%触失效信号）
     # @since v6.22.33: 冠军(皇冠)胜率优化 — 方案一: 冠军候选池策略胜率门槛
     # 低于该胜率的策略, 其组获胜者不进入跨策略冠军PK（止血: 低胜率策略不再长期霸占👑）
-    "crown_min_strategy_winrate": 30.0,        # 策略历史胜率门槛(%)
+    "crown_min_strategy_winrate": 40.0,        # 策略历史胜率门槛(%)  @since v6.32.0: 30→40 保守收紧(宁缺毋滥, 达标少则少授冠)
     "crown_min_strategy_trades": 5,            # 统计策略胜率所需最小样本数
     # @since v6.22.33: 方案三: 历史加成衰减 + 重复夺冠冷却
     "crown_bt_bonus_decay": 0.5,               # 历史盈利加成衰减系数(0基础~1全额)
@@ -438,11 +438,13 @@ DEFAULT_PARAMS = {
     },
     # @since v6.22.33: step28 独立冠军胜率阈值自动开关（不复用主策略熔断逻辑）
     "crown_winrate_auto_enabled": True,        # 是否启用独立冠军胜率自动开关
-    "crown_winrate_threshold": 30.0,           # 最近N个冠军胜率低于该值(%)则自动收紧门槛
+    "crown_winrate_threshold": 40.0,           # 最近N个冠军胜率低于该值(%)则自动收紧门槛  @since v6.32.0: 30→40 同步收紧
     "crown_winrate_lookback": 10,              # 统计最近N个冠军
     "crown_winrate_min_trades": 5,             # 冠军胜率统计最小样本
     "crown_winrate_raise_step": 10.0,          # 每次收紧幅度(百分点)
-    "crown_winrate_ceiling": 50.0,             # 门槛上调上限
+    "crown_winrate_ceiling": 60.0,             # 门槛上调上限  @since v6.32.0: 50→60 允许自动收紧到更高
+    # @since v6.32.0: 宁缺毋滥——当方案一守卫把全部获胜者剔除时, 不再兜底挑次优冠军, 本轮不发👑
+    "crown_allow_empty_fallback": False,       # 守卫全剔除时允许本轮无皇冠(不兜底凑数, 宁可缺位)
     # @since v6.31.0: 次日盈利导向皇冠准入——10日回测口径(avg_return)与"次日盈利"错配,
     #   现以推荐历史真实次日收益(real_return_pct)聚合来选皇冠。
     #   依据(2026-09-11~10-13): B超跌反弹68.3%/+2.37%>, D回调企稳67.3%/+1.20%,
@@ -450,7 +452,7 @@ DEFAULT_PARAMS = {
     #   H地量见底50%/-1.21%, L黄金坑40%/-0.47% 次日为负(皇冠爆亏元凶, 光华/传艺均为A)。
     "crown_nextday_enabled": True,             # 是否启用次日盈利准入
     "crown_nextday_min_samples": 3,            # 次日画像最小样本(不足则回退原10日门槛, 不误杀新策略/少样本策略)
-    "crown_nextday_avg_floor": 0.0,            # 次日均收>=该值(%)才允许该策略获胜者参与皇冠PK(否决制)
+    "crown_nextday_avg_floor": 0.5,            # 次日均收>=该值(%)才允许该策略获胜者参与皇冠PK(否决制)  @since v6.32.0: 0→0.5 提升皇冠可靠性
     "crown_nextday_bonus": 0.3,                # 次日均收偏好加分上限(冠军评分, 0=关闭)
     # @since v6.22.34: 买入池期望≥0过滤 + 每日买入数量上限（独立步骤，不改主筛选/胜率监控）
     # 依据: 回测报告(2026-08-10~09-07)各策略未来期望(avg_return)存在显著分化,
@@ -5237,6 +5239,7 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
     _nxt_min = params.get('crown_nextday_min_samples', 2)
     _nxt_floor = params.get('crown_nextday_avg_floor', 0.0)
     _nxt_bonus = params.get('crown_nextday_bonus', 0.3)
+    _empty_allowed = params.get('crown_allow_empty_fallback', False)  # @since v6.32.0: 宁缺毋滥开关(守卫全剔除时允许无皇冠)
     _nextday_profile = _strategy_nextday_profile() if _nxt_enabled else {}
 
     # 方案3: 重复夺冠冷却——统计每个 code 近 _cd_days 交易日内的历史夺冠次数
@@ -5516,7 +5519,8 @@ def step19b_strategy_pk(candidates, kline_data, bt_lookup, sector_limit_up=None,
             champion = max(top_champs, key=lambda x: x.get('score', 0))
         
         # @since v6.22.33: 若方案一将全部获胜者剔除, 则空冠军候选——兜底: 从剔除池仍挑最强, 避免本轮无👑
-        if len(all_winners) == 0 and champion is None:
+        # @since v6.32.0: 宁缺毋滥——crown_allow_empty_fallback=False 时不再兜底, 守卫全剔除则本轮无皇冠(宁可缺位不硬凑)
+        if len(all_winners) == 0 and champion is None and _empty_allowed:
             _fallback = []
             for strat, group in strategy_groups.items():
                 for _gc in group:
