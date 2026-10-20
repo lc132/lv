@@ -1,5 +1,5 @@
 # ============================================================
-# A股短线筛选 — 历史回测模块 v6.33.0
+# A股短线筛选 — 历史回测模块 v6.33.1
 # 读取推荐历史，获取后续K线，模拟止盈止损，计算回测指标
 # 新增: HTML报告生成、飞书推送、回测标记查找
 # @since v6.16.14: 回测交易明细按日期均匀采样——替代简单top20/30，确保多日数据均可见；综合指标新增样本日期范围
@@ -37,7 +37,7 @@ def _load_version():
                     return _v
         except OSError:
             continue
-    return "v6.33.0"  # 兜底版本（由 sync_version.py 锚定同步）
+    return "v6.33.1"  # 兜底版本（由 sync_version.py 锚定同步）
 
 
 BUILTIN_VERSION = _load_version()
@@ -92,9 +92,43 @@ def _safe_read_json(path, default=None):
         return default if default is not None else []
 
 
+def _try_sina(code, req_lmt):
+    """@since v6.33.1: 新浪日K备用源——腾讯瞬时故障时的第二HTTP数据源，打破腾讯单点依赖。
+    新浪 JSONP 返回含前缀，需剥离后解析。验证(2026-10-21): https://quotes.sina.cn 沙箱可用，字段 day/open/high/low/close/volume。"""
+    try:
+        mc = 'sh' if code.startswith('6') else 'sz'
+        url = (f'https://quotes.sina.cn/cn/api/jsonp.php/var%20_cn_{mc}{code}='
+               f'/CN_MarketDataService.getKLineData?symbol={mc}{code}&scale=240&ma=no&datalen={req_lmt}')
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10, context=_BT_SSL_CTX) as resp:
+            body = resp.read().decode(errors='ignore')
+        # 剥离 JSONP 包装: 前缀到 '([' , 后缀到 ')]' 之后
+        start = body.find('([')
+        end = body.rfind(')')
+        if start < 0 or end <= start + 1:
+            return None
+        arr = json.loads(body[start + 1:end])
+        result = []
+        for d in arr:
+            if isinstance(d, dict):
+                result.append({
+                    'date': str(d.get('day', '')),
+                    'open': float(d.get('open', 0)),
+                    'close': float(d.get('close', 0)),
+                    'high': float(d.get('high', 0)),
+                    'low': float(d.get('low', 0)),
+                    'volume': float(d.get('volume', 0)),
+                })
+        result.sort(key=lambda x: x['date'])
+        return result if result else None
+    except Exception:
+        return None
+
+
 def _fetch_kline_range(code, start_date, lmt=15):
-    """v6.13.23: 获取指定日期之后N根日K线（腾讯HTTP重试 → iTick降级 → 宽泛兜底）
-    沙箱内东方财富API被阻断，切换为腾讯HTTP作为一级数据源"""
+    """v6.33.1: 获取指定日期之后N根日K线（腾讯HTTP重试 → 新浪HTTP备源 → iTick降级 → 宽泛兜底）
+    沙箱内东方财富API被阻断，切换为腾讯HTTP作为一级数据源；@since v6.33.1 新增新浪日K二级HTTP备源，
+    打破腾讯单点依赖——此前腾讯瞬时故障时全量 no_data 静默降级，回测指标恒0且无告警。"""
 
     def _parse_tencent_days(data, mc, code):
         """解析腾讯HTTP返回的日K线数据，过滤非列表元素（如分红信息字典）"""
@@ -145,7 +179,18 @@ def _fetch_kline_range(code, start_date, lmt=15):
             if attempt == 0:
                 time.sleep(1)
 
-    # 二级降级: iTick API
+    # @since v6.33.1: 二级HTTP备源 — 新浪日K（打破腾讯单点依赖；腾讯瞬时故障时兜底）
+    sina_raw = _try_sina(code, lmt + 15)
+    if sina_raw:
+        result = [r for r in sina_raw if r['date'] >= start_date]
+        if not result:
+            result = sina_raw[-1:]
+        if result:
+            if os.environ.get('LV_DEBUG'):
+                print(f"  [回测K线] 腾讯失败→新浪备源 {code} 取到{len(result)}根")
+            return result
+
+    # 三级降级: iTick API
     itick_key = os.environ.get("ITICK_API_KEY", "")
     if itick_key:
         try:
@@ -506,6 +551,11 @@ def run_backtest(hold_days=10, max_days_lookback=90):
 
     if reused_count > 0:
         print(f"  K线获取: {len(code_kline_cache)} 只有效 (含{reused_count}只跨日期复用)")
+    if missing_count > 0:
+        fail_rate = missing_count / len(codes_to_fetch) * 100 if codes_to_fetch else 0
+        print(f"  ⚠️ [回测K线] {missing_count}/{len(codes_to_fetch)} 组合获取失败(腾讯+新浪+iTick兜底均无数据)，失败率{fail_rate:.1f}%")
+        if fail_rate >= 50:
+            print(f"  ❌ [回测K线] 失败率≥50%，回测样本大面积 no_data，指标将严重失真，请检查K线数据源")
 
     trades = []
     excluded_weak = 0  # @since v6.25.0: 行业负面清单跳过的历史推荐计数
