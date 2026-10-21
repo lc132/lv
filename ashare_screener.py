@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.33.1
+A股每日盘前短线标的智能筛选 v6.33.2
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.33.1"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.33.2"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -6065,6 +6065,22 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
     rows_html = ""
     # @since v6.13.17: 基于已计算的_pl_ratio排序TOP10，移除重复调用
     _top10_codes = _compute_pl_ratios(candidates)
+    # @since v6.33.2: HTML 同时展示候选标的与买入池——候选表全量保留，
+    # 额外计算买入池(期望≥0过滤) 并在行内加 🎯 标记，标题旁给出候选→买入池汇总。
+    _champ_code = pk_results.get('__champion__', {}).get('winner_code', '') if pk_results else ''
+    _btm = bt_result.get('strategy_metrics') if bt_result and isinstance(bt_result, dict) else None
+    _buy_pool, _buy_dropped, _ = _filter_buy_pool(candidates, _btm, champion_code=_champ_code)
+    _buy_codes = set(c.get('code') for c in _buy_pool)
+    if _buy_dropped:
+        _buy_summary = f"候选 {len(candidates)} 只 → 买入池 {len(_buy_pool)} 只（{len(_buy_dropped)} 只因期望过滤剔除）"
+    else:
+        _buy_summary = f"候选 {len(candidates)} 只 → 买入池 {len(_buy_pool)} 只（全部达标）"
+    _buy_note = ""
+    if _buy_dropped:
+        _dropped_names = '、'.join(d.get('name', '') + '(' + str(d.get('code', '')) + ')' for d in _buy_dropped[:12])
+        if len(_buy_dropped) > 12:
+            _dropped_names += '…'
+        _buy_note = '<div style="font-size:.7rem;color:#94a3b8;margin-top:.3rem">未进买入池：{names}</div>'.format(names=_dropped_names)
     for idx, c in enumerate(candidates, 1):
         code = c.get('code', ''); name = c.get('name', ''); s = c.get('strategy', '?')
         ind = _industry_str(c); biz = c.get('business', ''); chg = c.get('change_pct', 0)
@@ -6083,6 +6099,8 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
         else: l60_str = "-"
         tier_label = c.get('_tier_label', '-'); tier_cls = c.get('_tier_cls', 'tier_na')
         top10_mark = "⭐" if code in _top10_codes else ""
+        # @since v6.33.2: 买入池标记——进入买入池的标的加 🎯
+        buy_mark = "🎯" if code in _buy_codes else ""
         # @since v6.13.33: 同策略PK标记 — 👑跨策略冠军 🏆同策略获胜者
         if c.get('_pk_champion'): pk_mark = "👑"
         elif c.get('_pk_winner'): pk_mark = "🏆"
@@ -6122,7 +6140,7 @@ def step20B_generate_html(candidates, total_raw, ae, asig, astr, amicro, aind, a
             bt_mark = ''.join(icons)
             if bt.get('no_entry', 0) > 0:
                 bt_mark += ' <span class="warn">⚠️</span>'
-        rows_html += f"""<tr class="{scl}"><td>{idx}</td><td>{top10_mark}</td><td>{pk_mark}</td><td><span class="badge {scl}">{s}</span></td>
+        rows_html += f"""<tr class="{scl}"><td>{idx}</td><td>{top10_mark}</td><td class="buy-col">{buy_mark}</td><td>{pk_mark}</td><td><span class="badge {scl}">{s}</span></td>
         <td><a href="{url}" target="_blank">{html.escape(name)}</a></td><td>{code}</td><td>{ind}</td><td>{html.escape(biz)}</td>
         <td class="{chg_cls}">{chg:+.2f}%</td><td>{op:.2f}</td><td>{close:.2f}</td>
         <td>{amp:.2f}%</td><td>{h60_str}</td><td>{l60_str}</td><td class="tier {tier_cls}">{tier_label}</td><td>{r7d_html}</td><td>{score}</td><td class="conf {conf_cls}">{conf}</td>
@@ -6527,6 +6545,7 @@ tr.strat_d{{background:rgba(245,158,11,0.05)}}tr.strat_e{{background:rgba(236,72
 /* conf / entry */
 .conf{{font-weight:700}}.conf.high{{color:#22c55e}}.conf.mid{{color:#f59e0b}}.conf.low{{color:#ef4444}}
 .entry{{color:#38bdf8;font-weight:700}}
+.buy-col{{text-align:center;color:#22c55e;font-weight:700;font-size:1rem}}
 /* tier badges */
 .tier{{font-weight:700;text-align:center;font-size:.72rem}}.tier1{{color:#22c55e;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);border-radius:12px;padding:2px 10px;display:inline-block}}.tier2{{color:#f59e0b;background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.3);border-radius:12px;padding:2px 10px;display:inline-block}}.tier3{{color:#ef4444;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);border-radius:12px;padding:2px 10px;display:inline-block}}.tier_na{{color:#64748b}}
 /* alerts */
@@ -6742,9 +6761,10 @@ a{{color:#38bdf8;text-decoration:none;transition:color .15s}}a:hover{{text-decor
 <div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">概述</h3><div style="font-size:.8rem;color:#cbd5e1">全市场→{total_raw}只入围→{ae}只通过硬排除→{asig}只通过信号过滤→{astr}只匹配策略→{amicro}只通过微观结构→{aind}只通过行业限制→{aind - anew}只通过新闻筛查→<strong style="color:#38bdf8">最终{fc}只</strong></div></div>
 </div></section>
 <section><h2>系统告警</h2><div class="alert-list">{alerts_html}</div></section>
-<section><h2>最终推荐标的</h2><div style="overflow-x:auto"><table>
-<thead><tr><th>#</th><th>TOP10</th><th>PK</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>二级行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>60日高</th><th>60日低</th><th>档位</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th><th>盈亏比</th><th>回测</th></tr></thead>
-<tbody>{rows_html if rows_html else '<tr><td colspan="23" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div>
+<section><h2>最终推荐标的</h2><div style="margin-bottom:.5rem;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:.6rem .9rem;font-size:.78rem;color:#cbd5e1"><b style="color:#22c55e">🎯 买入池</b> <span style="color:#e2e8f0">▸ {_buy_summary}</span> <span style="color:#94a3b8;font-size:.7rem">（候选表全量展示，🎯 标记进入买入池的标的）</span>{_buy_note}</div>
+<div style="overflow-x:auto"><table>
+<thead><tr><th>#</th><th>TOP10</th><th>买入池</th><th>PK</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>二级行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>60日高</th><th>60日低</th><th>档位</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th><th>盈亏比</th><th>回测</th></tr></thead>
+<tbody>{rows_html if rows_html else '<tr><td colspan="24" style="text-align:center;color:#94a3b8;padding:2rem">无合适标的</td></tr>'}</tbody></table></div>
 <div style="margin-top:1rem;background:#1a2332;border:1px solid #334155;border-radius:8px;padding:.9rem 1.2rem;font-size:.75rem;color:#94a3b8;line-height:1.8">
 <div style="color:#38bdf8;font-weight:700;margin-bottom:.4rem">回测列说明</div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:.3rem 1.5rem">
