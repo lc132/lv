@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股每日盘前短线标的智能筛选 v6.33.2
+A股每日盘前短线标的智能筛选 v6.33.3
 37步完整执行流程 | 腾讯一级行情 | 腾讯HTTP一级K线 | iTick二级K线 | 行业缓存读取 | 行业缓存根治(schema校验+完整性自检+L2禁写) | 21策略 | 29信号 | 13项硬排除 | 微观结构过滤 | AI策略分析 | MACD+K线评分 | 多因子共振 | 资金去向 | 基本面PK维度(成长性/盈利能力/估值/资产质量/现金流/筹码/热度) | 个股深度研判👑冠军 | 同策略+跨策略冠军PK | 冠军始终进入深度分析(@since v6.14.0) | 极端行情修复监测(@since v6.15.0) | CLS电报v2(@since v6.16.0) | 麦蕊智数涨停/跌停/公告(@since v6.16.1) | 新闻筛查修复(@since v6.16.16) | 五项整改(@since v6.16.35)
 """
 import sys, urllib.request, urllib.error, urllib.parse, json, os, math, time, shutil, subprocess, html, gzip, re, hashlib, ssl, socket
@@ -116,7 +116,7 @@ def _load_builtin_version():
                     return _v
         except OSError:
             continue
-    return "v6.33.2"  # 兜底版本（与发版时 VERSION 保持一致）
+    return "v6.33.3"  # 兜底版本（与发版时 VERSION 保持一致）
 
 BUILTIN_VERSION = _load_builtin_version()  # SSOT: 由 VERSION 文件提供
 GITHUB_REPO = "lc132/lv"            # 主仓（代码 / SKILL.md）
@@ -5762,10 +5762,13 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
     ]
     if candidates:
         _top10_codes = _compute_pl_ratios(candidates)
-        # @since v6.29.5: 买入池过滤——只展示进入买入池的标的，隐藏最终推荐中未通过期望过滤的候选
+        # @since v6.33.3: MD 推荐表改为全量展示候选 + 🎯标记进入买入池的标的（与 HTML v6.33.2 口径对齐）。
+        # 修复: 买入池=0(全部候选被期望过滤剔除)时, 旧逻辑 _display_list=buy_pool 导致推荐表整表空白,
+        # 却与概况/同策略PK/个股深度分析(全量6只)矛盾。
         _champ_code = pk_results.get('__champion__', {}).get('winner_code', '') if pk_results else ''
         buy_pool, _dropped_pool, _ = _filter_buy_pool(candidates, strategy_metrics, champion_code=_champ_code)
-        _display_list = buy_pool
+        _display_list = candidates
+        _pool_codes = set(c.get('code') for c in buy_pool)
 
         # 买入池说明行
         if _dropped_pool:
@@ -5774,8 +5777,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
             lines.append(f"> 📋 **买入池**: {len(candidates)}只→**{len(buy_pool)}只** (全部达标)\n")
 
         lines.append("## 推荐标的\n")
-        lines.append("| # | TOP10 | PK | 策略 | 标的 | 代码 | 行业 | 二级行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 60日高 | 60日低 | 档位 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 | 盈亏比 | 回测 |\n")
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+        lines.append("| # | TOP10 | 买入池 | PK | 策略 | 标的 | 代码 | 行业 | 二级行业 | 涨跌幅 | 开盘 | 收盘 | 振幅 | 60日高 | 60日低 | 档位 | 7日 | 评分 | 置信 | 进场 | 止损 | 止盈 | 盈亏比 | 回测 |\n")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
         for idx, c in enumerate(_display_list, 1):
             code = c.get('code', ''); name = c.get('name', '')
             s = c.get('strategy', '?'); ind = _industry_str(c); biz = c.get('business', '')
@@ -5796,6 +5799,8 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
             entry = c.get('_entry', 0); sl = c.get('_stop', 0); tp = c.get('_target', 0)
             pl_ratio = c.get('_pl_ratio', 0)
             top10_mark = "⭐" if code in _top10_codes else ""
+            # @since v6.33.3: 买入池列 — 🎯标记进入期望过滤买入池的标的
+            pool_mark = "🎯" if code in _pool_codes else ""
             # @since v6.13.33: 同策略PK标记 — 👑=跨策略冠军 🏆=同策略获胜者
             if c.get('_pk_champion'): pk_mark = "👑"
             elif c.get('_pk_winner'): pk_mark = "🏆"
@@ -5829,7 +5834,7 @@ def step20_output_markdown(candidates, total_raw, ae, asig, astr, amicro, aind, 
                 bt_mark = ''.join(icons)
                 if bt.get('no_entry', 0) > 0:
                     bt_mark += '⚠️'
-            lines.append(f"| {idx} | {top10_mark} | {pk_mark} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {h60_str} | {l60_str} | {tier_label} | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} | {pl_ratio} | {bt_mark} |\n")
+            lines.append(f"| {idx} | {top10_mark} | {pool_mark} | {pk_mark} | {s} | [{name}]({url}) | {code} | {ind} | {biz} | {chg_e}{chg:+.2f}% | {op:.2f} | {close:.2f} | {amp:.2f}% | {h60_str} | {l60_str} | {tier_label} | {r7d_str} | {score} | {conf} | {entry:.2f} | {sl:.2f} | {tp:.2f} | {pl_ratio} | {bt_mark} |\n")
         # @since v6.13.31: 同策略PK + 冠军PK总结
         if pk_results:
             pk_strats = [(s, info) for s, info in pk_results.items() if s != '__champion__' and info['count'] >= 2]
@@ -6836,11 +6841,9 @@ def step21_final_verify(mp, fc):
                 main_section = content.split(marker)[0]
                 break
         tr = sum(1 for l in main_section.split('\n') if l.strip().startswith('| ') and l.split('|')[1].strip().isdigit())
-        # @since v6.30.1: v6.29.5 买入池展示优化后，MD 推荐表仅展示经期望过滤的买入池标的，
-        # 校验目标由全量候选 fc 改为「买入池摘要数」(📋 买入池: 候选N只→M只 的 M)，消除口径错位噪音。
+        # @since v6.33.3: v6.33.3 起 MD 推荐表全量展示候选(买入池仅🎯标记)，故校验目标恢复为全量候选数 fc，
+        # 消除 v6.29.5 买入池展示优化带来的「概况 vs 表格」数量口径错位。
         expected = fc
-        bm = re.search(r'📋\s*买入池:\s*\d+只[^\d]*(\d+)只', main_section)
-        if bm: expected = int(bm.group(1))
         if tr != expected: log_alert("ERROR", "数量校验", f"概况{expected}≠MD表格{tr}")
         else: log_alert("INFO", "最终验证", f"通过（{expected}只）")
     except FileNotFoundError:
@@ -6951,6 +6954,8 @@ def step22_write_history(candidates, champion_code=None, strategy_metrics=None):
         if changed:
             safe_write_json(hf, all_recs)
     log_alert("INFO", "推荐历史", f"已追加{written}条(跳过{len(candidates)-written}条重复)")
+    # @since v6.33.3: 返回实际写入条数，供调用方(会话状态)记录真实落盘数，避免用候选数 fc 误记。
+    return written
 
 # ============================================================
 # 步骤22B：影子追踪历史落盘（@since v6.28.0）
@@ -7516,10 +7521,11 @@ def main():
         print("\n[步骤22] 推荐历史... 周末跳过")
         record_step_status("步骤22: 推荐历史", "SKIP", "周末")
     else:
-        print("\n[步骤22] 推荐历史..."); champion_code = pk_results.get('__champion__', {}).get('winner_code', '') if pk_results else ''; step22_write_history(final, champion_code, strategy_metrics=(bt_result.get('strategy_metrics') if bt_result and isinstance(bt_result.get('strategy_metrics'), dict) else None))
+        print("\n[步骤22] 推荐历史..."); champion_code = pk_results.get('__champion__', {}).get('winner_code', '') if pk_results else ''; _rec_written = step22_write_history(final, champion_code, strategy_metrics=(bt_result.get('strategy_metrics') if bt_result and isinstance(bt_result.get('strategy_metrics'), dict) else None))
         # @since v6.28.0: 步骤22B 影子追踪——把禁用策略(G/I)匹配标的落盘, 供回测重算胜率
         print("\n[步骤22B] 影子追踪..."); _shadow_written = step22B_write_shadow_history()
-        record_step_status("步骤22: 推荐历史", "OK", f"{fc}条(影子{_shadow_written}条)")
+        # @since v6.33.3: 会话状态记录实际写入推荐历史的条数(非候选数 fc)，避免审计计数与落盘不一致
+        record_step_status("步骤22: 推荐历史", "OK", f"{_rec_written}条(影子{_shadow_written}条)")
     print("\n" + "=" * 60)
     print("📊 筛选概况")
     print("=" * 60)
