@@ -1,0 +1,935 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>A股短线标的筛选 — 2026-10-26</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Noto Sans CJK SC','WenQuanYi Micro Hei',sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.65;letter-spacing:.01em;-webkit-font-smoothing:antialiased}
+/* scrollbar */
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:#0f172a}::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}::-webkit-scrollbar-thumb:hover{background:#475569}
+/* header */
+.header{background:linear-gradient(135deg,#1e3a5f 0%,#0f2744 50%,#0c1f36 100%);padding:2.5rem 2rem;text-align:center;position:relative;overflow:hidden}
+.header::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 30% 50%,rgba(56,189,248,0.08) 0%,transparent 70%);pointer-events:none}
+.header h1{font-size:clamp(1.3rem,2.5vw,1.9rem);color:#f0f9ff;font-weight:800;letter-spacing:.04em;position:relative;z-index:1}
+.header .sub{color:#94a3b8;font-size:.85rem;margin-top:.4rem;position:relative;z-index:1}
+/* container */
+.container{max-width:1280px;margin:0 auto;padding:1.2rem 1rem}
+/* meta cards */
+.meta-row{display:flex;flex-wrap:wrap;gap:.8rem;justify-content:center;margin:1.2rem 0}
+.meta-card{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:.7rem 1.4rem;text-align:center;min-width:105px;box-shadow:0 2px 8px rgba(0,0,0,.2);transition:border-color .2s,transform .15s}
+.meta-card:hover{border-color:#475569;transform:translateY(-1px)}
+.meta-card .label{font-size:.7rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em}.meta-card .value{font-size:1.15rem;font-weight:700;color:#38bdf8}
+/* index cards */
+.index-row{display:flex;flex-wrap:wrap;gap:.9rem;justify-content:center;margin:1.2rem 0}
+.index-card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:1.1rem 1.4rem;text-align:center;min-width:145px;flex:1;box-shadow:0 2px 10px rgba(0,0,0,.25);transition:border-color .2s,transform .15s}
+.index-card:hover{border-color:#475569;transform:translateY(-1px)}
+.index-card .idx-name{font-size:.85rem;color:#cbd5e1;font-weight:500}.index-card .idx-price{font-size:1.6rem;font-weight:800;color:#f8fafc;letter-spacing:.02em}
+.index-card .idx-chg{font-size:.9rem;font-weight:700}
+.index-card .idx-amt{font-size:1.1rem;display:block;font-weight:600} .index-card .idx-pct{font-size:.75rem;color:#94a3b8;font-weight:400}
+.up{color:#ef4444}.down{color:#22c55e}
+/* sections */
+section{background:#1e293b;border:1px solid #334155;border-radius:14px;padding:1.6rem;margin:1.3rem 0;box-shadow:0 3px 12px rgba(0,0,0,.2)}
+section h2{font-size:1.15rem;color:#38bdf8;margin-bottom:1.1rem;border-bottom:2px solid #334155;padding-bottom:.6rem;font-weight:700;letter-spacing:.03em}
+/* funnel */
+.funnel{display:flex;flex-direction:column;align-items:center;gap:.35rem}
+.funnel-step{background:linear-gradient(90deg,#6366f1,#8b5cf6);color:#fff;text-align:center;padding:.5rem 1.2rem;border-radius:6px;font-size:.8rem;font-weight:600;min-width:260px;box-shadow:0 1px 4px rgba(99,102,241,.3)}
+.funnel-last{background:linear-gradient(90deg,#3b82f6,#06b6d4);border:2px solid #38bdf8;font-weight:700;box-shadow:0 2px 8px rgba(56,189,248,.35)}
+/* seg bar */
+.seg-bar{display:flex;height:36px;border-radius:8px;overflow:hidden;margin:.6rem 0;box-shadow:inset 0 1px 2px rgba(0,0,0,.3)}
+.seg{display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:.78rem;transition:filter .2s}
+.seg:hover{filter:brightness(1.2)}
+.legend{display:flex;flex-wrap:wrap;gap:1.1rem;margin:.6rem 0;font-size:.78rem}
+.legend-item{display:flex;align-items:center;gap:.35rem}
+.legend-dot{width:12px;height:12px;border-radius:3px;display:inline-block;box-shadow:0 0 4px currentColor}
+/* bar charts */
+.bar-row{display:flex;align-items:center;margin:.45rem 0;gap:.6rem}
+.bar-label{width:210px;font-size:.78rem;color:#cbd5e1;text-align:right;flex-shrink:0}
+.bar-track{flex:1;background:#334155;border-radius:5px;height:26px;overflow:hidden;box-shadow:inset 0 1px 3px rgba(0,0,0,.3)}
+.bar-fill{height:100%;border-radius:5px;display:flex;align-items:center;justify-content:flex-end;padding:0 .6rem;color:#fff;font-size:.75rem;font-weight:700;min-width:32px;transition:width .3s}
+/* chart grid */
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.6rem}
+/* tables */
+table{width:100%;border-collapse:collapse;font-size:.78rem}
+th{background:#334155;padding:.55rem .55rem;text-align:left;color:#38bdf8;position:sticky;top:0;white-space:nowrap;font-weight:700;font-size:.75rem;letter-spacing:.03em;z-index:1}
+td{padding:.45rem .55rem;border-bottom:1px solid #1e293b;white-space:nowrap}
+tbody tr{transition:background .15s}
+tbody tr:hover{background:#2d3b4f!important}
+tbody tr:nth-child(even){background:rgba(255,255,255,.01)}
+/* badges */
+.badge{padding:2px 9px;border-radius:4px;font-size:.68rem;font-weight:700;letter-spacing:.03em}
+.strat_a{background:#14532d;color:#22c55e}.strat_b{background:#1e3a5f;color:#3b82f6}.strat_c{background:#3b1f6e;color:#8b5cf6}
+.strat_d{background:#5c3d0e;color:#f59e0b}.strat_e{background:#5c1648;color:#ec4899}.strat_f{background:#0f4c5c;color:#06b6d4}.strat_g{background:#0e4c3d;color:#10b981}.strat_h{background:#4c1d0e;color:#f97316}.strat_i{background:#0e3d3d;color:#14b8a6}.strat_j{background:#5c1515;color:#ef4444}.strat_k{background:#3b1f3b;color:#a855f7}.strat_l{background:#4c3d0e;color:#eab308}.strat_m{background:#4c1d3b;color:#f472b6}.strat_n{background:#1e3d0e;color:#84cc16}.strat_o{background:#0e2e4c;color:#38bdf8}.strat_p{background:#4c2e0e;color:#fb923c}.strat_q{background:#0e3e4c;color:#22d3ee}.strat_r{background:#4c1515;color:#dc2626}.strat_s{background:#4c2e0e;color:#f97316}.strat_t{background:#334155;color:#94a3b8}.strat_u{background:#5c1010;color:#ff3b3b}.strat_v{background:#2e3a0e;color:#a3e635}.strat_w{background:#0e4c0e;color:#4ade80}.strat_x{background:#1e3a5f;color:#60a5fa}
+tr.strat_a{background:rgba(34,197,94,0.05)}tr.strat_b{background:rgba(59,130,246,0.05)}tr.strat_c{background:rgba(139,92,246,0.05)}
+tr.strat_d{background:rgba(245,158,11,0.05)}tr.strat_e{background:rgba(236,72,153,0.05)}tr.strat_f{background:rgba(6,182,212,0.05)}tr.strat_g{background:rgba(16,185,129,0.05)}tr.strat_h{background:rgba(249,115,22,0.05)}tr.strat_i{background:rgba(20,184,166,0.05)}tr.strat_j{background:rgba(239,68,68,0.05)}tr.strat_k{background:rgba(168,85,247,0.05)}tr.strat_l{background:rgba(234,179,8,0.05)}tr.strat_m{background:rgba(244,114,182,0.05)}tr.strat_n{background:rgba(132,204,22,0.05)}tr.strat_o{background:rgba(56,189,248,0.05)}tr.strat_p{background:rgba(251,146,60,0.05)}tr.strat_q{background:rgba(34,211,238,0.05)}tr.strat_r{background:rgba(220,38,38,0.05)}tr.strat_s{background:rgba(249,115,22,0.05)}tr.strat_t{background:rgba(148,163,184,0.06)}tr.strat_u{background:rgba(255,59,59,0.05)}tr.strat_v{background:rgba(163,230,53,0.05)}tr.strat_w{background:rgba(74,222,128,0.05)}tr.strat_x{background:rgba(96,165,250,0.05)}
+/* conf / entry */
+.conf{font-weight:700}.conf.high{color:#22c55e}.conf.mid{color:#f59e0b}.conf.low{color:#ef4444}
+.entry{color:#38bdf8;font-weight:700}
+.buy-col{text-align:center;color:#22c55e;font-weight:700;font-size:1rem}
+/* tier badges */
+.tier{font-weight:700;text-align:center;font-size:.72rem}.tier1{color:#22c55e;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);border-radius:12px;padding:2px 10px;display:inline-block}.tier2{color:#f59e0b;background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.3);border-radius:12px;padding:2px 10px;display:inline-block}.tier3{color:#ef4444;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);border-radius:12px;padding:2px 10px;display:inline-block}.tier_na{color:#64748b}
+/* alerts */
+.alert-item{display:flex;gap:.8rem;padding:.5rem 0;border-bottom:1px solid #1e293b;font-size:.78rem}
+.alert-item:last-child{border-bottom:none}
+.alert-level{padding:2px 12px;border-radius:4px;font-weight:700;font-size:.7rem;white-space:nowrap;letter-spacing:.03em}
+.alert-level.warning{background:#5c3d0e;color:#f59e0b}.alert-level.info{background:#1e3a5f;color:#3b82f6}
+/* footer */
+.footer{text-align:center;padding:2.5rem 2rem 2rem;color:#64748b;font-size:.78rem}
+.footer .disclaimer{color:#ef4444;font-weight:700;margin-top:.6rem;font-size:.82rem}
+/* links */
+a{color:#38bdf8;text-decoration:none;transition:color .15s}a:hover{text-decoration:underline;color:#7dd3fc}
+/* responsive @since v6.13.42: 全面移动端适配 */
+@media(max-width:768px){
+  .container{padding:.5rem}
+  .header{padding:1.2rem .8rem}
+  .header h1{font-size:1.1rem}
+  .header .sub{font-size:.72rem}
+  section{padding:1rem;margin:1rem 0;border-radius:10px}
+  section h2{font-size:1rem;margin-bottom:.8rem}
+  .chart-grid{grid-template-columns:1fr;gap:1rem}
+  .meta-row{gap:.5rem}
+  .meta-card{min-width:80px;padding:.5rem .8rem}
+  .meta-card .label{font-size:.62rem}
+  .meta-card .value{font-size:.95rem}
+  .index-row{gap:.5rem}
+  .index-card{min-width:100px;padding:.7rem .9rem}
+  .index-card .idx-name{font-size:.72rem}
+  .index-card .idx-price{font-size:1.2rem}
+  .index-card .idx-chg{font-size:.75rem}
+  .index-card .idx-amt{font-size:.9rem}
+  .funnel-step{min-width:160px;font-size:.72rem;padding:.4rem .8rem}
+  .bar-label{width:120px;font-size:.7rem}
+  .bar-track{height:22px}
+  .bar-fill{font-size:.68rem}
+  th,td{font-size:.68rem;padding:.3rem .35rem}
+  .seg-bar{height:28px}
+  .seg{font-size:.7rem}
+  .legend{font-size:.7rem;gap:.7rem}
+  .flow-card{padding:12px 14px}
+  .flow-card-header .industry-name{font-size:.85rem}
+  .flow-card-header .rank{font-size:1.1rem}
+  .flow-stocks{gap:6px}
+  .flow-stock{font-size:.72rem;padding:2px 8px}
+  .flow-stock span{font-size:.65rem}
+  .flow-card-header .flow-amount{font-size:.8rem}
+  .ai-section-wrap{padding:1rem;margin:1rem 0}
+  .ai-section-wrap h2{font-size:1rem}
+  .ai-section-wrap h3{font-size:.82rem}
+  .ai-markdown{font-size:.78rem}
+  .ai-stock-card-header{padding:10px 14px;gap:8px}
+  .ai-stock-card-body{padding:10px 14px}
+  .ai-stock-card-body .ai-dim{font-size:.75rem}
+  .ai-stock-card-body .ai-dim-label{font-size:.62rem;padding:1px 7px}
+  .alert-item{font-size:.7rem}
+  .footer{padding:1.5rem 1rem;font-size:.7rem}
+  .footer .disclaimer{font-size:.72rem}
+}
+@media(max-width:480px){
+  .container{padding:.3rem}
+  .header{padding:1rem .5rem}
+  .header h1{font-size:.95rem;letter-spacing:.02em}
+  .header .sub{font-size:.65rem}
+  section{padding:.7rem;margin:.7rem 0;border-radius:8px}
+  section h2{font-size:.88rem;margin-bottom:.6rem;padding-bottom:.4rem}
+  .meta-row{gap:.3rem;margin:.8rem 0}
+  .meta-card{min-width:60px;padding:.4rem .45rem;border-radius:8px}
+  .meta-card .label{font-size:.55rem;letter-spacing:.02em}
+  .meta-card .value{font-size:.8rem}
+  .index-row{gap:.3rem;margin:.8rem 0}
+  .index-card{min-width:70px;padding:.5rem .55rem;border-radius:8px;flex:1 1 40%}
+  .index-card .idx-name{font-size:.62rem}
+  .index-card .idx-price{font-size:1rem}
+  .index-card .idx-chg{font-size:.65rem}
+  .index-card .idx-amt{font-size:.75rem}
+  .index-card .idx-pct{font-size:.6rem}
+  .funnel-step{min-width:100%;width:100%;font-size:.68rem;padding:.35rem .6rem;border-radius:4px}
+  .bar-label{width:80px;font-size:.62rem;text-align:left}
+  .bar-row{margin:.35rem 0;gap:.3rem}
+  .bar-track{height:18px}
+  .bar-fill{font-size:.6rem;padding:0 .3rem;min-width:24px}
+  .chart-grid{grid-template-columns:1fr;gap:.7rem}
+  .seg-bar{height:22px}
+  .seg{font-size:.6rem}
+  .legend{font-size:.62rem;gap:.4rem}
+  .legend-dot{width:8px;height:8px}
+  th,td{font-size:.6rem;padding:.2rem .25rem}
+  .badge{font-size:.6rem;padding:1px 6px}
+  .flow-card{padding:10px 12px;border-radius:8px}
+  .flow-card-header{gap:6px;margin-bottom:8px}
+  .flow-card-header .industry-name{font-size:.78rem}
+  .flow-stocks{font-size:.68rem}
+  .flow-card-header .rank{font-size:1rem;min-width:22px}
+  .flow-stocks{gap:4px}
+  .flow-stock{font-size:.72rem}
+  .flow-stock span{font-size:.6rem}
+  .flow-card-header .flow-amount{font-size:.72rem}
+  .ai-section-wrap{padding:.7rem;margin:.7rem 0;border-radius:10px}
+  .ai-section-wrap h2{font-size:.88rem;margin-bottom:.8rem;padding-bottom:.5rem}
+  .ai-section-wrap h3{font-size:.75rem}
+  .ai-markdown{font-size:.72rem;line-height:1.6}
+  .ai-markdown table{font-size:.65rem}
+  .ai-markdown th,.ai-markdown td{padding:.3rem .4rem}
+  .ai-stock-card-header{padding:8px 10px;gap:6px}
+  .ai-stock-card-header .ai-rank{font-size:.9rem;min-width:22px}
+  .ai-stock-card-header .ai-name{font-size:.85rem}
+  .ai-stock-card-header .ai-code{font-size:.65rem}
+  .ai-stock-card-body{padding:8px 10px}
+  .ai-stock-card-body .ai-dim{font-size:.7rem;margin-bottom:6px;line-height:1.5}
+  .ai-stock-card-body .ai-dim-label{font-size:.58rem}
+  .ai-info-card{padding:10px 12px;margin:.5rem 0}
+  .alert-item{font-size:.65rem;gap:.4rem;flex-wrap:wrap}
+  .alert-level{font-size:.6rem;padding:1px 8px}
+  .footer{padding:1.2rem .8rem;font-size:.65rem}
+  .footer .disclaimer{font-size:.68rem}
+}
+@media(max-width:360px){
+  .container{padding:.2rem}
+  .header{padding:.8rem .4rem}
+  .header h1{font-size:.85rem}
+  .meta-card{min-width:50px;padding:.3rem .3rem}
+  .meta-card .value{font-size:.7rem}
+  .index-card{flex:1 1 100%;min-width:60px;padding:.4rem .4rem}
+  .index-card .idx-price{font-size:.9rem}
+  .bar-label{width:60px;font-size:.58rem}
+  th,td{font-size:.55rem;padding:.15rem .2rem}
+  .flow-stocks{flex-direction:column}
+  .flow-stock{font-size:.68rem}
+  .flow-card-header .flow-amount{font-size:.68rem}
+  .funnel-step{font-size:.62rem}
+  .badge{font-size:.55rem}
+  .ai-markdown{font-size:.68rem}
+  .ai-stock-card-body .ai-dim{font-size:.65rem}
+}
+/* @since v6.13.42: 资金去向卡片 */
+.capital-flow{display:grid;grid-template-columns:1fr;gap:10px;margin-top:1rem}
+.flow-card{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:14px 18px;transition:border-color .2s,box-shadow .2s,transform .15s;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+.flow-card:hover{border-color:#38bdf8;box-shadow:0 4px 16px rgba(56,189,248,.12);transform:translateY(-1px)}
+.flow-card-header{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+.flow-card-header .rank{font-size:1.4rem;font-weight:800;color:#38bdf8;min-width:28px}
+.flow-card-header .industry-name{font-size:1rem;font-weight:700;color:#f8fafc}
+.flow-card-header .flow-amount{font-size:.9rem;font-weight:600;margin-left:auto}
+.flow-stocks{display:flex;flex-wrap:wrap;gap:8px;font-size:.8rem}
+.flow-stock{background:#1a2332;padding:3px 10px;border-radius:6px;color:#94a3b8;white-space:nowrap}
+.flow-stock span{margin-left:4px;font-weight:600}
+.flow-stock strong{color:#e2e8f0}
+.flow-summary{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:18px 22px;margin-top:20px;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+.top10-conclusion h3{font-size:1rem;color:#38bdf8;margin-bottom:10px;font-weight:700}
+.top10-conclusion p{font-size:.82rem;color:#94a3b8;line-height:1.7;margin-top:8px}
+/* @since v6.13.42: AI分析模块美化 */
+.ai-section-wrap{background:linear-gradient(135deg, #1a2332 0%, #1e293b 50%, #172033 100%);border:1px solid #2d3a4f;border-radius:16px;padding:1.8rem;margin:1.5rem 0;box-shadow:0 4px 20px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.03);position:relative;overflow:hidden}
+.ai-section-wrap::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg, #38bdf8, #8b5cf6, #ec4899);opacity:.8}
+.ai-section-wrap h2{font-size:1.2rem;color:#f0f9ff;margin:0 0 1.2rem;padding:0 0 .8rem;border-bottom:1px solid #2d3a4f;font-weight:700;letter-spacing:.04em;display:flex;align-items:center;gap:10px}
+.ai-section-wrap h2 .ai-icon{font-size:1.4rem}
+.ai-section-wrap h3{font-size:.95rem;color:#38bdf8;margin:1.2rem 0 .6rem;font-weight:700;letter-spacing:.02em}
+.ai-section-wrap h3:first-of-type{margin-top:0}
+.ai-markdown{font-size:.85rem;color:#cbd5e1;line-height:1.8}
+.ai-markdown strong{color:#f0f9ff;font-weight:700}
+.ai-markdown table{width:100%;border-collapse:collapse;margin:.8rem 0;font-size:.8rem}
+.ai-markdown th{background:#1e3a5f;color:#e2e8f0;padding:.6rem .8rem;text-align:left;font-weight:700;border-bottom:1px solid #334155}
+.ai-markdown td{padding:.55rem .8rem;border-bottom:1px solid #1e293b;color:#cbd5e1}
+.ai-markdown tr:hover td{background:rgba(56,189,248,.03)}
+/* 个股深度研判卡片 */
+.ai-stock-grid{display:grid;grid-template-columns:1fr;gap:16px;margin-top:1rem}
+.ai-stock-card{background:#1a2332;border:1px solid #2d3a4f;border-radius:14px;overflow:hidden;transition:border-color .25s,box-shadow .25s,transform .2s;box-shadow:0 3px 12px rgba(0,0,0,.25)}
+.ai-stock-card:hover{border-color:#38bdf8;box-shadow:0 6px 24px rgba(56,189,248,.1);transform:translateY(-2px)}
+.ai-stock-card-header{display:flex;align-items:center;gap:12px;padding:16px 20px;background:linear-gradient(135deg, rgba(56,189,248,.06), rgba(139,92,246,.04));border-bottom:1px solid #2d3a4f;flex-wrap:wrap}
+.ai-stock-card-header .ai-rank{font-size:1.1rem;font-weight:800;color:#38bdf8;min-width:30px}
+.ai-stock-card-header .ai-name{font-size:1rem;font-weight:700;color:#f8fafc}
+.ai-stock-card-header .ai-code{font-size:.75rem;color:#94a3b8}
+.ai-stock-card-body{padding:16px 20px}
+.ai-stock-card-body .ai-dim{margin-bottom:10px;font-size:.82rem;line-height:1.7;color:#94a3b8}
+.ai-stock-card-body .ai-dim:last-child{margin-bottom:0}
+.ai-stock-card-body .ai-dim-label{display:inline-block;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:2px 10px;border-radius:4px;margin-right:8px;vertical-align:middle}
+.ai-dim-label.overview{background:rgba(56,189,248,.15);color:#38bdf8}
+.ai-dim-label.technical{background:rgba(139,92,246,.15);color:#8b5cf6}
+.ai-dim-label.capital{background:rgba(34,197,94,.15);color:#22c55e}
+.ai-dim-label.fundamental{background:rgba(245,158,11,.15);color:#f59e0b}
+.ai-dim-label.risk{background:rgba(239,68,68,.15);color:#ef4444}
+.ai-dim-label.suggestion{background:rgba(6,182,212,.15);color:#06b6d4}
+.ai-dim strong{color:#e2e8f0}
+/* 市场全景/板块深度结构化卡片 */
+.ai-info-card{background:rgba(56,189,248,.04);border:1px solid rgba(56,189,248,.12);border-radius:10px;padding:14px 18px;margin:.8rem 0}
+.ai-info-card:first-child{margin-top:0}
+.ai-info-card .ai-card-title{font-size:.8rem;font-weight:700;color:#38bdf8;letter-spacing:.04em;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.ai-info-card .ai-card-title .dot{width:6px;height:6px;border-radius:50%;background:#38bdf8;display:inline-block}
+/* 增强资金流向卡片 */
+.flow-card{border-left:3px solid transparent;transition:border-left-color .3s,box-shadow .3s,transform .2s}
+.flow-card:hover{border-left-color:#38bdf8}
+.flow-card-header .flow-amount{margin-left:auto}
+/* @since v6.13.42: 回测指标卡片CSS — 从footer移至head */
+.metric-card-bt{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:13px 10px;text-align:center;transition:border-color .2s,transform .15s}
+.metric-card-bt:hover{border-color:#475569;transform:translateY(-1px)}
+.metric-label-bt{color:#94a3b8;font-size:.68rem;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}
+.metric-value-bt{color:#e2e8f0;font-size:1.1rem;font-weight:700}
+.metric-value-bt.win{color:#22c55e}.metric-value-bt.loss{color:#ef4444}
+</style></head><body>
+<div class="header"><h1>A股短线标的筛选报告</h1><div class="sub">2026-10-26 | 规则版本 v6.33.3</div></div>
+<div class="container">
+<div class="index-row"><div class="index-card"><div class="idx-name">上证指数</div><div class="idx-price">3690.48</div><div class="idx-chg up"><span class="idx-amt">+32.45</span> <span class="idx-pct">+0.89%</span></div></div><div class="index-card"><div class="idx-name">深证成指</div><div class="idx-price">11673.83</div><div class="idx-chg up"><span class="idx-amt">+316.51</span> <span class="idx-pct">+2.79%</span></div></div><div class="index-card"><div class="idx-name">创业板指</div><div class="idx-price">2684.10</div><div class="idx-chg up"><span class="idx-amt">+107.20</span> <span class="idx-pct">+4.16%</span></div></div></div>
+<div class="meta-row">
+<div class="meta-card"><div class="label">预测日期</div><div class="value">2026-10-26</div></div>
+<div class="meta-card"><div class="label">数据日期</div><div class="value">2026-10-23</div></div>
+<div class="meta-card"><div class="label">市场环境</div><div class="value">震荡</div></div>
+<div class="meta-card"><div class="label">建议仓位</div><div class="value">55%</div></div>
+<div class="meta-card"><div class="label">最终推荐</div><div class="value">17只</div></div></div>
+<section><h2>📊 市场全景</h2><div style="text-align:center;margin:1rem 0"><img src="data:image/png;base64,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" alt="市场全景" style="max-width:100%;border-radius:12px;background:#0f172a"></div></section>
+<section><h2>筛选管道</h2><div class="funnel"><div class="funnel-step " style="width:100%">原始标的池: 500只</div><div class="funnel-step " style="width:92%">硬排除(13项): 464只</div><div class="funnel-step " style="width:31%">信号过滤(27项): 156只</div><div class="funnel-step " style="width:17%">策略匹配(24策略): 85只</div><div class="funnel-step " style="width:12%">微观结构过滤: 61只</div><div class="funnel-step " style="width:12%">行业+同策略限制: 38只</div><div class="funnel-step " style="width:12%">新闻筛查: 38只</div><div class="funnel-step funnel-last" style="width:12%">最终推荐: 17只</div></div></section>
+<section><h2>数据可视化</h2><div class="chart-grid">
+<div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">策略分布</h3><div class="seg-bar"><div class="seg" style="width:23.52941176470588%;background:#22c55e">4</div><div class="seg" style="width:17.647058823529413%;background:#3b82f6">3</div><div class="seg" style="width:17.647058823529413%;background:#f59e0b">3</div><div class="seg" style="width:17.647058823529413%;background:#ef4444">3</div><div class="seg" style="width:5.88235294117647%;background:#eab308">1</div></div><div class="legend"><span class="legend-item"><span class="legend-dot" style="background:#22c55e"></span> A动量延续: 4只 (24%)</span><span class="legend-item"><span class="legend-dot" style="background:#3b82f6"></span> B超跌反弹: 3只 (18%)</span><span class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span> D回调企稳: 3只 (18%)</span><span class="legend-item"><span class="legend-dot" style="background:#ef4444"></span> J龙回头: 3只 (18%)</span><span class="legend-item"><span class="legend-dot" style="background:#eab308"></span> L黄金坑: 1只 (6%)</span></div></div>
+<div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">硬排除TOP5</h3><div class="bar-row"><div class="bar-label">涨停</div><div class="bar-track"><div class="bar-fill" style="width:100.0%">34</div></div></div><div class="bar-row"><div class="bar-label">上市不足60天</div><div class="bar-track"><div class="bar-fill" style="width:5.88235294117647%">2</div></div></div></div>
+<div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">各策略数量</h3><div class="bar-row"><div class="bar-label">A 动量延续</div><div class="bar-track"><div class="bar-fill" style="width:100.0%;background:#22c55e">4</div></div></div><div class="bar-row"><div class="bar-label">B 超跌反弹</div><div class="bar-track"><div class="bar-fill" style="width:75.0%;background:#3b82f6">3</div></div></div><div class="bar-row"><div class="bar-label">D 回调企稳</div><div class="bar-track"><div class="bar-fill" style="width:75.0%;background:#f59e0b">3</div></div></div><div class="bar-row"><div class="bar-label">J 龙回头</div><div class="bar-track"><div class="bar-fill" style="width:75.0%;background:#ef4444">3</div></div></div><div class="bar-row"><div class="bar-label">L 黄金坑</div><div class="bar-track"><div class="bar-fill" style="width:25.0%;background:#eab308">1</div></div></div></div>
+<div><h3 style="font-size:.9rem;color:#cbd5e1;margin-bottom:.5rem">概述</h3><div style="font-size:.8rem;color:#cbd5e1">全市场→500只入围→464只通过硬排除→156只通过信号过滤→85只匹配策略→61只通过微观结构→38只通过行业限制→38只通过新闻筛查→<strong style="color:#38bdf8">最终17只</strong></div></div>
+</div></section>
+<section><h2>系统告警</h2><div class="alert-list"><div class="alert-item"><span class="alert-level warning">WARNING</span><span class="alert-msg">[2026-10-26 02:05:51] [WARNING] 行业缓存: 行业缓存.json 缺失/无效，需从仓库同步</span></div><div class="alert-item"><span class="alert-level warning">WARNING</span><span class="alert-msg">[2026-10-26 02:05:51] [WARNING] 行业缓存: 二级行业缓存.json 缺失/无效，需从仓库同步</span></div><div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">[2026-10-26 02:05:52] [INFO] 真实收益: 今日无待采集的推荐记录（prediction_date 均非今日或已采集）</span></div><div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">[2026-10-26 02:05:53] [INFO] 极端行情: 上证3690 涨跌0.89%</span></div><div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">[2026-10-26 02:05:53] [INFO] 大盘环境: 上证3690 涨跌0.89%</span></div><div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">[2026-10-26 02:05:53] [INFO] 大盘环境: 判断: 震荡 仓位55%</span></div><div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">[2026-10-26 02:07:09] [INFO] 行情采集: 腾讯(一级) 成功拉取 4950 只</span></div><div class="alert-item"><span class="alert-level warning">WARNING</span><span class="alert-msg">[2026-10-26 02:07:11] [WARNING] 商誉数据: RPT_GOODWILL_STOCKDETAILS(2026-09-30) 返回空, 回退更早报告期</span></div><div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">[2026-10-26 02:07:23] [INFO] 硬排除: 通过464只 排除36只 7日推荐4只</span></div><div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">[2026-10-26 02:08:04] [INFO] 信号过滤: 通过156只 排除308只</span></div><div class="alert-item"><span class="alert-level warning">WARNING</span><span class="alert-msg">[2026-10-26 02:09:38] [WARNING] 新闻筛查: 源异常: baidu: 3次失败</span></div><div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">[2026-10-26 02:09:38] [INFO] 新闻筛查: 全部通过，未发现利空</span></div><div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">[2026-10-26 02:10:50] [INFO] 深度分析: 冠军 视源股份(002841) 已注入深度分析</span></div><div class="alert-item"><span class="alert-level info">INFO</span><span class="alert-msg">[2026-10-26 02:10:50] [INFO] Markdown: 已输出至 /workspace/短线标的_2026-10-26.md</span></div></div></section>
+<section><h2>最终推荐标的</h2><div style="margin-bottom:.5rem;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:.6rem .9rem;font-size:.78rem;color:#cbd5e1"><b style="color:#22c55e">🎯 买入池</b> <span style="color:#e2e8f0">▸ 候选 17 只 → 买入池 4 只（13 只因期望过滤剔除）</span> <span style="color:#94a3b8;font-size:.7rem">（候选表全量展示，🎯 标记进入买入池的标的）</span><div style="font-size:.7rem;color:#94a3b8;margin-top:.3rem">未进买入池：省广集团(002400)、昭衍新药(603127)、和而泰(002402)、华天科技(002185)、东方电缆(603606)、洪都航空(600316)、航发科技(600391)、东方嘉盛(002889)、华建集团(600629)、百亚股份(003006)、新北洋(002376)、浙江荣泰(603119)…</div></div>
+<div style="overflow-x:auto"><table>
+<thead><tr><th>#</th><th>TOP10</th><th>买入池</th><th>PK</th><th>策略</th><th>标的</th><th>代码</th><th>行业</th><th>二级行业</th><th>涨跌幅</th><th>开盘</th><th>收盘</th><th>振幅</th><th>60日高</th><th>60日低</th><th>档位</th><th>7日</th><th>评分</th><th>置信</th><th>进场</th><th>止损</th><th>止盈</th><th>盈亏比</th><th>回测</th></tr></thead>
+<tbody><tr class="strat_b"><td>1</td><td>⭐</td><td class="buy-col">🎯</td><td> </td><td><span class="badge strat_b">B</span></td>
+        <td><a href="https://quote.eastmoney.com/sz000993.html" target="_blank">闽东电力</a></td><td>000993</td><td>公用事业</td><td>电力行业</td>
+        <td class="down">-7.76%</td><td>12.44</td><td>12.71</td>
+        <td>5.01%</td><td>20.91 (+64.5%)</td><td>9.52 (+33.5%)</td><td class="tier tier1">档位1</td><td>1 (B)</td><td>26</td><td class="conf high">★★★</td>
+        <td class="entry">12.49</td><td>12.05</td><td>13.36</td><td>1.98</td><td></td></tr><tr class="strat_d"><td>2</td><td>⭐</td><td class="buy-col"></td><td>🏆</td><td><span class="badge strat_d">D</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002400.html" target="_blank">省广集团</a></td><td>002400</td><td>社会服务</td><td>文化传媒</td>
+        <td class="up">+3.67%</td><td>6.19</td><td>6.50</td>
+        <td>8.93%</td><td>8.06 (+24.0%)</td><td>5.76 (+12.8%)</td><td class="tier tier2">档位2</td><td>1 (D)</td><td>24</td><td class="conf high">★★★</td>
+        <td class="entry">6.24</td><td>6.02</td><td>6.61</td><td>1.68</td><td></td></tr><tr class="strat_j"><td>3</td><td></td><td class="buy-col"></td><td> </td><td><span class="badge strat_j">J</span></td>
+        <td><a href="https://quote.eastmoney.com/sh603127.html" target="_blank">昭衍新药</a></td><td>603127</td><td>社会服务</td><td>医疗行业</td>
+        <td class="down">-0.44%</td><td>44.22</td><td>45.35</td>
+        <td>6.10%</td><td>55.45 (+22.3%)</td><td>40.00 (+13.4%)</td><td class="tier tier2">档位2</td><td>1 (J)</td><td>26</td><td class="conf high">★★★</td>
+        <td class="entry">43.77</td><td>42.02</td><td>46.40</td><td>1.5</td><td><span class="win">🟢</span><span class="win">🟢</span></td></tr><tr class="strat_a"><td>4</td><td></td><td class="buy-col"></td><td> </td><td><span class="badge strat_a">A</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002402.html" target="_blank">和而泰</a></td><td>002402</td><td>电子</td><td>消费电子</td>
+        <td class="up">+4.96%</td><td>16.44</td><td>17.58</td>
+        <td>9.49%</td><td>21.91 (+24.6%)</td><td>16.07 (+9.4%)</td><td class="tier tier1">档位1</td><td>1 (A)</td><td>35</td><td class="conf high">★★★</td>
+        <td class="entry">18.35</td><td>17.62</td><td>19.45</td><td>1.51</td><td></td></tr><tr class="strat_a"><td>5</td><td></td><td class="buy-col">🎯</td><td>👑</td><td><span class="badge strat_a">A</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002841.html" target="_blank">视源股份</a></td><td>002841</td><td>电子</td><td>消费电子</td>
+        <td class="up">+3.76%</td><td>43.53</td><td>45.54</td>
+        <td>7.52%</td><td>51.30 (+12.6%)</td><td>40.30 (+13.0%)</td><td class="tier tier2">档位2</td><td>1 (A)</td><td>35</td><td class="conf high">★★★</td>
+        <td class="entry">46.92</td><td>45.04</td><td>49.74</td><td>1.5</td><td></td></tr><tr class="strat_a"><td>6</td><td>⭐</td><td class="buy-col"></td><td> </td><td><span class="badge strat_a">A</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002185.html" target="_blank">华天科技</a></td><td>002185</td><td>电子</td><td>半导体</td>
+        <td class="up">+4.12%</td><td>15.08</td><td>16.19</td>
+        <td>11.90%</td><td>19.22 (+18.7%)</td><td>13.47 (+20.2%)</td><td class="tier tier2">档位2</td><td>1 (A)</td><td>30</td><td class="conf high">★★★</td>
+        <td class="entry">16.59</td><td>15.93</td><td>17.59</td><td>1.52</td><td></td></tr><tr class="strat_a"><td>7</td><td></td><td class="buy-col"></td><td> </td><td><span class="badge strat_a">A</span></td>
+        <td><a href="https://quote.eastmoney.com/sh603606.html" target="_blank">东方电缆</a></td><td>603606</td><td>电力设备</td><td>输配电气</td>
+        <td class="up">+3.39%</td><td>34.02</td><td>35.67</td>
+        <td>5.19%</td><td>42.68 (+19.7%)</td><td>32.01 (+11.4%)</td><td class="tier tier2">档位2</td><td>1 (A)</td><td>27</td><td class="conf high">★★★</td>
+        <td class="entry">36.42</td><td>34.96</td><td>38.61</td><td>1.5</td><td><span class="loss">🔴</span></td></tr><tr class="strat_b"><td>8</td><td>⭐</td><td class="buy-col">🎯</td><td>🏆</td><td><span class="badge strat_b">B</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002201.html" target="_blank">九鼎新材</a></td><td>002201</td><td>建筑材料</td><td>玻璃陶瓷</td>
+        <td class="down">-8.47%</td><td>9.00</td><td>8.54</td>
+        <td>6.43%</td><td>12.00 (+40.5%)</td><td>7.22 (+18.3%)</td><td class="tier tier1">档位1</td><td>1 (B)</td><td>28</td><td class="conf high">★★★</td>
+        <td class="entry">8.28</td><td>7.99</td><td>8.86</td><td>2.0</td><td></td></tr><tr class="strat_b"><td>9</td><td>⭐</td><td class="buy-col">🎯</td><td> </td><td><span class="badge strat_b">B</span></td>
+        <td><a href="https://quote.eastmoney.com/sh603366.html" target="_blank">日出东方</a></td><td>603366</td><td>电力设备</td><td>家电行业</td>
+        <td class="down">-3.60%</td><td>7.39</td><td>7.24</td>
+        <td>8.52%</td><td>8.62 (+19.1%)</td><td>6.31 (+14.7%)</td><td class="tier tier2">档位2</td><td>1 (B)</td><td>27</td><td class="conf high">★★★</td>
+        <td class="entry">6.90</td><td>6.66</td><td>7.38</td><td>2.0</td><td></td></tr><tr class="strat_d"><td>10</td><td>⭐</td><td class="buy-col"></td><td> </td><td><span class="badge strat_d">D</span></td>
+        <td><a href="https://quote.eastmoney.com/sh600316.html" target="_blank">洪都航空</a></td><td>600316</td><td>国防军工</td><td>航天航空</td>
+        <td class="up">+3.61%</td><td>35.58</td><td>37.28</td>
+        <td>6.73%</td><td>38.61 (+3.6%)</td><td>23.74 (+57.0%)</td><td class="tier tier3">档位3</td><td>1 (D)</td><td>32</td><td class="conf high">★★★</td>
+        <td class="entry">36.24</td><td>34.97</td><td>38.41</td><td>1.71</td><td></td></tr><tr class="strat_d"><td>11</td><td>⭐</td><td class="buy-col"></td><td> </td><td><span class="badge strat_d">D</span></td>
+        <td><a href="https://quote.eastmoney.com/sh600391.html" target="_blank">航发科技</a></td><td>600391</td><td>国防军工</td><td>航天航空</td>
+        <td class="up">+3.27%</td><td>39.81</td><td>41.99</td>
+        <td>7.30%</td><td>46.79 (+11.4%)</td><td>25.90 (+62.1%)</td><td class="tier tier3">档位3</td><td>1 (D)</td><td>29</td><td class="conf high">★★★</td>
+        <td class="entry">40.54</td><td>39.12</td><td>42.97</td><td>1.71</td><td></td></tr><tr class="strat_j"><td>12</td><td></td><td class="buy-col"></td><td>🏆</td><td><span class="badge strat_j">J</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002889.html" target="_blank">东方嘉盛</a></td><td>002889</td><td>社会服务</td><td>交运物流</td>
+        <td class="up">+2.78%</td><td>12.78</td><td>13.67</td>
+        <td>9.02%</td><td>17.31 (+26.6%)</td><td>10.91 (+25.3%)</td><td class="tier tier2">档位2</td><td>1 (J)</td><td>29</td><td class="conf high">★★★</td>
+        <td class="entry">12.97</td><td>12.45</td><td>13.75</td><td>1.5</td><td></td></tr><tr class="strat_j"><td>13</td><td></td><td class="buy-col"></td><td> </td><td><span class="badge strat_j">J</span></td>
+        <td><a href="https://quote.eastmoney.com/sh600629.html" target="_blank">华建集团</a></td><td>600629</td><td>社会服务</td><td>工程咨询服务</td>
+        <td class="down">-0.45%</td><td>17.10</td><td>17.52</td>
+        <td>7.10%</td><td>19.89 (+13.5%)</td><td>11.56 (+51.6%)</td><td class="tier tier3">档位3</td><td>1 (J)</td><td>27</td><td class="conf high">★★★</td>
+        <td class="entry">16.99</td><td>16.31</td><td>18.01</td><td>1.5</td><td></td></tr><tr class="strat_l"><td>14</td><td></td><td class="buy-col"></td><td>🏆</td><td><span class="badge strat_l">L</span></td>
+        <td><a href="https://quote.eastmoney.com/sz003006.html" target="_blank">百亚股份</a></td><td>003006</td><td>轻工制造</td><td>美容护理</td>
+        <td class="up">+6.42%</td><td>22.23</td><td>23.70</td>
+        <td>9.56%</td><td>24.98 (+5.4%)</td><td>12.88 (+84.0%)</td><td class="tier tier3">档位3</td><td>1 (L)</td><td>30</td><td class="conf high">★★★</td>
+        <td class="entry">23.74</td><td>22.79</td><td>25.16</td><td>1.49</td><td></td></tr><tr class="strat_v"><td>15</td><td>⭐</td><td class="buy-col"></td><td> </td><td><span class="badge strat_v">V</span></td>
+        <td><a href="https://quote.eastmoney.com/sz002376.html" target="_blank">新北洋</a></td><td>002376</td><td>电子</td><td>计算机设备</td>
+        <td class="up">+2.90%</td><td>7.11</td><td>7.80</td>
+        <td>10.55%</td><td>8.23 (+5.5%)</td><td>5.98 (+30.4%)</td><td class="tier tier3">档位3</td><td>2 (V)</td><td>31</td><td class="conf high">★★★</td>
+        <td class="entry">7.80</td><td>7.50</td><td>8.27</td><td>1.57</td><td><span class="loss">🔴</span></td></tr><tr class="strat_v"><td>16</td><td>⭐</td><td class="buy-col"></td><td>🏆</td><td><span class="badge strat_v">V</span></td>
+        <td><a href="https://quote.eastmoney.com/sh603119.html" target="_blank">浙江荣泰</a></td><td>603119</td><td>电力设备</td><td>非金属材料</td>
+        <td class="up">+5.32%</td><td>52.18</td><td>56.77</td>
+        <td>10.45%</td><td>57.85 (+1.9%)</td><td>40.70 (+39.5%)</td><td class="tier tier3">档位3</td><td>1 (V)</td><td>30</td><td class="conf high">★★★</td>
+        <td class="entry">56.77</td><td>54.61</td><td>60.18</td><td>1.58</td><td><span class="no_data">⚪</span> <span class="warn">⚠️</span></td></tr><tr class="strat_v"><td>17</td><td>⭐</td><td class="buy-col"></td><td> </td><td><span class="badge strat_v">V</span></td>
+        <td><a href="https://quote.eastmoney.com/sh600580.html" target="_blank">卧龙电驱</a></td><td>600580</td><td>电力设备</td><td>电机</td>
+        <td class="up">+6.16%</td><td>24.52</td><td>26.36</td>
+        <td>11.76%</td><td>39.08 (+48.3%)</td><td>22.80 (+15.6%)</td><td class="tier tier1">档位1</td><td>1 (V)</td><td>28</td><td class="conf high">★★★</td>
+        <td class="entry">26.36</td><td>25.36</td><td>27.94</td><td>1.58</td><td></td></tr></tbody></table></div>
+<div style="margin-top:1rem;background:#1a2332;border:1px solid #334155;border-radius:8px;padding:.9rem 1.2rem;font-size:.75rem;color:#94a3b8;line-height:1.8">
+<div style="color:#38bdf8;font-weight:700;margin-bottom:.4rem">回测列说明</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:.3rem 1.5rem">
+<div><span style="color:#e2e8f0;font-weight:600">格式</span>：每个样本对应一个图标，多个图标顺序排列，如 <code style="background:#0f172a;padding:1px 6px;border-radius:3px;color:#22c55e">🟢🟢</code> 表示2笔盈利样本</div>
+<div><span style="color:#22c55e;font-weight:600">🟢</span> 盈利样本</div>
+<div><span style="color:#ef4444;font-weight:600">🔴</span> 亏损样本</div>
+<div><span style="color:#94a3b8;font-weight:600">⚪</span> 后续K线不足或未形成有效胜负</div>
+<div><span style="color:#f59e0b;font-weight:600">⚠️</span> 历史有限价单未成交（当日最低价&gt;进场价）</div>
+<div><span style="color:#64748b;font-weight:600">空白</span> 无可匹配历史样本</div>
+</div>
+<div style="margin-top:.5rem;color:#64748b;font-size:.7rem">模拟口径：90天推荐历史，按进场/止损/止盈模拟，单笔最大持仓10交易日，T+1规则，未计入滑点/手续费/涨跌停无法成交。</div>
+</div></section>
+<section><h2>策略说明</h2><table>
+<thead><tr><th style="width:18%">策略</th><th style="width:48%">条件</th><th style="width:16%">仓位(震荡)</th><th style="width:18%">仓位(弱市)</th></tr></thead>
+<tbody>
+<tr><td><span class="badge strat_a">A动量延续</span></td><td style="white-space:normal;word-break:break-all">涨3-7%+量比1.5-3.0+弱市/极端上涨关闭</td><td>12-17%</td><td>0%(关闭)</td></tr>
+<tr><td><span class="badge strat_b">B超跌反弹</span></td><td style="white-space:normal;word-break:break-all">跌2.5-9.5%+振幅>3%+反弹确认(close>low*1.01)+深度跌幅加分</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_c">C事件驱动</span></td><td style="white-space:normal;word-break:break-all">涨1-2%+量比≥1.0或财报季+弱市关闭</td><td>10-12%</td><td>0%(关闭)</td></tr>
+<tr><td><span class="badge strat_d">D回调企稳</span></td><td style="white-space:normal;word-break:break-all">涨3-6%(弱市上限7%)+振幅1.5-10%+阳线+弱市不折扣</td><td>12-15%</td><td>8-12%</td></tr>
+<tr><td><span class="badge strat_e">E资金埋伏</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>3000万(代理vr≥0.6+to≥0.5%)+弱市不折扣</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_f">F主力资金</span></td><td style="white-space:normal;word-break:break-all">涨0-1%+主力流入>5000万+近5日持续≥3日+弱市不折扣</td><td>3-5%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_g">G横盘突破</span></td><td style="white-space:normal;word-break:break-all">涨1.0-3.0%+振幅1.5-6%+量比≥1.0阳线+弱市不折扣低吸</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_h">H地量见底</span></td><td style="white-space:normal;word-break:break-all">涨-3~1.0%+量比<1.0+锤子线/十字星阳线+弱市放宽</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_i">I均线突破</span></td><td style="white-space:normal;word-break:break-all">MA5/10/20粘合<4%+放量vr≥1.0阳线+收盘≥均线×0.98+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_j">J龙回头</span></td><td style="white-space:normal;word-break:break-all">20日强势股+回调6-25%+缩量vr<1.0收阳+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_k">K缺口回补</span></td><td style="white-space:normal;word-break:break-all">前日跳空高开1-7%+回踩缺口上沿确认+收阳+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_l">L黄金坑</span></td><td style="white-space:normal;word-break:break-all">5日急跌≥5%+V型反弹≥2%+放量vr≥1.0收阳+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_m">M涨停回调</span></td><td style="white-space:normal;word-break:break-all">近5日涨停+回调4-25%+缩量vr<1.0收阳+弱市跳过</td><td>6-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_n">N新高突破</span></td><td style="white-space:normal;word-break:break-all">收盘≥20日新高×0.99+放量vr≥1.0阳线+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_o">O回踩均线</span></td><td style="white-space:normal;word-break:break-all">60日涨>15%+回踩MA20±3%+缩量vr<1.0收阳+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_p">P地量反弹</span></td><td style="white-space:normal;word-break:break-all">连续3日缩量至地量+当日放量vr≥1.2+涨1.0-5%阳线+弱市跳过</td><td>6-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_q">Q W底突破</span></td><td style="white-space:normal;word-break:break-all">20日内两底相差<5%+放量vr≥1.2突破颈线+阳线+弱市跳过</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_r">R 主力共振(强)</span></td><td style="white-space:normal;word-break:break-all">底仓≥3分+起爆≥4分双重共振+多因子同步确认+弱市不折扣</td><td>8-10%</td><td>5-8%</td></tr>
+<tr><td><span class="badge strat_s">S 主力共振(弱)</span></td><td style="white-space:normal;word-break:break-all">底仓≥2分+起爆≥3分双重共振+弱市降仓位</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_t">T 主力观察</span></td><td style="white-space:normal;word-break:break-all">底仓≥2分+起爆≥2分预共振+待确认信号+弱市不推荐</td><td>3-5%</td><td>0%(关闭)</td></tr>
+<tr><td><span class="badge strat_u">U 涨停追击</span></td><td style="white-space:normal;word-break:break-all">涨3-9%+量比≥1.5+换手≥3%+小盘<100亿+涨停基因+振幅>3%+收阳</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_v">V 业绩预告跳空</span></td><td style="white-space:normal;word-break:break-all">涨2-7%+量比≥1.2+收阳+财报季(1/3/4/8/10月)+非亏损+弱市关闭</td><td>5-8%</td><td>0%(关闭)</td></tr>
+<tr><td><span class="badge strat_w">W 龙虎榜承接</span></td><td style="white-space:normal;word-break:break-all">龙虎榜机构净买&gt;0+回调-3~1%+缩量vr&lt;1.0企稳收阳(close≥open×0.98)</td><td>5-8%</td><td>3-5%</td></tr>
+<tr><td><span class="badge strat_x">X 板块共振跟随</span></td><td style="white-space:normal;word-break:break-all">行业资金净流入前10+涨0-2%+量比≥1.2+收阳+弱市关闭</td><td>5-8%</td><td>0%(关闭)</td></tr>
+</tbody></table></section>
+<section><h2>👑 跨策略冠军PK</h2><div class="pk-summary">
+<p style="color:#94a3b8;font-size:.85rem;margin-bottom:1rem">所有策略获胜者(含独苗)在12个维度对决+历史回测盈利加成+历史板块参考，总分最高者加冕👑冠军</p>
+<div class="pk-card" style="background:linear-gradient(135deg,#1e293b,#2d3748);border-radius:12px;padding:1.2rem;margin-bottom:.75rem;border:2px solid #fbbf24">
+<div style="color:#fbbf24;font-size:1.3rem;margin-bottom:.25rem">👑 <strong>视源股份</strong> (002841) — 冠军得分 4.7</div>
+<div style="color:#94a3b8;font-size:.8rem">挑战者: 东方嘉盛(002889), 百亚股份(003006), 浙江荣泰(603119)</div>
+</div></div></section>
+<section><h2>同策略PK</h2><div class="pk-summary">
+<p style="color:#94a3b8;font-size:.85rem;margin-bottom:1rem">同策略标的在12维度对决，全0时自动降级为技术面3维度(涨跌幅/量比/换手率)，🏆为组内获胜者</p>
+<div class="pk-card" style="background:#1e293b;border-radius:12px;padding:1rem;margin-bottom:.75rem;border-left:4px solid #38bdf8">
+<div style="font-weight:bold;color:#e2e8f0;margin-bottom:.5rem"><span class="badge strat_b" style="display:inline-block;margin-right:.5rem">B</span> 3只同策略对决</div>
+<div style="color:#38bdf8;font-size:1.1rem;margin-bottom:.25rem">🏆 <strong>九鼎新材</strong> (002201) — PK得分 6/12</div>
+<div style="color:#94a3b8;font-size:.8rem">败方: 闽东电力(000993)1.0分, 日出东方(603366)5.0分</div>
+</div>
+<div class="pk-card" style="background:#1e293b;border-radius:12px;padding:1rem;margin-bottom:.75rem;border-left:4px solid #38bdf8">
+<div style="font-weight:bold;color:#e2e8f0;margin-bottom:.5rem"><span class="badge strat_d" style="display:inline-block;margin-right:.5rem">D</span> 3只同策略对决</div>
+<div style="color:#38bdf8;font-size:1.1rem;margin-bottom:.25rem">🏆 <strong>省广集团</strong> (002400) — PK得分 7/12</div>
+<div style="color:#94a3b8;font-size:.8rem">败方: 洪都航空(600316)4.0分, 航发科技(600391)0.0分</div>
+</div>
+<div class="pk-card" style="background:#1e293b;border-radius:12px;padding:1rem;margin-bottom:.75rem;border-left:4px solid #38bdf8">
+<div style="font-weight:bold;color:#e2e8f0;margin-bottom:.5rem"><span class="badge strat_j" style="display:inline-block;margin-right:.5rem">J</span> 3只同策略对决</div>
+<div style="color:#38bdf8;font-size:1.1rem;margin-bottom:.25rem">🏆 <strong>东方嘉盛</strong> (002889) — PK得分 6/12</div>
+<div style="color:#94a3b8;font-size:.8rem">败方: 昭衍新药(603127)4.0分, 华建集团(600629)1.0分</div>
+</div>
+<div class="pk-card" style="background:#1e293b;border-radius:12px;padding:1rem;margin-bottom:.75rem;border-left:4px solid #38bdf8">
+<div style="font-weight:bold;color:#e2e8f0;margin-bottom:.5rem"><span class="badge strat_a" style="display:inline-block;margin-right:.5rem">A</span> 4只同策略对决</div>
+<div style="color:#38bdf8;font-size:1.1rem;margin-bottom:.25rem">🏆 <strong>视源股份</strong> (002841) — PK得分 7.5/12</div>
+<div style="color:#94a3b8;font-size:.8rem">败方: 和而泰(002402)0.5分, 华天科技(002185)4.5分, 东方电缆(603606)0.0分</div>
+</div>
+<div class="pk-card" style="background:#1e293b;border-radius:12px;padding:1rem;margin-bottom:.75rem;border-left:4px solid #38bdf8">
+<div style="font-weight:bold;color:#e2e8f0;margin-bottom:.5rem"><span class="badge strat_v" style="display:inline-block;margin-right:.5rem">V</span> 3只同策略对决</div>
+<div style="color:#38bdf8;font-size:1.1rem;margin-bottom:.25rem">🏆 <strong>浙江荣泰</strong> (603119) — PK得分 6/12</div>
+<div style="color:#94a3b8;font-size:.8rem">败方: 新北洋(002376)3.0分, 卧龙电驱(600580)3.0分</div>
+</div>
+</div></section>
+<section><h2>资金去向（行业主力净流入排名）</h2>
+<div class="capital-flow"><div class="flow-card">
+<div class="flow-card-header"><span class="rank">#1</span><span class="industry-name">半导体</span><span class="flow-amount" style="color:#22c55e">↑121.76亿</span></div>
+<div class="flow-chg">涨跌幅 +3.65% | 流入:121.76亿 流出:—</div>
+<div class="flow-stocks"><span class="flow-stock">和而泰</span><span class="flow-stock">视源股份</span><span class="flow-stock">华天科技</span><span class="flow-stock">新北洋</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#2</span><span class="industry-name">通信设备</span><span class="flow-amount" style="color:#22c55e">↑49.24亿</span></div>
+<div class="flow-chg">涨跌幅 — | 流入:49.24亿 流出:—</div>
+<div class="flow-stocks"><span class="flow-stock">—</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#3</span><span class="industry-name">软件开发</span><span class="flow-amount" style="color:#22c55e">↑47.03亿</span></div>
+<div class="flow-chg">涨跌幅 +4.88% | 流入:47.03亿 流出:—</div>
+<div class="flow-stocks"><span class="flow-stock">—</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#4</span><span class="industry-name">消费电子</span><span class="flow-amount" style="color:#22c55e">↑37.15亿</span></div>
+<div class="flow-chg">涨跌幅 +3.13% | 流入:37.15亿 流出:—</div>
+<div class="flow-stocks"><span class="flow-stock">和而泰</span><span class="flow-stock">视源股份</span><span class="flow-stock">华天科技</span><span class="flow-stock">新北洋</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#5</span><span class="industry-name">自动化设备</span><span class="flow-amount" style="color:#22c55e">↑30.55亿</span></div>
+<div class="flow-chg">涨跌幅 +5.08% | 流入:30.55亿 流出:—</div>
+<div class="flow-stocks"><span class="flow-stock">—</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#6</span><span class="industry-name">汽车零部件</span><span class="flow-amount" style="color:#22c55e">↑24.25亿</span></div>
+<div class="flow-chg">涨跌幅 +2.81% | 流入:24.25亿 流出:—</div>
+<div class="flow-stocks"><span class="flow-stock">—</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#7</span><span class="industry-name">IT服务</span><span class="flow-amount" style="color:#22c55e">↑22.43亿</span></div>
+<div class="flow-chg">涨跌幅 +3.95% | 流入:22.43亿 流出:—</div>
+<div class="flow-stocks"><span class="flow-stock">—</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#8</span><span class="industry-name">证券</span><span class="flow-amount" style="color:#22c55e">↑20.30亿</span></div>
+<div class="flow-chg">涨跌幅 — | 流入:20.30亿 流出:—</div>
+<div class="flow-stocks"><span class="flow-stock">—</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#9</span><span class="industry-name">白酒</span><span class="flow-amount" style="color:#22c55e">↑18.45亿</span></div>
+<div class="flow-chg">涨跌幅 +2.54% | 流入:18.45亿 流出:—</div>
+<div class="flow-stocks"><span class="flow-stock">—</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#10</span><span class="industry-name">光学光电子</span><span class="flow-amount" style="color:#22c55e">↑17.73亿</span></div>
+<div class="flow-chg">涨跌幅 +2.49% | 流入:17.73亿 流出:—</div>
+<div class="flow-stocks"><span class="flow-stock">和而泰</span><span class="flow-stock">视源股份</span><span class="flow-stock">华天科技</span><span class="flow-stock">新北洋</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#11</span><span class="industry-name">包装印刷</span><span class="flow-amount" style="color:#ef4444">↓0.32亿</span></div>
+<div class="flow-chg">涨跌幅 — | 流入:— 流出:0.32亿</div>
+<div class="flow-stocks"><span class="flow-stock">百亚股份</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#12</span><span class="industry-name">农产品加工</span><span class="flow-amount" style="color:#ef4444">↓0.38亿</span></div>
+<div class="flow-chg">涨跌幅 — | 流入:— 流出:0.38亿</div>
+<div class="flow-stocks"><span class="flow-stock">—</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#13</span><span class="industry-name">医药商业</span><span class="flow-amount" style="color:#ef4444">↓0.61亿</span></div>
+<div class="flow-chg">涨跌幅 — | 流入:— 流出:0.61亿</div>
+<div class="flow-stocks"><span class="flow-stock">—</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#14</span><span class="industry-name">钢铁</span><span class="flow-amount" style="color:#ef4444">↓0.67亿</span></div>
+<div class="flow-chg">涨跌幅 — | 流入:— 流出:0.67亿</div>
+<div class="flow-stocks"><span class="flow-stock">—</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#15</span><span class="industry-name">油气开采及服务</span><span class="flow-amount" style="color:#ef4444">↓0.77亿</span></div>
+<div class="flow-chg">涨跌幅 — | 流入:— 流出:0.77亿</div>
+<div class="flow-stocks"><span class="flow-stock">—</span></div></div>
+<div class="section" style="margin-top:1rem"><h4 style="color:#ef4444">⚠️ 资金流出TOP5</h4><div class="flow-grid"><div class="flow-card" style="border-left:3px solid #ef4444"><div class="flow-card-header"><span class="rank" style="color:#ef4444">流出</span><span class="industry-name">银行</span><span class="flow-amount" style="color:#ef4444">↓24.26亿</span></div></div><div class="flow-card" style="border-left:3px solid #ef4444"><div class="flow-card-header"><span class="rank" style="color:#ef4444">流出</span><span class="industry-name">电力</span><span class="flow-amount" style="color:#ef4444">↓9.30亿</span></div></div><div class="flow-card" style="border-left:3px solid #ef4444"><div class="flow-card-header"><span class="rank" style="color:#ef4444">流出</span><span class="industry-name">建筑材料</span><span class="flow-amount" style="color:#ef4444">↓3.75亿</span></div></div><div class="flow-card" style="border-left:3px solid #ef4444"><div class="flow-card-header"><span class="rank" style="color:#ef4444">流出</span><span class="industry-name">建筑装饰</span><span class="flow-amount" style="color:#ef4444">↓2.22亿</span></div></div><div class="flow-card" style="border-left:3px solid #ef4444"><div class="flow-card-header"><span class="rank" style="color:#ef4444">流出</span><span class="industry-name">港口航运</span><span class="flow-amount" style="color:#ef4444">↓1.09亿</span></div></div></div></div></div></section>
+<section><h2>🔮 预测上涨板块（下一交易日）</h2>
+<div class="flow-grid"><div class="flow-card">
+<div class="flow-card-header"><span class="rank">#1</span><span class="industry-name">通信设备</span><span class="flow-amount" style="color:#22c55e">↑ 84.0分</span></div>
+<div class="flow-chg">连续流入 3天 | 趋势 ↑ 持续流入 | 今日净流入 +49.24亿</div>
+<div class="flow-stocks"><span class="flow-stock">—</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#2</span><span class="industry-name">IT服务</span><span class="flow-amount" style="color:#22c55e">↑ 84.0分</span></div>
+<div class="flow-chg">连续流入 3天 | 趋势 ↑ 持续流入 | 今日净流入 +22.43亿</div>
+<div class="flow-stocks"><span class="flow-stock">—</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#3</span><span class="industry-name">光学光电子</span><span class="flow-amount" style="color:#22c55e">↑ 76.0分</span></div>
+<div class="flow-chg">连续流入 2天 | 趋势 ↑ 转流入 | 今日净流入 +17.73亿</div>
+<div class="flow-stocks"><span class="flow-stock">和而泰</span><span class="flow-stock">视源股份</span><span class="flow-stock">华天科技</span><span class="flow-stock">新北洋</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#4</span><span class="industry-name">半导体</span><span class="flow-amount" style="color:#22c55e">↑ 68.0分</span></div>
+<div class="flow-chg">连续流入 1天 | 趋势 ↑ 转流入 | 今日净流入 +121.76亿</div>
+<div class="flow-stocks"><span class="flow-stock">和而泰</span><span class="flow-stock">视源股份</span><span class="flow-stock">华天科技</span><span class="flow-stock">新北洋</span></div></div>
+<div class="flow-card">
+<div class="flow-card-header"><span class="rank">#5</span><span class="industry-name">软件开发</span><span class="flow-amount" style="color:#22c55e">↑ 68.0分</span></div>
+<div class="flow-chg">连续流入 1天 | 趋势 ↑ 转流入 | 今日净流入 +47.03亿</div>
+<div class="flow-stocks"><span class="flow-stock">—</span></div></div></div></section>
+<div class="ai-section-wrap">
+<h2><span class="ai-icon">🌐</span>AI 策略分析 — 市场全景</h2>
+<div class="ai-markdown"><h3>1.1 大盘环境：震荡格局</h3>
+<div class="ai-dim"><strong>上证指数</strong>：3690.48（+0.89%），涨跌 +32.45点</div>
+<div class="ai-dim"><strong>深证成指</strong>：11673.83（+2.79%），涨跌 +316.51点</div>
+<h3>1.2 市场情绪与宽度</h3>
+<div class="ai-dim"><strong>市场情绪</strong>：🔥🔥 偏暖（涨停79家）</div>
+<div class="ai-dim"><strong>研判</strong>：涨停家数&gt;50家，赚钱效应较好，可适度参与短线机会</div>
+<div class="ai-dim"><strong>市场风格</strong>：低吸型（超跌/回调策略为主），市场风格偏向价值修复</div>
+<h3>1.3 筛选漏斗全景</h3>
+<table>
+<tr><th>阶段</th><th>数量</th><th>过滤率</th><th>说明</th></tr>
+<tr><td>原始池</td><td>500</td><td>-</td><td>全市场满足基本条件的标的</td></tr>
+<tr><td>硬排除</td><td>464</td><td>7.2%</td><td>13项硬性排除</td></tr>
+<tr><td>信号过滤</td><td>156</td><td>66.4%</td><td>27项信号过滤</td></tr>
+<tr><td>策略匹配</td><td>85</td><td>45.5%</td><td>20策略匹配</td></tr>
+<tr><td>微观结构</td><td>61</td><td>28.2%</td><td>流动性+消息敏感度</td></tr>
+<tr><td>行业限制</td><td>38</td><td>37.7%</td><td>行业集中度控制</td></tr>
+<tr><td>**最终推荐**</td><td>**17**</td><td>**96.6%**</td><td>精选标的</td></tr>
+</table>
+<h3>1.4 资金流向</h3>
+<div class="ai-dim">推荐标的主力净流入合计：16531万</div>
+<div class="ai-dim">平均主力净流入：972万/只 → <strong>主力资金积极做多，资金面有支撑</strong></div>
+<h3>1.5 策略分布概览</h3>
+<p>策略分布：A 动量延续(4只) | B 超跌反弹(3只) | D 回调企稳(3只) | J 龙回头(3只) | V V(3只) | L 黄金坑(1只)</p>
+<p>趋势追涨型：4只 | 超跌低吸型：7只 | 埋伏观察型：3只</p></div>
+</div><div class="ai-section-wrap">
+<h2><span class="ai-icon">📊</span>AI 策略分析 — 板块深度研判</h2>
+<div class="ai-markdown"><h3>2.1 涨停板块热度</h3>
+<table>
+<tr><th>排名</th><th>板块</th><th>涨停数</th><th>热度</th><th>研判</th></tr>
+<tr><td>1</td><td>机械设备</td><td>14</td><td>🔥🔥</td><td>热点板块，短线机会丰富</td></tr>
+<tr><td>2</td><td>电子</td><td>10</td><td>🔥🔥</td><td>热点板块，短线机会丰富</td></tr>
+<tr><td>3</td><td>计算机</td><td>10</td><td>🔥🔥</td><td>热点板块，短线机会丰富</td></tr>
+<tr><td>4</td><td>汽车</td><td>8</td><td>🔥🔥</td><td>热点板块，短线机会丰富</td></tr>
+<tr><td>5</td><td>电力设备</td><td>8</td><td>🔥🔥</td><td>热点板块，短线机会丰富</td></tr>
+<tr><td>6</td><td>传媒</td><td>6</td><td>🔥</td><td>活跃板块，可择优参与</td></tr>
+<tr><td>7</td><td>商贸零售</td><td>4</td><td>🔥</td><td>活跃板块，可择优参与</td></tr>
+<tr><td>8</td><td>建筑材料</td><td>3</td><td>⚡</td><td>零星活跃，个股行情为主</td></tr>
+<tr><td>9</td><td>基础化工</td><td>3</td><td>⚡</td><td>零星活跃，个股行情为主</td></tr>
+<tr><td>10</td><td>非银金融</td><td>2</td><td>⚡</td><td>零星活跃，个股行情为主</td></tr>
+</table>
+<h3>2.2 推荐标的行业分布</h3>
+<table>
+<tr><th>行业</th><th>推荐数</th><th>占比</th><th>判断</th></tr>
+<tr><td>社会服务</td><td>4</td><td>23.5%</td><td>⚠️ 集中度过高</td></tr>
+<tr><td>电子</td><td>4</td><td>23.5%</td><td>⚠️ 集中度过高</td></tr>
+<tr><td>电力设备</td><td>4</td><td>23.5%</td><td>⚠️ 集中度过高</td></tr>
+<tr><td>国防军工</td><td>2</td><td>11.8%</td><td>重点关注</td></tr>
+<tr><td>公用事业</td><td>1</td><td>5.9%</td><td>分散配置</td></tr>
+<tr><td>建筑材料</td><td>1</td><td>5.9%</td><td>分散配置</td></tr>
+<tr><td>轻工制造</td><td>1</td><td>5.9%</td><td>分散配置</td></tr>
+</table>
+<h3>2.3 板块轮动分析</h3>
+<div class="ai-dim"><strong>涨停与推荐重合板块</strong>：电力设备、电子（2个）</div>
+<div class="ai-dim">推荐标的与涨停热点高度重合，板块联动性强，短线操作参考板块龙头走势</div>
+<div class="ai-dim"><strong>板块集中度</strong>：TOP3板块涨停占比43%，热点分散但主线清晰</div></div>
+</div><div class="ai-section-wrap"><h2><span class="ai-icon">🔍</span>AI 策略分析 — 个股深度研判</h2><div class="ai-stock-grid"><div class="ai-stock-card">
+<div class="ai-stock-card-header">
+    <span class="ai-rank">#1</span>
+    <span style="color:#fbbf24;font-size:1.3rem;margin-right:4px">👑</span><span class="ai-name">视源股份</span>
+    <span class="ai-code">002841</span>
+    <span class="ai-strategy">A</span>
+</div>
+<div class="ai-stock-card-body"><div class="ai-dim"><span class="ai-dim-label overview">综合研判</span>动量延续策略，涨幅+3.76%，短线惯性上冲概率大，评分35分★★★，综合质量优秀，60日中位区(48%)，位置适中。</div>
+<div class="ai-dim"><span class="ai-dim-label capital">策略逻辑</span>**A 动量延续** 策略逻辑： 60日低位区(48%)，距低13.0% 动量延续策略：涨幅+3.76%，量比1.6，换手3.4%，连续强势上涨，市场共识正在形成，短线惯性上冲概率大。 量比1.6>1.5，放量上攻确认方向，关注开盘竞价强度。 该股7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="ai-dim"><span class="ai-dim-label technical">技术面分析</span>**技术面**：
+- 60日区间：低位区(48%)，距低13.0%，支撑较强
+- 均线：站上MA5，站上MA10，MA5↑MA10，站上MA20
+- MACD：零轴下金叉（DIF=-0.672）→ 底部反弹信号
+- KDJ：K=49.6 D=42.0 J=64.9 → 多头发散
+- BOLL：上48.34 中44.52 下40.71 → 上轨区间(27%)，偏强
+- 量价：放量上涨（量比1.6），量价关系健康</div>
+<div class="ai-dim"><span class="ai-dim-label capital">资金面分析</span>**资金面**：
+- 主力净流入 767万，资金小幅流入，关注后续变化
+- 成交额 7.8亿，换手率 3.4%，流动性良好</div>
+<div class="ai-dim"><span class="ai-dim-label fundamental">基本面分析</span>**基本面速览**：
+- ROE 17.4%（优秀），净利润同比 +185.6%（高增长）
+- 行业：电子 / 消费电子</div>
+<div class="ai-dim"><span class="ai-dim-label risk">风险提示</span>**风险提示**：
+- 短期风险可控，关注大盘系统性风险</div>
+<div class="ai-dim"><span class="ai-dim-label suggestion">操作建议</span>**操作建议**：
+- 进场区间：46.92元
+- 止损位：45.04元（4.0%）
+- 止盈位：49.74元（+6.0%）
+- 盈亏比：1.50（良好）
+- 持仓周期：1-3天（短线追涨，快进快出）
+- 近期公告：无重大公告数据，该股消息敏感度高，关注盘中异动</div>
+<div class="ai-dim"><span class="ai-dim-label fundamental">公司概况</span>**公司概况**：
+- **公司简介**：广州视源电子科技股份有限公司(以下简称视源股份,002841.SZ)创立于2005年,是以交互显示、人工智能为核心的全球化高科技企业,在液晶显示主控板卡、交互智能平板领域市场份额居前,致力于成为全球领先的智能产品与行业解决方案提供商。自创立之初,视源股份便明确了"以科技为先导、以创新为动力"的发展思路,持续深化AI、交互显示技术的自主研发与创新应用,深耕电子部件、未来教育、企业服务、算力产业、商用显示、智能硬件、智能制造等领域,助力千行百业数智化转型与高质量发展。视源股份主动融入全球化浪潮,依托先进的行业技术、全面的产品体系、全球化的本地供应链网络与制造协同体系,稳步拓展海外市场,持续为中国智…
+- **经营范围**：技术进出口;工程和技术研究和试验发展(除人体干细胞、基因诊断与治疗技术开发和应用,中国稀有和特有的珍贵优良品种);计算机软硬件及辅助设备批发;货物进出口;计算机软硬件及辅助设备零售;家用视听设备销售;软件开发;信息技术咨询服务;计算机及办公设备维修;日用电器修理;计算机软硬件及外围设备制造;广播电视设备制造(不含广播电视传输设备);音响设备制造;影视录放设备制造;可穿戴智能设备制造;智能车载设备制造;服务消费机器人制造;电子元器件制造;电子(气)物理设备及其他电子设备制造;技术服务、技术开发、技术咨询、技术交流、技术转让、技术推广;显示器件制造;其他电子器件制造;移动终端设备制造;软件销售;人工智能硬件销售;可穿戴智能设备销售;智能机器人销售;业务培训(不含教育培训、职业技能培训等需取得许可的培训);咨询策划服务;人工智能基础软件开发;人工智能应用软件开发;工业控制计算机及系统销售;电子产品销售;电子元器件批发;家用电器研发;家用电器销售;汽车零部件及配件制造;家用电器制造;信息系统集成服务。具体经营范围以审批机关核定的为准;涉及许可项目的,以许可审批部门核定的为准。
+- 董事长：王洋，法定代表人：王洋，总经理：周开琪，董秘：费威，员工人数：6724，公司网址：www.cvte.com，所在省份：广东，证监会行业：制造业-计算机、通信和其他电子设备制造业，联系电话：020-32210275
+- **注册资本**：69919万元（约6.99亿元）</div>
+<div class="ai-dim"><span class="ai-dim-label technical">行情及财务</span>**行情及财务表现**：
+- **近30日行情**：收盘45.54元，区间涨跌-6.8%，最高50.70，最低40.30
+- **近5日均量**：1364万手
+- **核心指标**：最新报告期：2026三季报，EPS 3.600元，每股净资产 21.47元，ROE(加权) 17.37%，毛利率 24.1%，资产负债率 49.0%
+- **业绩增长**：营收252.5亿，同比+39.6%，归母净利24.77亿，同比+185.6%，扣非净利同比+189.4%
+- **业绩趋势**：归母净利同比增速较上期下降96.8个百分点，增速放缓</div>
+<div class="ai-dim"><span class="ai-dim-label capital">机构观点</span>**近期动态与机构观点**：
+- **机构研报**：近期无覆盖研报
+- **估值快照**：总市值318亿，流通237亿，PE(TTM) 12.1，PB 2.12</div>
+</div></div>
+<div class="ai-stock-card">
+<div class="ai-stock-card-header">
+    <span class="ai-rank">#2</span>
+    <span class="ai-name">九鼎新材</span>
+    <span class="ai-code">002201</span>
+    <span class="ai-strategy">B</span>
+</div>
+<div class="ai-stock-card-body"><div class="ai-dim"><span class="ai-dim-label overview">综合研判</span>超跌反弹策略，短期技术性修复需求强烈，评分28分★★★，综合质量优秀，60日低位区(28%)，安全边际较好。</div>
+<div class="ai-dim"><span class="ai-dim-label capital">策略逻辑</span>**B 超跌反弹** 策略逻辑： 60日低位区(28%)，距低18.3% 超跌反弹策略：跌幅-8.47%，振幅6.4%，恐慌性抛售后的技术性修复需求强烈。 低位企稳后反弹概率较高，目标看至前密集成交区。 该股7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="ai-dim"><span class="ai-dim-label technical">技术面分析</span>**技术面**：
+- 60日区间：低位区(28%)，距低18.3%，支撑较强
+- 均线：跌破MA5，MA5↑MA10
+- MACD：空头排列（DIF=-0.196），等待金叉确认
+- KDJ：K=53.4 D=41.8 J=76.4 → 多头发散
+- BOLL：上10.76 中9.15 下7.54 → 下轨区间(62%)，偏弱</div>
+<div class="ai-dim"><span class="ai-dim-label capital">资金面分析</span>**资金面**：
+- 主力净流出 860万，资金面偏空，注意风险
+- 成交额 5.3亿，换手率 10.2%，流动性良好</div>
+<div class="ai-dim"><span class="ai-dim-label fundamental">基本面分析</span>**基本面速览**：
+- ROE 3.6%（偏低），净利润同比 -4.2%（下滑）
+- 行业：建筑材料 / 玻璃陶瓷</div>
+<div class="ai-dim"><span class="ai-dim-label risk">风险提示</span>**风险提示**：
+- 短期风险可控，关注大盘系统性风险</div>
+<div class="ai-dim"><span class="ai-dim-label suggestion">操作建议</span>**操作建议**：
+- 进场区间：8.28元
+- 止损位：7.99元（3.5%）
+- 止盈位：8.86元（+7.0%）
+- 盈亏比：2.00（良好）
+- 持仓周期：2-5天（超跌反弹，等待修复）
+- 近期公告：无重大公告数据，该股消息敏感度高，关注盘中异动</div>
+</div></div>
+<div class="ai-stock-card">
+<div class="ai-stock-card-header">
+    <span class="ai-rank">#3</span>
+    <span class="ai-name">日出东方</span>
+    <span class="ai-code">603366</span>
+    <span class="ai-strategy">B</span>
+</div>
+<div class="ai-stock-card-body"><div class="ai-dim"><span class="ai-dim-label overview">综合研判</span>超跌反弹策略，短期技术性修复需求强烈，评分27分★★★，综合质量优秀，60日中位区(40%)，位置适中。</div>
+<div class="ai-dim"><span class="ai-dim-label capital">策略逻辑</span>**B 超跌反弹** 策略逻辑： 60日低位区(40%)，距低14.7% 超跌反弹策略：跌幅-3.60%，振幅8.5%，恐慌性抛售后的技术性修复需求强烈。 低位企稳后反弹概率较高，目标看至前密集成交区。 该股7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="ai-dim"><span class="ai-dim-label technical">技术面分析</span>**技术面**：
+- 60日区间：低位区(40%)，距低14.7%，支撑较强
+- 均线：跌破MA5，MA5↑MA10
+- MACD：零轴上多头（DIF=0.051）→ 动能充足
+- KDJ：K=40.2 D=46.7 J=27.4 → 空头收敛
+- BOLL：上7.79 中7.39 下6.99 → 下轨区间(63%)，偏弱</div>
+<div class="ai-dim"><span class="ai-dim-label capital">资金面分析</span>**资金面**：
+- 主力净流出 367万，资金面偏空，注意风险
+- 成交额 4.7亿，换手率 8.2%，流动性良好</div>
+<div class="ai-dim"><span class="ai-dim-label fundamental">基本面分析</span>**基本面速览**：
+- ROE 0.8%（偏低），净利润同比 -11.3%（下滑）
+- 行业：电力设备 / 家电行业</div>
+<div class="ai-dim"><span class="ai-dim-label risk">风险提示</span>**风险提示**：
+- 振幅 8.5%，波动剧烈，止损需严格执行</div>
+<div class="ai-dim"><span class="ai-dim-label suggestion">操作建议</span>**操作建议**：
+- 进场区间：6.90元
+- 止损位：6.66元（3.5%）
+- 止盈位：7.38元（+7.0%）
+- 盈亏比：2.00（良好）
+- 持仓周期：2-5天（超跌反弹，等待修复）
+- 近期公告：无重大公告数据，该股消息敏感度高，关注盘中异动</div>
+</div></div>
+<div class="ai-stock-card">
+<div class="ai-stock-card-header">
+    <span class="ai-rank">#4</span>
+    <span class="ai-name">闽东电力</span>
+    <span class="ai-code">000993</span>
+    <span class="ai-strategy">B</span>
+</div>
+<div class="ai-stock-card-body"><div class="ai-dim"><span class="ai-dim-label overview">综合研判</span>超跌反弹策略，短期技术性修复需求强烈，评分26分★★★，综合质量优秀，60日低位区(28%)，安全边际较好。</div>
+<div class="ai-dim"><span class="ai-dim-label capital">策略逻辑</span>**B 超跌反弹** 策略逻辑： 60日低位区(28%)，距低33.5% 超跌反弹策略：跌幅-7.76%，振幅5.0%，恐慌性抛售后的技术性修复需求强烈。 低位企稳后反弹概率较高，目标看至前密集成交区。 该股7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="ai-dim"><span class="ai-dim-label technical">技术面分析</span>**技术面**：
+- 60日区间：低位区(28%)，距低33.5%，支撑较强
+- 均线：跌破MA5
+- MACD：空头排列（DIF=0.045），等待金叉确认
+- KDJ：K=11.8 D=21.8 J=-8.4 → 超卖区
+- BOLL：上21.54 中17.43 下13.32 → 跌破下轨，超卖
+- 量价背离：近5日价跌量增，可能是底部放量吸筹信号</div>
+<div class="ai-dim"><span class="ai-dim-label capital">资金面分析</span>**资金面**：
+- 主力净流出 1618万，资金面偏空，注意风险
+- 成交额 10.8亿，换手率 18.7%，流动性良好</div>
+<div class="ai-dim"><span class="ai-dim-label fundamental">基本面分析</span>**基本面速览**：
+- ROE 1.1%（偏低），净利润同比 -58.7%（下滑）
+- 行业：公用事业 / 电力行业</div>
+<div class="ai-dim"><span class="ai-dim-label risk">风险提示</span>**风险提示**：
+- 短期风险可控，关注大盘系统性风险</div>
+<div class="ai-dim"><span class="ai-dim-label suggestion">操作建议</span>**操作建议**：
+- 进场区间：12.49元
+- 止损位：12.05元（3.5%）
+- 止盈位：13.36元（+7.0%）
+- 盈亏比：1.98（良好）
+- 持仓周期：2-5天（超跌反弹，等待修复）
+- 近期公告：无重大公告数据，该股消息敏感度高，关注盘中异动</div>
+</div></div>
+<div class="ai-stock-card">
+<div class="ai-stock-card-header">
+    <span class="ai-rank">#5</span>
+    <span class="ai-name">洪都航空</span>
+    <span class="ai-code">600316</span>
+    <span class="ai-strategy">D</span>
+</div>
+<div class="ai-stock-card-body"><div class="ai-dim"><span class="ai-dim-label overview">综合研判</span>回调企稳策略，低吸机会，盈亏比1.71，评分32分★★★，综合质量优秀，60日高位区(91%)，注意高位追涨风险。</div>
+<div class="ai-dim"><span class="ai-dim-label capital">策略逻辑</span>**D 回调企稳** 策略逻辑： 60日高位区(91%)，距高3.6% 回调企稳策略：涨幅+3.61%，振幅6.7%，回调幅度适中，量能配合良好，低吸买点。 该股7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="ai-dim"><span class="ai-dim-label technical">技术面分析</span>**技术面**：
+- 60日区间：高位区(91%)，距高3.6%，⚠️ 接近前高注意压力
+- 均线：站上MA5，站上MA10，MA5↑MA10，站上MA20
+- MACD：零轴上多头（DIF=1.476）→ 动能充足
+- KDJ：K=79.4 D=76.9 J=84.3 → 多头发散
+- BOLL：上38.59 中34.39 下30.19 → 上轨区间(69%)，偏强</div>
+<div class="ai-dim"><span class="ai-dim-label capital">资金面分析</span>**资金面**：
+- 主力净流入 158万，资金小幅流入，关注后续变化
+- 成交额 6.3亿，换手率 2.4%，流动性良好</div>
+<div class="ai-dim"><span class="ai-dim-label fundamental">基本面分析</span>**基本面速览**：
+- ROE 0.2%（偏低），净利润同比 +171.9%（高增长）
+- 行业：国防军工 / 航天航空</div>
+<div class="ai-dim"><span class="ai-dim-label risk">风险提示</span>**风险提示**：
+- 接近前高压力位，突破失败可能导致回调</div>
+<div class="ai-dim"><span class="ai-dim-label suggestion">操作建议</span>**操作建议**：
+- 进场区间：36.24元
+- 止损位：34.97元（3.5%）
+- 止盈位：38.41元（+6.0%）
+- 盈亏比：1.71（良好）
+- 持仓周期：3-5天（低吸埋伏，耐心持有）
+- 近期公告：无重大公告数据，该股消息敏感度高，关注盘中异动</div>
+</div></div>
+<div class="ai-stock-card">
+<div class="ai-stock-card-header">
+    <span class="ai-rank">#6</span>
+    <span class="ai-name">航发科技</span>
+    <span class="ai-code">600391</span>
+    <span class="ai-strategy">D</span>
+</div>
+<div class="ai-stock-card-body"><div class="ai-dim"><span class="ai-dim-label overview">综合研判</span>回调企稳策略，低吸机会，盈亏比1.71，评分29分★★★，综合质量优秀，60日高位区(77%)，注意高位追涨风险。</div>
+<div class="ai-dim"><span class="ai-dim-label capital">策略逻辑</span>**D 回调企稳** 策略逻辑： 60日中位区(77%)，距高11.4%距低62.1% 回调企稳策略：涨幅+3.27%，振幅7.3%，回调幅度适中，量能配合良好，低吸买点。 该股7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="ai-dim"><span class="ai-dim-label technical">技术面分析</span>**技术面**：
+- 60日区间：中位区(77%)，距高11.4%距低62.1%
+- 均线：跌破MA5，站上MA10，MA5↑MA10，站上MA20
+- MACD：空头排列（DIF=1.119），等待金叉确认
+- KDJ：K=63.3 D=62.3 J=65.3 → 多头发散
+- BOLL：上45.25 中41.12 下36.99 → 上轨区间(21%)，偏强</div>
+<div class="ai-dim"><span class="ai-dim-label capital">资金面分析</span>**资金面**：
+- 主力净流入 255万，资金小幅流入，关注后续变化
+- 成交额 8.3亿，换手率 6.2%，流动性良好</div>
+<div class="ai-dim"><span class="ai-dim-label fundamental">基本面分析</span>**基本面速览**：
+- ROE 0.3%（偏低），净利润同比 -40.8%（下滑）
+- 行业：国防军工 / 航天航空</div>
+<div class="ai-dim"><span class="ai-dim-label risk">风险提示</span>**风险提示**：
+- 短期风险可控，关注大盘系统性风险</div>
+<div class="ai-dim"><span class="ai-dim-label suggestion">操作建议</span>**操作建议**：
+- 进场区间：40.54元
+- 止损位：39.12元（3.5%）
+- 止盈位：42.97元（+6.0%）
+- 盈亏比：1.71（良好）
+- 持仓周期：3-5天（低吸埋伏，耐心持有）
+- 近期公告：无重大公告数据，该股消息敏感度高，关注盘中异动</div>
+</div></div>
+<div class="ai-stock-card">
+<div class="ai-stock-card-header">
+    <span class="ai-rank">#7</span>
+    <span class="ai-name">省广集团</span>
+    <span class="ai-code">002400</span>
+    <span class="ai-strategy">D</span>
+</div>
+<div class="ai-stock-card-body"><div class="ai-dim"><span class="ai-dim-label overview">综合研判</span>回调企稳策略，低吸机会，盈亏比1.68，评分24分★★★，综合质量优秀，60日中位区(32%)，位置适中。</div>
+<div class="ai-dim"><span class="ai-dim-label capital">策略逻辑</span>**D 回调企稳** 策略逻辑： 60日低位区(32%)，距低12.8% 回调企稳策略：涨幅+3.67%，振幅8.9%，回调幅度适中，量能配合良好，低吸买点。 该股7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="ai-dim"><span class="ai-dim-label technical">技术面分析</span>**技术面**：
+- 60日区间：低位区(32%)，距低12.8%，支撑较强
+- 均线：跌破MA5
+- MACD：空头排列（DIF=-0.017），等待金叉确认
+- KDJ：K=42.1 D=47.2 J=32.0 → 空头收敛
+- BOLL：上6.87 中6.54 下6.21 → 下轨区间(87%)，偏弱</div>
+<div class="ai-dim"><span class="ai-dim-label capital">资金面分析</span>**资金面**：
+- 主力净流入 399万，资金小幅流入，关注后续变化
+- 成交额 5.8亿，换手率 5.4%，流动性良好</div>
+<div class="ai-dim"><span class="ai-dim-label fundamental">基本面分析</span>**基本面速览**：
+- ROE 0.7%（偏低），净利润同比 -42.5%（下滑）
+- 行业：社会服务 / 文化传媒</div>
+<div class="ai-dim"><span class="ai-dim-label risk">风险提示</span>**风险提示**：
+- 振幅 8.9%，波动剧烈，止损需严格执行</div>
+<div class="ai-dim"><span class="ai-dim-label suggestion">操作建议</span>**操作建议**：
+- 进场区间：6.24元
+- 止损位：6.02元（3.5%）
+- 止盈位：6.61元（+5.9%）
+- 盈亏比：1.68（良好）
+- 持仓周期：3-5天（低吸埋伏，耐心持有）
+- 近期公告：09-17 关于全资子公司参与投资股权投资基金的公告；09-17 关于提前解除租赁合同的公告；09-17 关于授权择机出售股票资产的公告</div>
+</div></div>
+<div class="ai-stock-card">
+<div class="ai-stock-card-header">
+    <span class="ai-rank">#8</span>
+    <span class="ai-name">浙江荣泰</span>
+    <span class="ai-code">603119</span>
+    <span class="ai-strategy">V</span>
+</div>
+<div class="ai-stock-card-body"><div class="ai-dim"><span class="ai-dim-label overview">综合研判</span>策略，技术形态完整，评分30分★★★，综合质量优秀，60日高位区(94%)，注意高位追涨风险。</div>
+<div class="ai-dim"><span class="ai-dim-label capital">策略逻辑</span>**V ** 策略逻辑： 60日高位区(94%)，距高1.9% 符合形态特征，技术形态完整，量价配合良好。 该股7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="ai-dim"><span class="ai-dim-label technical">技术面分析</span>**技术面**：
+- 60日区间：高位区(94%)，距高1.9%，⚠️ 接近前高注意压力
+- 均线：站上MA5，站上MA10，MA5↑MA10，站上MA20
+- MACD：零轴下金叉（DIF=-0.149）→ 底部反弹信号
+- KDJ：K=75.0 D=54.5 J=116.1 → 多头发散
+- BOLL：上60.96 中50.60 下40.23 → 上轨区间(60%)，偏强
+- ⚠️ 距20日高仅1.9%，突破需放量确认
+- 量价：放量上涨（量比1.5），量价关系健康</div>
+<div class="ai-dim"><span class="ai-dim-label capital">资金面分析</span>**资金面**：
+- 主力净流入 2358万，资金小幅流入，关注后续变化
+- 成交额 14.8亿，换手率 5.7%，流动性良好</div>
+<div class="ai-dim"><span class="ai-dim-label fundamental">基本面分析</span>**基本面速览**：
+- ROE 7.2%（一般），净利润同比 +21.7%（高增长）
+- 行业：电力设备 / 非金属材料</div>
+<div class="ai-dim"><span class="ai-dim-label risk">风险提示</span>**风险提示**：
+- 振幅 10.4%，波动剧烈，止损需严格执行
+- 接近前高压力位，突破失败可能导致回调</div>
+<div class="ai-dim"><span class="ai-dim-label suggestion">操作建议</span>**操作建议**：
+- 进场区间：56.77元
+- 止损位：54.61元（3.8%）
+- 止盈位：60.18元（+6.0%）
+- 盈亏比：1.58（良好）
+- 持仓周期：2-5天（短线操作）
+- 近期公告：无重大公告数据，该股消息敏感度高，关注盘中异动</div>
+</div></div>
+<div class="ai-stock-card">
+<div class="ai-stock-card-header">
+    <span class="ai-rank">#9</span>
+    <span class="ai-name">卧龙电驱</span>
+    <span class="ai-code">600580</span>
+    <span class="ai-strategy">V</span>
+</div>
+<div class="ai-stock-card-body"><div class="ai-dim"><span class="ai-dim-label overview">综合研判</span>策略，技术形态完整，评分28分★★★，综合质量优秀，60日低位区(22%)，安全边际较好。</div>
+<div class="ai-dim"><span class="ai-dim-label capital">策略逻辑</span>**V ** 策略逻辑： 60日低位区(22%)，距低15.6% 符合形态特征，技术形态完整，量价配合良好。 该股7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="ai-dim"><span class="ai-dim-label technical">技术面分析</span>**技术面**：
+- 60日区间：低位区(22%)，距低15.6%，支撑较强
+- 均线：站上MA5，站上MA10，MA5↑MA10，站上MA20
+- MACD：零轴下金叉（DIF=-0.960）→ 底部反弹信号
+- KDJ：K=63.1 D=44.1 J=101.1 → 多头发散
+- BOLL：上28.16 中25.50 下22.84 → 上轨区间(32%)，偏强
+- 量价：放量上涨（量比2.0），量价关系健康</div>
+<div class="ai-dim"><span class="ai-dim-label capital">资金面分析</span>**资金面**：
+- 主力净流入 2737万，资金小幅流入，关注后续变化
+- 成交额 17.1亿，换手率 4.4%，流动性良好</div>
+<div class="ai-dim"><span class="ai-dim-label fundamental">基本面分析</span>**基本面速览**：
+- ROE 3.2%（偏低），净利润同比 -34.5%（下滑）
+- 行业：电力设备 / 电机</div>
+<div class="ai-dim"><span class="ai-dim-label risk">风险提示</span>**风险提示**：
+- 振幅 11.8%，波动剧烈，止损需严格执行</div>
+<div class="ai-dim"><span class="ai-dim-label suggestion">操作建议</span>**操作建议**：
+- 进场区间：26.36元
+- 止损位：25.36元（3.8%）
+- 止盈位：27.94元（+6.0%）
+- 盈亏比：1.58（良好）
+- 持仓周期：2-5天（短线操作）
+- 近期公告：无重大公告数据，关注后续披露</div>
+</div></div>
+<div class="ai-stock-card">
+<div class="ai-stock-card-header">
+    <span class="ai-rank">#10</span>
+    <span class="ai-name">新北洋</span>
+    <span class="ai-code">002376</span>
+    <span class="ai-strategy">V</span>
+</div>
+<div class="ai-stock-card-body"><div class="ai-dim"><span class="ai-dim-label overview">综合研判</span>策略，技术形态完整，评分31分★★★，综合质量优秀，60日高位区(81%)，注意高位追涨风险。</div>
+<div class="ai-dim"><span class="ai-dim-label capital">策略逻辑</span>**V ** 策略逻辑： 60日高位区(81%)，距高5.5% 符合形态特征，技术形态完整，量价配合良好。 该股7日内已被推荐2天，属于持续跟踪标的。</div>
+<div class="ai-dim"><span class="ai-dim-label technical">技术面分析</span>**技术面**：
+- 60日区间：高位区(81%)，距高5.5%，⚠️ 接近前高注意压力
+- 均线：站上MA5，站上MA10，MA5↑MA10，站上MA20
+- MACD：零轴上多头（DIF=0.234）→ 动能充足
+- KDJ：K=69.8 D=67.0 J=75.3 → 多头发散
+- BOLL：上7.60 中6.87 下6.14 → 突破上轨，超强走势</div>
+<div class="ai-dim"><span class="ai-dim-label capital">资金面分析</span>**资金面**：
+- 主力净流入 538万，资金小幅流入，关注后续变化
+- 成交额 8.5亿，换手率 14.4%，流动性良好</div>
+<div class="ai-dim"><span class="ai-dim-label fundamental">基本面分析</span>**基本面速览**：
+- ROE 1.4%（偏低），净利润同比 +42.7%（高增长）
+- 行业：电子 / 计算机设备</div>
+<div class="ai-dim"><span class="ai-dim-label risk">风险提示</span>**风险提示**：
+- 振幅 10.6%，波动剧烈，止损需严格执行
+- 接近前高压力位，突破失败可能导致回调</div>
+<div class="ai-dim"><span class="ai-dim-label suggestion">操作建议</span>**操作建议**：
+- 进场区间：7.80元
+- 止损位：7.50元（3.8%）
+- 止盈位：8.27元（+6.0%）
+- 盈亏比：1.57（良好）
+- 持仓周期：2-5天（短线操作）
+- 近期公告：无重大公告数据，该股消息敏感度高，关注盘中异动</div>
+</div></div>
+<div class="ai-stock-card">
+<div class="ai-stock-card-header">
+    <span class="ai-rank">#11</span>
+    <span class="ai-name">华天科技</span>
+    <span class="ai-code">002185</span>
+    <span class="ai-strategy">A</span>
+</div>
+<div class="ai-stock-card-body"><div class="ai-dim"><span class="ai-dim-label overview">综合研判</span>动量延续策略，涨幅+4.12%，短线惯性上冲概率大，评分30分★★★，综合质量优秀，60日中位区(47%)，位置适中。</div>
+<div class="ai-dim"><span class="ai-dim-label capital">策略逻辑</span>**A 动量延续** 策略逻辑： 60日低位区(47%)，距低20.2% 动量延续策略：涨幅+4.12%，量比3.2，换手13.9%，连续强势上涨，市场共识正在形成，短线惯性上冲概率大。 量比3.2>1.5，放量上攻确认方向，关注开盘竞价强度。 该股7日内已被推荐1天，属于持续跟踪标的。</div>
+<div class="ai-dim"><span class="ai-dim-label technical">技术面分析</span>**技术面**：
+- 60日区间：低位区(47%)，距低20.2%，支撑较强
+- 均线：站上MA5，站上MA10，MA5↑MA10，站上MA20
+- MACD：零轴下金叉（DIF=-0.530）→ 底部反弹信号
+- KDJ：K=55.7 D=35.0 J=97.1 → 多头发散
+- BOLL：上19.09 中16.04 下12.99 → 上轨区间(5%)，偏强
+- 量价：放量上涨（量比3.2），量价关系健康</div>
+<div class="ai-dim"><span class="ai-dim-label capital">资金面分析</span>**资金面**：
+- 主力净流入 9050万，资金小幅流入，关注后续变化
+- 成交额 73.2亿，换手率 13.9%，流动性良好</div>
+<div class="ai-dim"><span class="ai-dim-label fundamental">基本面分析</span>**基本面速览**：
+- ROE 4.4%（偏低），净利润同比 +259.2%（高增长）
+- 行业：电子 / 半导体</div>
+<div class="ai-dim"><span class="ai-dim-label risk">风险提示</span>**风险提示**：
+- 振幅 11.9%，波动剧烈，止损需严格执行</div>
+<div class="ai-dim"><span class="ai-dim-label suggestion">操作建议</span>**操作建议**：
+- 进场区间：16.59元
+- 止损位：15.93元（4.0%）
+- 止盈位：17.59元（+6.0%）
+- 盈亏比：1.52（良好）
+- 持仓周期：1-3天（短线追涨，快进快出）
+- 近期公告：无重大公告数据，关注后续披露</div>
+</div></div>
+</div></div>
+</div>
+<section><h2 style="display:flex;align-items:center;gap:.5rem">📊 历史回测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">最近保留期(≥4周) | 最大持仓10交易日</span></h2>
+<div class="metrics-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:1.2rem"><div class="metric-card-bt"><div class="metric-label-bt">总交易</div><div class="metric-value-bt">45笔</div></div><div class="metric-card-bt"><div class="metric-label-bt">胜率</div><div class="metric-value-bt loss">20.0%</div></div><div class="metric-card-bt"><div class="metric-label-bt">平均收益</div><div class="metric-value-bt loss">-0.93%</div></div><div class="metric-card-bt"><div class="metric-label-bt">盈亏比</div><div class="metric-value-bt">0.55</div></div><div class="metric-card-bt"><div class="metric-label-bt">夏普</div><div class="metric-value-bt loss">-0.25</div></div><div class="metric-card-bt"><div class="metric-label-bt">最大回撤</div><div class="metric-value-bt loss">26.74%</div></div><div class="metric-card-bt"><div class="metric-label-bt">平均盈利</div><div class="metric-value-bt win">+5.67%</div></div><div class="metric-card-bt"><div class="metric-label-bt">平均亏损</div><div class="metric-value-bt loss">-2.58%</div></div><div class="metric-card-bt"><div class="metric-label-bt">平均持仓</div><div class="metric-value-bt">2.2天</div></div></div><table><thead><tr><th>策略</th><th>笔数</th><th>胜率</th><th>均收</th><th>盈亏比</th><th>夏普</th></tr></thead><tbody><tr><td><span class="badge strat_b">B</span> 超跌反弹</td><td>14</td><td class="loss">28.6%</td><td class="win">+0.00%</td><td>1.00</td><td class="win">0.00</td></tr><tr><td><span class="badge strat_d">D</span> 回调企稳</td><td>17</td><td class="loss">15.4%</td><td class="loss">-1.22%</td><td>0.39</td><td class="loss">-0.39</td></tr><tr><td><span class="badge strat_a">A</span> 动量延续</td><td>2</td><td class="loss">0.0%</td><td class="loss">-4.00%</td><td>0.00</td><td class="loss">-564.98</td></tr><tr><td><span class="badge strat_h">H</span> 地量见底</td><td>2</td><td class="win">50.0%</td><td class="win">+1.09%</td><td>1.57</td><td class="win">0.16</td></tr><tr><td><span class="badge strat_e">E</span> 资金埋伏</td><td>4</td><td class="loss">33.3%</td><td class="loss">-0.77%</td><td>0.63</td><td class="loss">-0.19</td></tr><tr><td><span class="badge strat_v">V</span> 业绩预告跳空</td><td>2</td><td class="loss">0.0%</td><td class="loss">-1.89%</td><td>0.00</td><td class="loss">-0.71</td></tr><tr><td><span class="badge strat_j">J</span> 龙回头</td><td>4</td><td class="loss">0.0%</td><td class="win">+0.00%</td><td>0.00</td><td class="win">0.00</td></tr></tbody></table><div style="text-align:center;margin-top:1.2rem;padding-top:.8rem;border-top:1px solid #334155"><a href="回测报告.html" target="_blank" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:.6rem 1.8rem;border-radius:8px;font-weight:700;font-size:.82rem;text-decoration:none">📋 查看完整回测报告（含交易明细） →</a> <a href="https://lc132.github.io/lv/backtest/" target="_blank" style="display:inline-block;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;padding:.6rem 1.8rem;border-radius:8px;font-weight:700;font-size:.82rem;text-decoration:none;margin-left:.6rem">🌐 GitHub Pages 在线版</a></div>
+</section>
+<div class="footer"><p>版本: v6.33.3 | 生成时间: 2026-10-26</p><p class="disclaimer">⚠️ 免责声明：本报告仅供研究参考，不构成任何投资建议。投资有风险，入市需谨慎。</p></div></body></html>
