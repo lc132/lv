@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>A股短线筛选 — 历史回测报告</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:"Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}
+.container{max-width:1100px;margin:0 auto;padding:30px 20px}
+.header{text-align:center;padding:40px 0 30px}
+.header h1{font-size:28px;color:#38bdf8;margin-bottom:8px}
+.header .meta{color:#94a3b8;font-size:14px}
+.metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:30px}
+.metric-card{background:#1e293b;border-radius:10px;padding:16px;text-align:center;border:1px solid #334155}
+.metric-label{color:#94a3b8;font-size:12px;margin-bottom:6px}
+.metric-value{color:#e2e8f0;font-size:22px;font-weight:700}
+.section{background:#1e293b;border-radius:12px;padding:24px;margin-bottom:20px;border:1px solid #334155}
+.section h2{color:#38bdf8;font-size:18px;margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid #334155}
+.note-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.note-card{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:14px;color:#cbd5e1;font-size:13px;line-height:1.65}
+.note-card b{color:#38bdf8}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#0f172a;color:#94a3b8;padding:10px 8px;text-align:left;font-weight:600;white-space:nowrap}
+td{padding:8px;border-bottom:1px solid #1e293b}
+tr:hover td{background:rgba(56,189,248,0.05)}
+.badge{display:inline-block;background:#334155;color:#38bdf8;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600}
+.win{color:#22c55e}
+.loss{color:#ef4444}
+/* @since v6.16.12: 皇冠回测 */
+.champion-row{background:rgba(234,179,8,0.06);border-left:3px solid #eab308}
+.champion-row:hover{background:rgba(234,179,8,0.12)}
+.champion-trades th{background:linear-gradient(135deg,#5c3d0e,#4c2e0e);color:#eab308}
+.nodata{color:#94a3b8}
+.footer{text-align:center;color:#64748b;font-size:12px;padding:20px;margin-top:20px}
+@media(max-width:600px){.metrics-grid{grid-template-columns:repeat(3,1fr)}table{font-size:11px}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+<h1>📊 A股短线筛选 — 历史回测报告</h1>
+<p class="meta">生成日期: 2026-10-27 | 回测周期: 最近保留期(≥4周) | 最大持仓: 10个交易日</p>
+</div>
+
+<div class="metrics-grid"><div class="metric-card"><div class="metric-label">总交易</div><div class="metric-value">49笔</div></div><div class="metric-card"><div class="metric-label">胜率</div><div class="metric-value">20.6%</div></div><div class="metric-card"><div class="metric-label">平均收益</div><div class="metric-value">-1.44%</div></div><div class="metric-card"><div class="metric-label">盈亏比</div><div class="metric-value">0.42</div></div><div class="metric-card"><div class="metric-label">夏普</div><div class="metric-value">-0.36</div></div><div class="metric-card"><div class="metric-label">最大回撤</div><div class="metric-value">46.17%</div></div><div class="metric-card"><div class="metric-label">平均盈利</div><div class="metric-value">5.15%</div></div><div class="metric-card"><div class="metric-label">平均亏损</div><div class="metric-value">-3.15%</div></div><div class="metric-card"><div class="metric-label">平均持仓</div><div class="metric-value">2.1天</div></div></div>
+
+<div class="section">
+<h2>回测说明</h2>
+<div class="note-grid">
+<div class="note-card"><b>样本来源</b><br>保留期内（≥4周）推荐历史，按当时推荐标的、策略、进场价、止损价、止盈价回放后续K线。</div>
+<div class="note-card"><b>出场规则</b><br>单笔最大持仓10个交易日；若盘中触及止损或止盈，按对应价格出场；若到期未触发，按持仓期末收盘价计算。</div>
+<div class="note-card"><b>T+1处理</b><br>遵循A股T+1规则，买入当日不检查止盈止损出场，从下一交易日起判断。</div>
+<div class="note-card"><b>结果含义</b><br>win为盈利样本，loss为亏损样本，no_entry为限价单未成交（次日最低价>进场价，不计入胜负），no_data为后续K线不足。</div>
+<div class="note-card"><b>指标说明</b><br>胜率为盈利样本占有效样本比例；盈亏比为总盈利绝对值/总亏损绝对值；夏普为单笔收益均值相对波动的简化指标。</div>
+<div class="note-card"><b>局限性</b><br>未计入滑点、手续费、涨跌停无法成交、真实排队成交、资金容量和盘中流动性冲击。</div>
+</div>
+</div>
+
+<div class="section">
+<h2>👑 皇冠回测 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">全部历史冠军标的独立统计</span></h2><div class="metrics-grid">
+    <div class="metric-card"><div class="metric-label">总交易</div><div class="metric-value">11笔</div></div>
+    <div class="metric-card"><div class="metric-label">胜率</div><div class="metric-value" style="color:#ef4444">27.3%</div></div>
+    <div class="metric-card"><div class="metric-label">平均收益</div><div class="metric-value loss" style="color:#ef4444">-1.29%</div></div>
+    <div class="metric-card"><div class="metric-label">盈亏比</div><div class="metric-value">0.51</div></div>
+    <div class="metric-card"><div class="metric-label">夏普</div><div class="metric-value">-0.26</div></div>
+    <div class="metric-card"><div class="metric-label">最大回撤</div><div class="metric-value loss">16.73%</div></div>
+    <div class="metric-card"><div class="metric-label">平均盈利</div><div class="metric-value win">5.01%</div></div>
+    <div class="metric-card"><div class="metric-label">平均亏损</div><div class="metric-value loss">-3.66%</div></div>
+    <div class="metric-card"><div class="metric-label">平均持仓</div><div class="metric-value">1.9天</div></div>
+</div>
+<div class="section"><h3 style="margin-top:1.5rem">冠军交易明细 <span style="font-size:.7rem;color:#94a3b8;font-weight:400">展示9只历史冠军标的全部交易</span></h3>
+<table class="champion-trades"><thead><tr><th>日期</th><th>标的</th><th>代码</th><th>策略</th><th>行业</th><th>进场</th><th>结果</th><th>出场</th><th>收益</th><th>持仓</th></tr></thead>
+<tbody><tr class="champion-row">
+        <td>2026-10-26</td><td><a href="https://quote.eastmoney.com/sz002841.html" target="_blank">视源股份</a></td><td>002841</td>
+        <td>A</td><td>电子</td><td>46.92</td>
+        <td class="loss">亏损</td><td>42.01</td>
+        <td class="loss">-10.46%</td><td>1天</td></tr><tr class="champion-row">
+        <td>2026-10-22</td><td><a href="https://quote.eastmoney.com/sz002376.html" target="_blank">新北洋</a></td><td>002376</td>
+        <td>V</td><td>电子</td><td>7.49</td>
+        <td class="loss">亏损</td><td>7.49</td>
+        <td class="loss">+0.00%</td><td>2天</td></tr><tr class="champion-row">
+        <td>2026-10-21</td><td><a href="https://quote.eastmoney.com/sh605189.html" target="_blank">富春染织</a></td><td>605189</td>
+        <td>B</td><td>纺织服饰</td><td>16.20</td>
+        <td class="loss">亏损</td><td>16.20</td>
+        <td class="loss">+0.00%</td><td>2天</td></tr><tr class="champion-row">
+        <td>2026-10-20</td><td><a href="https://quote.eastmoney.com/sh605189.html" target="_blank">富春染织</a></td><td>605189</td>
+        <td>V</td><td>纺织服饰</td><td>17.20</td>
+        <td class="loss">亏损</td><td>16.55</td>
+        <td class="loss">-3.78%</td><td>2天</td></tr><tr class="champion-row">
+        <td>2026-10-14</td><td><a href="https://quote.eastmoney.com/sh603127.html" target="_blank">昭衍新药</a></td><td>603127</td>
+        <td>H</td><td>社会服务</td><td>48.78</td>
+        <td class="win">盈利</td><td>51.71</td>
+        <td class="win">+6.01%</td><td>2天</td></tr><tr class="champion-row">
+        <td>2026-10-13</td><td><a href="https://quote.eastmoney.com/sz002866.html" target="_blank">传艺科技</a></td><td>002866</td>
+        <td>A</td><td>电子</td><td>19.82</td>
+        <td class="loss">亏损</td><td>19.03</td>
+        <td class="loss">-3.99%</td><td>2天</td></tr><tr class="champion-row">
+        <td>2026-10-12</td><td><a href="https://quote.eastmoney.com/sh600699.html" target="_blank">均胜电子</a></td><td>600699</td>
+        <td>D</td><td>电子</td><td>21.21</td>
+        <td class="loss">亏损</td><td>20.47</td>
+        <td class="loss">-3.49%</td><td>2天</td></tr><tr class="champion-row">
+        <td>2026-10-09</td><td><a href="https://quote.eastmoney.com/sh603127.html" target="_blank">昭衍新药</a></td><td>603127</td>
+        <td>D</td><td>社会服务</td><td>50.63</td>
+        <td class="win">盈利</td><td>53.16</td>
+        <td class="win">+5.00%</td><td>2天</td></tr><tr class="champion-row">
+        <td>2026-10-05</td><td><a href="https://quote.eastmoney.com/sh603606.html" target="_blank">东方电缆</a></td><td>603606</td>
+        <td>A</td><td>电力设备</td><td>37.23</td>
+        <td class="loss">亏损</td><td>35.74</td>
+        <td class="loss">-4.00%</td><td>2天</td></tr><tr class="champion-row">
+        <td>2026-09-30</td><td><a href="https://quote.eastmoney.com/sh600540.html" target="_blank">新赛股份</a></td><td>600540</td>
+        <td>E</td><td>农林牧渔</td><td>5.46</td>
+        <td class="win">盈利</td><td>5.68</td>
+        <td class="win">+4.03%</td><td>2天</td></tr><tr class="champion-row">
+        <td>2026-09-29</td><td><a href="https://quote.eastmoney.com/sh600699.html" target="_blank">均胜电子</a></td><td>600699</td>
+        <td>D</td><td>电子</td><td>23.59</td>
+        <td class="loss">亏损</td><td>22.76</td>
+        <td class="loss">-3.52%</td><td>2天</td></tr></tbody></table>
+</div>
+</div>
+
+<div class="section">
+<h2>策略维度</h2>
+<table><thead><tr><th>策略</th><th>笔数</th><th>胜率</th><th>均收</th><th>盈亏比</th><th>夏普</th></tr></thead>
+<tbody><tr><td><span class="badge">A</span> 动量延续</td>
+        <td>3</td><td class="loss">0.0%</td>
+        <td>-6.15%</td><td>0.0</td><td>-1.65</td></tr><tr><td><span class="badge">B</span> 超跌反弹</td>
+        <td>17</td><td class="loss">30.0%</td>
+        <td>-1.07%</td><td>0.6</td><td>-0.22</td></tr><tr><td><span class="badge">D</span> 回调企稳</td>
+        <td>17</td><td class="loss">15.4%</td>
+        <td>-1.22%</td><td>0.39</td><td>-0.39</td></tr><tr><td><span class="badge">E</span> 资金埋伏</td>
+        <td>4</td><td class="loss">33.3%</td>
+        <td>-0.77%</td><td>0.63</td><td>-0.19</td></tr><tr><td><span class="badge">H</span> 地量见底</td>
+        <td>2</td><td class="win">50.0%</td>
+        <td>1.09%</td><td>1.57</td><td>0.16</td></tr><tr><td><span class="badge">J</span> 龙回头</td>
+        <td>4</td><td class="loss">0.0%</td>
+        <td>0.0%</td><td>0</td><td>0</td></tr><tr><td><span class="badge">V</span> 业绩预告跳空</td>
+        <td>2</td><td class="loss">0.0%</td>
+        <td>-1.89%</td><td>0.0</td><td>-0.71</td></tr></tbody></table>
+</div>
+
+<div class="section">
+<h2>行业维度</h2>
+<table><thead><tr><th>行业</th><th>笔数</th><th>胜率</th><th>均收</th><th>盈亏比</th></tr></thead>
+<tbody><tr><td>电子</td><td>17</td>
+        <td class="loss">8.3%</td><td>-2.35%</td><td>0.2</td></tr><tr><td>电力设备</td><td>11</td>
+        <td class="loss">25.0%</td><td>-1.38%</td><td>0.39</td></tr><tr><td>房地产</td><td>5</td>
+        <td class="loss">0.0%</td><td>-2.64%</td><td>0.0</td></tr><tr><td>社会服务</td><td>4</td>
+        <td class="win">100.0%</td><td>6.01%</td><td>0</td></tr><tr><td>建筑材料</td><td>3</td>
+        <td class="loss">0.0%</td><td>-3.38%</td><td>0.0</td></tr><tr><td>公用事业</td><td>3</td>
+        <td class="loss">0.0%</td><td>-4.76%</td><td>0.0</td></tr><tr><td>通信</td><td>2</td>
+        <td class="loss">0%</td><td>0%</td><td>0</td></tr><tr><td>纺织服饰</td><td>2</td>
+        <td class="loss">0.0%</td><td>-1.89%</td><td>0.0</td></tr><tr><td>农林牧渔</td><td>1</td>
+        <td class="win">100.0%</td><td>4.03%</td><td>0</td></tr><tr><td>综合</td><td>1</td>
+        <td class="loss">0.0%</td><td>-3.82%</td><td>0.0</td></tr></tbody></table>
+</div>
+
+<div class="section">
+<h2>最近交易明细</h2>
+<table><thead><tr><th>日期</th><th>标的</th><th>代码</th><th>策略</th><th>行业</th><th>进场</th><th>结果</th><th>出场</th><th>收益</th><th>持仓</th></tr></thead>
+<tbody><tr><td>2026-10-26</td><td>视源股份</td><td>002841</td>
+        <td>A</td><td>电子</td><td>46.92</td>
+        <td class="loss">亏损</td><td>42.01</td>
+        <td class="loss">-10.46%</td><td>1天</td></tr><tr><td>2026-10-26</td><td>九鼎新材</td><td>002201</td>
+        <td>B</td><td>建筑材料</td><td>8.28</td>
+        <td class="loss">亏损</td><td>7.72</td>
+        <td class="loss">-6.76%</td><td>1天</td></tr><tr><td>2026-10-26</td><td>闽东电力</td><td>000993</td>
+        <td>B</td><td>公用事业</td><td>12.49</td>
+        <td class="loss">亏损</td><td>11.74</td>
+        <td class="loss">-6.00%</td><td>1天</td></tr><tr><td>2026-10-26</td><td>日出东方</td><td>603366</td>
+        <td>B</td><td>电力设备</td><td>6.90</td>
+        <td class="win">盈利</td><td>7.04</td>
+        <td class="win">+2.03%</td><td>1天</td></tr><tr><td>2026-10-22</td><td>新北洋</td><td>002376</td>
+        <td>V</td><td>电子</td><td>7.49</td>
+        <td class="loss">亏损</td><td>7.49</td>
+        <td class="loss">+0.00%</td><td>2天</td></tr><tr><td>2026-10-21</td><td>粤桂股份</td><td>000833</td>
+        <td>H</td><td>综合</td><td>18.06</td>
+        <td class="loss">亏损</td><td>17.37</td>
+        <td class="loss">-3.82%</td><td>2天</td></tr><tr><td>2026-10-21</td><td>杭电股份</td><td>603618</td>
+        <td>B</td><td>电力设备</td><td>32.23</td>
+        <td class="loss">亏损</td><td>31.10</td>
+        <td class="loss">-3.51%</td><td>2天</td></tr><tr><td>2026-10-21</td><td>宝鼎科技</td><td>002552</td>
+        <td>E</td><td>电子</td><td>41.27</td>
+        <td class="loss">亏损</td><td>39.95</td>
+        <td class="loss">-3.20%</td><td>2天</td></tr><tr><td>2026-10-21</td><td>富春染织</td><td>605189</td>
+        <td>B</td><td>纺织服饰</td><td>16.20</td>
+        <td class="loss">亏损</td><td>16.20</td>
+        <td class="loss">+0.00%</td><td>2天</td></tr><tr><td>2026-10-21</td><td>远东股份</td><td>600869</td>
+        <td>B</td><td>电力设备</td><td>16.71</td>
+        <td class="nodata">未成交</td><td>16.71</td>
+        <td class="nodata">+0.00%</td><td>0天</td></tr><tr><td>2026-10-21</td><td>奥士康</td><td>002913</td>
+        <td>D</td><td>电子</td><td>83.25</td>
+        <td class="nodata">未成交</td><td>83.25</td>
+        <td class="nodata">+0.00%</td><td>0天</td></tr><tr><td>2026-10-20</td><td>富春染织</td><td>605189</td>
+        <td>V</td><td>纺织服饰</td><td>17.20</td>
+        <td class="loss">亏损</td><td>16.55</td>
+        <td class="loss">-3.78%</td><td>2天</td></tr><tr><td>2026-10-14</td><td>昭衍新药</td><td>603127</td>
+        <td>H</td><td>社会服务</td><td>48.78</td>
+        <td class="win">盈利</td><td>51.71</td>
+        <td class="win">+6.01%</td><td>2天</td></tr><tr><td>2026-10-13</td><td>传艺科技</td><td>002866</td>
+        <td>A</td><td>电子</td><td>19.82</td>
+        <td class="loss">亏损</td><td>19.03</td>
+        <td class="loss">-3.99%</td><td>2天</td></tr><tr><td>2026-10-12</td><td>均胜电子</td><td>600699</td>
+        <td>D</td><td>电子</td><td>21.21</td>
+        <td class="loss">亏损</td><td>20.47</td>
+        <td class="loss">-3.49%</td><td>2天</td></tr><tr><td>2026-10-09</td><td>昭衍新药</td><td>603127</td>
+        <td>D</td><td>社会服务</td><td>50.63</td>
+        <td class="win">盈利</td><td>53.16</td>
+        <td class="win">+5.00%</td><td>2天</td></tr><tr><td>2026-10-09</td><td>铜峰电子</td><td>600237</td>
+        <td>D</td><td>电子</td><td>8.77</td>
+        <td class="loss">亏损</td><td>8.46</td>
+        <td class="loss">-3.53%</td><td>2天</td></tr><tr><td>2026-10-09</td><td>国轩高科</td><td>002074</td>
+        <td>D</td><td>电力设备</td><td>30.44</td>
+        <td class="loss">亏损</td><td>29.37</td>
+        <td class="loss">-3.52%</td><td>3天</td></tr><tr><td>2026-10-09</td><td>保利发展</td><td>600048</td>
+        <td>E</td><td>房地产</td><td>5.72</td>
+        <td class="loss">亏损</td><td>5.54</td>
+        <td class="loss">-3.15%</td><td>2天</td></tr><tr><td>2026-10-09</td><td>招商蛇口</td><td>001979</td>
+        <td>D</td><td>房地产</td><td>7.63</td>
+        <td class="loss">亏损</td><td>7.48</td>
+        <td class="loss">-1.97%</td><td>4天</td></tr><tr><td>2026-10-09</td><td>天顺风能</td><td>002531</td>
+        <td>D</td><td>电力设备</td><td>8.07</td>
+        <td class="loss">亏损</td><td>8.07</td>
+        <td class="loss">+0.00%</td><td>2天</td></tr><tr><td>2026-10-09</td><td>杉杉股份</td><td>600884</td>
+        <td>D</td><td>电子</td><td>11.70</td>
+        <td class="loss">亏损</td><td>11.70</td>
+        <td class="loss">+0.00%</td><td>2天</td></tr><tr><td>2026-10-09</td><td>滨江集团</td><td>002244</td>
+        <td>E</td><td>房地产</td><td>9.95</td>
+        <td class="nodata">未成交</td><td>9.95</td>
+        <td class="nodata">+0.00%</td><td>0天</td></tr><tr><td>2026-10-05</td><td>东方电缆</td><td>603606</td>
+        <td>A</td><td>电力设备</td><td>37.23</td>
+        <td class="loss">亏损</td><td>35.74</td>
+        <td class="loss">-4.00%</td><td>2天</td></tr><tr><td>2026-10-05</td><td>康强电子</td><td>002119</td>
+        <td>B</td><td>电子</td><td>25.10</td>
+        <td class="loss">亏损</td><td>24.22</td>
+        <td class="loss">-3.51%</td><td>2天</td></tr><tr><td>2026-10-05</td><td>均胜电子</td><td>600699</td>
+        <td>D</td><td>电子</td><td>22.82</td>
+        <td class="loss">亏损</td><td>22.02</td>
+        <td class="loss">-3.51%</td><td>2天</td></tr><tr><td>2026-10-05</td><td>精达股份</td><td>600577</td>
+        <td>D</td><td>电力设备</td><td>8.51</td>
+        <td class="nodata">未成交</td><td>8.51</td>
+        <td class="nodata">+0.00%</td><td>0天</td></tr><tr><td>2026-09-30</td><td>彩虹股份</td><td>600707</td>
+        <td>B</td><td>电子</td><td>9.41</td>
+        <td class="win">盈利</td><td>10.07</td>
+        <td class="win">+7.01%</td><td>2天</td></tr><tr><td>2026-09-30</td><td>南华生物</td><td>000504</td>
+        <td>B</td><td>社会服务</td><td>10.99</td>
+        <td class="win">盈利</td><td>11.76</td>
+        <td class="win">+7.01%</td><td>2天</td></tr><tr><td>2026-09-30</td><td>新赛股份</td><td>600540</td>
+        <td>E</td><td>农林牧渔</td><td>5.46</td>
+        <td class="win">盈利</td><td>5.68</td>
+        <td class="win">+4.03%</td><td>2天</td></tr><tr><td>2026-09-30</td><td>江苏新能</td><td>603693</td>
+        <td>D</td><td>公用事业</td><td>12.23</td>
+        <td class="loss">亏损</td><td>11.80</td>
+        <td class="loss">-3.52%</td><td>3天</td></tr><tr><td>2026-09-30</td><td>永鼎股份</td><td>600105</td>
+        <td>B</td><td>电力设备</td><td>36.43</td>
+        <td class="loss">亏损</td><td>35.15</td>
+        <td class="loss">-3.51%</td><td>2天</td></tr><tr><td>2026-09-30</td><td>亨通光电</td><td>600487</td>
+        <td>B</td><td>电力设备</td><td>55.84</td>
+        <td class="loss">亏损</td><td>53.89</td>
+        <td class="loss">-3.49%</td><td>2天</td></tr><tr><td>2026-09-30</td><td>保利发展</td><td>600048</td>
+        <td>D</td><td>房地产</td><td>5.74</td>
+        <td class="loss">亏损</td><td>5.58</td>
+        <td class="loss">-2.79%</td><td>4天</td></tr><tr><td>2026-09-30</td><td>智度股份</td><td>000676</td>
+        <td>D</td><td>社会服务</td><td>6.48</td>
+        <td class="nodata">未成交</td><td>6.48</td>
+        <td class="nodata">+0.00%</td><td>0天</td></tr><tr><td>2026-09-30</td><td>特发信息</td><td>000070</td>
+        <td>J</td><td>通信</td><td>15.68</td>
+        <td class="nodata">未成交</td><td>15.68</td>
+        <td class="nodata">+0.00%</td><td>0天</td></tr><tr><td>2026-09-30</td><td>中国巨石</td><td>600176</td>
+        <td>J</td><td>建筑材料</td><td>39.05</td>
+        <td class="nodata">未成交</td><td>39.05</td>
+        <td class="nodata">+0.00%</td><td>0天</td></tr><tr><td>2026-09-30</td><td>中天科技</td><td>600522</td>
+        <td>J</td><td>通信</td><td>30.91</td>
+        <td class="nodata">未成交</td><td>30.91</td>
+        <td class="nodata">+0.00%</td><td>0天</td></tr><tr><td>2026-09-30</td><td>均胜电子</td><td>600699</td>
+        <td>B</td><td>电子</td><td>22.02</td>
+        <td class="nodata">未成交</td><td>22.02</td>
+        <td class="nodata">+0.00%</td><td>0天</td></tr><tr><td>2026-09-30</td><td>浙江荣泰</td><td>603119</td>
+        <td>B</td><td>电力设备</td><td>51.39</td>
+        <td class="nodata">未成交</td><td>51.39</td>
+        <td class="nodata">+0.00%</td><td>0天</td></tr><tr><td>2026-09-30</td><td>综艺股份</td><td>600770</td>
+        <td>D</td><td>公用事业</td><td>6.02</td>
+        <td class="nodata">未成交</td><td>6.02</td>
+        <td class="nodata">+0.00%</td><td>0天</td></tr><tr><td>2026-09-30</td><td>中材科技</td><td>002080</td>
+        <td>D</td><td>建筑材料</td><td>53.52</td>
+        <td class="loss">亏损</td><td>53.52</td>
+        <td class="loss">+0.00%</td><td>2天</td></tr><tr><td>2026-09-30</td><td>莱宝高科</td><td>002106</td>
+        <td>J</td><td>电子</td><td>11.88</td>
+        <td class="loss">亏损</td><td>11.88</td>
+        <td class="loss">+0.00%</td><td>2天</td></tr><tr><td>2026-09-29</td><td>天顺风能</td><td>002531</td>
+        <td>D</td><td>电力设备</td><td>7.45</td>
+        <td class="win">盈利</td><td>7.82</td>
+        <td class="win">+4.97%</td><td>2天</td></tr><tr><td>2026-09-29</td><td>均胜电子</td><td>600699</td>
+        <td>D</td><td>电子</td><td>23.59</td>
+        <td class="loss">亏损</td><td>22.76</td>
+        <td class="loss">-3.52%</td><td>2天</td></tr><tr><td>2026-09-29</td><td>依顿电子</td><td>603328</td>
+        <td>B</td><td>电子</td><td>12.76</td>
+        <td class="nodata">未成交</td><td>12.76</td>
+        <td class="nodata">+0.00%</td><td>0天</td></tr><tr><td>2026-09-29</td><td>先导基电</td><td>600641</td>
+        <td>B</td><td>房地产</td><td>48.18</td>
+        <td class="nodata">未成交</td><td>48.18</td>
+        <td class="nodata">+0.00%</td><td>0天</td></tr><tr><td>2026-09-29</td><td>世运电路</td><td>603920</td>
+        <td>B</td><td>电子</td><td>42.10</td>
+        <td class="nodata">未成交</td><td>42.10</td>
+        <td class="nodata">+0.00%</td><td>0天</td></tr><tr><td>2026-09-29</td><td>安洁科技</td><td>002635</td>
+        <td>B</td><td>电子</td><td>14.33</td>
+        <td class="nodata">未成交</td><td>14.33</td>
+        <td class="nodata">+0.00%</td><td>0天</td></tr></tbody></table>
+</div>
+
+<div class="footer">
+<p>⚠️ 免责声明：回测结果不代表未来表现，仅供参考。</p>
+<p>版本: v6.33.3 | 生成: 2026-10-27</p>
+</div>
+</div>
+</body>
+</html>
